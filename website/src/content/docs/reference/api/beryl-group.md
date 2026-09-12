@@ -40,6 +40,7 @@ Topic groups
 <section class="api-symbol-index__group">
   <a class="api-symbol-index__section" href="#types">Types</a>
   <ul>
+<li><a href="#api-type-broadcasterror"><code>BroadcastError</code></a></li>
 <li><a href="#api-type-config"><code>Config</code></a></li>
 <li><a href="#api-type-grouperror"><code>GroupError</code></a></li>
 <li><a href="#api-type-groups"><code>Groups</code></a></li>
@@ -65,6 +66,35 @@ Topic groups
 </nav>
 
 ## Types
+
+<div class="api-entry-anchor" id="api-type-broadcasterror" aria-hidden="true"></div>
+
+### `BroadcastError`
+
+```gleam
+pub type BroadcastError {
+  GroupLookupFailed(GroupError)
+  BroadcastRejected(
+    admitted_topics: Int,
+    reason: overload.AdmissionError
+  )
+}
+```
+
+A group lookup or one topic's local broadcast admission failed.
+
+#### Constructors
+
+##### `BroadcastRejected`
+
+```gleam
+BroadcastRejected(
+  admitted_topics: Int,
+  reason: overload.AdmissionError
+)
+```
+
+Earlier topics were admitted; the failing topic and later topics were not.
 
 <div class="api-entry-anchor" id="api-type-config" aria-hidden="true"></div>
 
@@ -170,14 +200,16 @@ pub fn broadcast(
   String,
   String,
   json.Json
-) -> Nil
+) -> Result(Nil, BroadcastError)
 ```
 
 Broadcast a message to all topics in a group.
 
  This function sends the message to each topic through `beryl.broadcast`.
  The groups actor performs the topic lookup. The caller performs the
- fan-out. If the group does not exist, this function does nothing.
+ fan-out. A missing group returns `GroupLookupFailed`. On admission failure,
+ `BroadcastRejected` reports the number of earlier topics admitted. Those
+ admissions remain valid; fan-out is not transactional.
 
  Panics if the groups actor is unavailable or does not reply within the
  configured call timeout.

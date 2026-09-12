@@ -10,13 +10,20 @@
 
 import app_test_helper
 import beryl
+import beryl/channel
+import beryl/overload
 import beryl/presence
+import beryl/runtime
+import beryl/snapshot
 import beryl/socket.{
   type Effect, type Next, AcceptJoin, BroadcastPresence, Closed, Join, Message,
   Next, PresenceTrack, PresenceUntrack,
 }
 import beryl/transport
 import beryl/wire
+import beryl/wire/codec
+import beryl/work_queue
+import channel_dispatch_helper
 import gleam/dict
 import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
@@ -31,6 +38,362 @@ import test_helper
 
 pub fn main() -> Nil {
   gleeunit.main()
+}
+
+type LoopMessage {
+  Park
+  Tick(Int)
+}
+
+type ResumedLoop {
+  ResumedLoop(
+    sockets: beryl.Sockets,
+    sender: socket.Sender(LoopMessage),
+    frames: Subject(String),
+    closed: Subject(socket.StopReason),
+    pid: process.Pid,
+  )
+}
+
+fn start_resumed_loop(heartbeat_ms: Int, continuous: Bool) -> ResumedLoop {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let handle = start_gated_presence(gate)
+  let ready = process.new_subject()
+  let progress = process.new_subject()
+  let closed = process.new_subject()
+  let assert Ok(limits) = overload.limits(items: 3, bytes: 8192)
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_presence_handle(handle)
+        |> beryl.with_socket_queue_limits(limits)
+        |> beryl.with_heartbeat(timeout_ms: heartbeat_ms),
+      init: fn(info) {
+        process.send(ready, #(info.self, process.self()))
+        #(info.self, [])
+      },
+      update: fn(model, input) {
+        let sender = model
+        case input {
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [socket.AcceptJoin(ref, None)])
+          socket.Info(Park) ->
+            socket.Next(model, [
+              socket.PresenceTrack("room:a", "user", json.null()),
+              socket.PresenceUntrack("room:a", "user"),
+              socket.Push("room:a", "resumed", json.null()),
+            ])
+          socket.Info(Tick(count)) -> {
+            case continuous || count < 256 {
+              True ->
+                socket.notify(sender, Tick(count + 1)) |> should.equal(Ok(Nil))
+              False -> Nil
+            }
+            case count {
+              128 -> process.send(progress, socket.queue_snapshot(sender))
+              _ -> Nil
+            }
+            socket.Next(model, [])
+          }
+          socket.Closed(_, reason) -> {
+            process.send(closed, reason)
+            socket.Next(model, [])
+          }
+          socket.Message(..) | socket.Binary(..) -> socket.Next(model, [])
+        }
+      },
+    )
+  let frames = app_test_helper.connect(sockets, "resumed")
+  let assert Ok(#(sender, pid)) = process.receive(ready, 1000)
+  app_test_helper.join_ok(sockets, frames, "resumed", "room:a", "j", "r")
+  arm(gate)
+  socket.notify(sender, Park) |> should.equal(Ok(Nil))
+  await_entered(entered)
+  socket.notify(sender, Tick(0)) |> should.equal(Ok(Nil))
+  let assert Ok(parked) = socket.queue_snapshot(sender)
+  parked.items |> should.equal(3)
+  socket.notify(sender, Tick(-1))
+  |> should.equal(Error(overload.Overloaded(overload.SocketQueue)))
+
+  // The same effect stack parks twice; neither its input nor its output
+  // reservation can be released between these two acknowledgements.
+  arm(gate)
+  release(gate)
+  await_entered(entered)
+  let assert Ok(parked_again) = socket.queue_snapshot(sender)
+  parked_again.items |> should.equal(3)
+  process.receive(progress, 0) |> should.equal(Error(Nil))
+  release(gate)
+  let assert Ok(Ok(running)) = process.receive(progress, 1000)
+  running.items |> should.equal(2)
+  running.high_items |> should.equal(3)
+  running.rejected |> should.equal(1)
+  running.cancelled |> should.equal(0)
+  // Ignore only the two known presence diffs, not arbitrary mailbox traffic.
+  list.each(["presence_diff", "presence_diff", "resumed"], fn(event) {
+    app_test_helper.recv(frames) |> string.contains(event) |> should.be_true
+  })
+  ResumedLoop(sockets, sender, frames, closed, pid)
+}
+
+fn await_normal_exit(monitor: process.Monitor) -> Nil {
+  let assert Ok(process.ProcessDown(reason: process.Normal, ..)) =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(3000)
+  Nil
+}
+
+pub fn resumed_work_allows_shutdown_test() -> Nil {
+  let loop = start_resumed_loop(60_000, True)
+  let monitor = process.monitor(loop.pid)
+  beryl.stop(loop.sockets) |> should.equal(Ok(Nil))
+  process.receive(loop.closed, 1000) |> should.equal(Ok(socket.Shutdown))
+  app_test_helper.recv(loop.frames)
+  |> string.contains("phx_close")
+  |> should.be_true
+  await_normal_exit(monitor)
+  socket.queue_snapshot(loop.sender)
+  |> should.equal(Error(overload.Unavailable))
+}
+
+pub fn resumed_work_allows_heartbeat_eviction_test() -> Nil {
+  let loop = start_resumed_loop(2000, True)
+  let monitor = process.monitor(loop.pid)
+  process.receive(loop.closed, 4000)
+  |> should.equal(Ok(socket.HeartbeatTimeout))
+  app_test_helper.recv(loop.frames)
+  |> string.contains("phx_close")
+  |> should.be_true
+  await_normal_exit(monitor)
+  socket.queue_snapshot(loop.sender)
+  |> should.equal(Error(overload.Unavailable))
+  beryl.stop(loop.sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn resumed_work_allows_owner_monitor_test() -> Nil {
+  let loop = start_resumed_loop(60_000, True)
+  let monitor = process.monitor(loop.pid)
+  let owner = app_test_helper.runtime_pid(loop.sockets)
+  process.kill(owner)
+  await_normal_exit(monitor)
+  socket.queue_snapshot(loop.sender)
+  |> should.equal(Error(overload.Unavailable))
+  test_helper.wait_until(
+    fn() {
+      case transport.runtime_pid(loop.sockets) {
+        Ok(current) -> current != owner
+        Error(Nil) -> False
+      }
+    },
+    1000,
+    5,
+  )
+  beryl.stop(loop.sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn resumed_work_releases_reservations_test() -> Nil {
+  let loop = start_resumed_loop(60_000, False)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = socket.queue_snapshot(loop.sender)
+      current.items == 0 && current.bytes == 0
+    },
+    1000,
+    5,
+  )
+  beryl.stop(loop.sockets) |> should.equal(Ok(Nil))
+  process.receive(loop.closed, 1000) |> should.equal(Ok(socket.Shutdown))
+  app_test_helper.recv(loop.frames)
+  |> string.contains("phx_close")
+  |> should.be_true
+}
+
+@external(erlang, "beryl_test_process_ffi", "socket_queue")
+fn socket_queue(
+  router: process.Pid,
+  socket_id: String,
+) -> work_queue.Queue(runtime.Message(Nil))
+
+pub fn resumed_work_allows_worker_monitor_test() -> Nil {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let handle = start_gated_presence(gate)
+  let worker_ready = process.new_subject()
+  let progress = process.new_subject()
+  let frames = process.new_subject()
+  let assert Ok(limits) = overload.limits(items: 3, bytes: 8192)
+  let sockets =
+    channel_dispatch_helper.start(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_presence_handle(handle)
+        |> beryl.with_socket_queue_limits(limits)
+        |> beryl.with_heartbeat(timeout_ms: 60_000),
+      [
+        channel.handler("room:*", fn(context) {
+          process.send(worker_ready, #(context.self, process.self()))
+          channel.accept(Nil)
+          |> channel.on_info(fn(_, _: Nil) {
+            channel.next(Nil, [
+              channel.presence_track("user", json.null()),
+              channel.presence_untrack("user"),
+              channel.push("resumed", json.int(0)),
+            ])
+          })
+        }),
+      ],
+    )
+  let owner = app_test_helper.runtime_pid(sockets)
+  transport.admit_socket(
+    sockets: sockets,
+    owner: owner,
+    socket_id: "worker",
+    send: fn(frame) {
+      let assert Ok(message) = wire.decode_message(frame)
+      case codec.inbound_kind(message) {
+        codec.Event("resumed") | codec.Event("tick") -> {
+          let assert Ok(count) =
+            decode.run(codec.inbound_payload(message), decode.int)
+          let queue = socket_queue(owner, "worker")
+          // Replenish synchronously in the socket's send callback, so the
+          // inbox cannot become empty while waiting for a worker's result.
+          work_queue.send(
+            queue,
+            runtime.Broadcast("room:a", "tick", json.int(count + 1), None),
+          )
+          |> should.equal(Ok(Nil))
+          case count {
+            128 -> process.send(progress, work_queue.snapshot(queue))
+            _ -> Nil
+          }
+        }
+        _ -> process.send(frames, frame)
+      }
+      Ok(Nil)
+    },
+    send_binary: fn(_) { Ok(Nil) },
+    codec: None,
+    seed: socket.empty_seed(),
+    close: fn() { Nil },
+  )
+  |> should.equal(Ok(Nil))
+  app_test_helper.join_ok(sockets, frames, "worker", "room:a", "j", "r")
+  let assert Ok(#(sender, worker)) = process.receive(worker_ready, 1000)
+  arm(gate)
+  channel.notify(sender, Nil) |> should.equal(Ok(Nil))
+  await_entered(entered)
+  release(gate)
+  let assert Ok(Ok(running)) = process.receive(progress, 1000)
+  running.items |> should.equal(2)
+  { running.high_items <= 3 } |> should.be_true
+  running.rejected |> should.equal(0)
+  let queue = socket_queue(owner, "worker")
+  process.kill(worker)
+  list.each(["presence_diff", "presence_diff", "phx_error"], fn(event) {
+    app_test_helper.recv(frames) |> string.contains(event) |> should.be_true
+  })
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = work_queue.snapshot(queue)
+      current.items == 0 && current.bytes == 0
+    },
+    1000,
+    5,
+  )
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn presence_suspension_bounds_reports_and_holds_worker_inputs_test() -> Nil {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let handle = start_gated_presence(gate)
+  let ready = process.new_subject()
+  let callbacks = process.new_subject()
+  let assert Ok(socket_limit) = overload.limits(items: 3, bytes: 8192)
+  let assert Ok(worker_limit) = overload.limits(items: 2, bytes: 8192)
+  let channels =
+    channel_dispatch_helper.start(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_presence_handle(handle)
+        |> beryl.with_socket_queue_limits(socket_limit)
+        |> beryl.with_worker_queue_limits(worker_limit),
+      [
+        channel.handler("room:*", fn(context) {
+          process.send(ready, context.self)
+          channel.accept(Nil)
+          |> channel.on_info(fn(_, track: Bool) {
+            process.send(callbacks, context.topic)
+            let actions = case track {
+              True -> [
+                channel.presence_track("user", json.null()),
+                channel.push("ready", json.null()),
+              ]
+              False -> [channel.push("ready", json.null())]
+            }
+            channel.next(Nil, actions)
+          })
+        }),
+      ],
+    )
+  let frames = app_test_helper.connect(channels, "reports")
+  let senders =
+    list.map(["room:a", "room:b", "room:c"], fn(topic) {
+      app_test_helper.join(channels, "reports", topic, "j", "r")
+      let _ = app_test_helper.recv(frames)
+      let assert Ok(sender) = process.receive(ready, 1000)
+      sender
+    })
+  let assert [first, ..others] = senders
+  arm(gate)
+  channel.notify(first, True) |> should.equal(Ok(Nil))
+  await_entered(entered)
+  list.each(others, fn(sender) {
+    channel.notify(sender, False) |> should.equal(Ok(Nil))
+  })
+  list.each(senders, fn(_) {
+    let assert Ok(_) = process.receive(callbacks, 1000)
+    Nil
+  })
+  list.each(senders, fn(sender) {
+    channel.notify(sender, False) |> should.equal(Ok(Nil))
+    channel.notify(sender, False)
+    |> should.equal(Error(overload.Overloaded(overload.WorkerQueue)))
+    let assert Ok(current) = channel.queue_snapshot(sender)
+    current.items |> should.equal(2)
+  })
+  process.receive(callbacks, 0) |> should.equal(Error(Nil))
+  release(gate)
+  list.each(senders, fn(sender) {
+    let assert Ok(_) = process.receive(callbacks, 1000)
+    test_helper.wait_until(
+      fn() {
+        let assert Ok(current) = channel.queue_snapshot(sender)
+        current.items == 0
+      },
+      1000,
+      5,
+    )
+  })
+  let output =
+    list.map(list.repeat(Nil, 7), fn(_) { app_test_helper.recv(frames) })
+  output
+  |> list.filter(string.contains(_, "\"ready\""))
+  |> list.length
+  |> should.equal(6)
+  output
+  |> list.filter(string.contains(_, "\"presence_diff\""))
+  |> list.length
+  |> should.equal(1)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+  drain_report_frames(frames)
+}
+
+fn drain_report_frames(frames: Subject(String)) -> Nil {
+  case process.receive(frames, 10) {
+    Ok(_) -> drain_report_frames(frames)
+    Error(Nil) -> Nil
+  }
 }
 
 // ── Gate ────────────────────────────────────────────────────────────────────
@@ -104,6 +467,76 @@ fn start_gated_presence(gate: Subject(GateMessage)) -> presence.Presence {
       |> presence.with_on_diff(fn(_diff) { process.call(gate, 5000, Enter) }),
     )
   presence_handle
+}
+
+pub fn saturated_presence_cancels_pending_calls_but_retains_running_work_test() -> Nil {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let assert Ok(limits) = overload.limits(items: 2, bytes: 4096)
+  let assert Ok(handle) =
+    presence.start(
+      presence.default_config("bounded")
+      |> presence.with_queue_limits(limits)
+      |> presence.with_telemetry
+      |> presence.with_call_timeout(200)
+      |> presence.with_on_diff(fn(_) { process.call(gate, 5000, Enter) }),
+    )
+  arm(gate)
+  let first = process.new_subject()
+  let _ =
+    process.spawn_unlinked(fn() {
+      process.send(
+        first,
+        presence.track(handle, "room:a", "first", "s1", json.null()),
+      )
+    })
+  await_entered(entered)
+  let pending = process.new_subject()
+  let _ =
+    process.spawn_unlinked(fn() {
+      process.send(
+        pending,
+        presence.track(handle, "room:a", "cancelled", "s2", json.null()),
+      )
+    })
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = presence.queue_snapshot(handle)
+      current.items == 2
+    },
+    1000,
+    5,
+  )
+  presence.untrack_all(handle, "s2")
+  |> should.equal(
+    Error(
+      overload.AdmissionRejected(overload.Overloaded(overload.PresenceQueue)),
+    ),
+  )
+  presence.list(handle, "room:a") |> should.equal(Ok([]))
+  process.receive(first, 1000)
+  |> should.equal(Ok(Error(overload.RequestTimedOut)))
+  process.receive(pending, 1000)
+  |> should.equal(Ok(Error(overload.RequestTimedOut)))
+  list.each([1, 2, 3], fn(_) {
+    presence.untrack_all(handle, "s1")
+    |> should.equal(Error(overload.RequestTimedOut))
+  })
+  let assert Ok(blocked) = presence.queue_snapshot(handle)
+  blocked.items |> should.equal(1)
+  blocked.cancelled |> should.equal(4)
+  blocked.high_items |> should.equal(2)
+  release(gate)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = presence.queue_snapshot(handle)
+      current.items == 0
+    },
+    1000,
+    5,
+  )
+  let assert Ok(entries) = presence.list(handle, "room:a")
+  list.length(entries) |> should.equal(1)
 }
 
 /// A gated presence that also reports every `on_diff` it is handed, as the
@@ -237,12 +670,27 @@ fn start_system(
   events: Subject(String),
   configure: fn(beryl.Config) -> beryl.Config,
 ) -> beryl.Sockets {
+  start_system_reporting_actor(handle, events, configure, None)
+}
+
+fn start_system_reporting_actor(
+  handle: presence.Presence,
+  events: Subject(String),
+  configure: fn(beryl.Config) -> beryl.Config,
+  actor_pids: Option(Subject(process.Pid)),
+) -> beryl.Sockets {
   let assert Ok(channels) =
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_presence_handle(handle)
         |> configure,
-      init: fn(info: socket.ConnectInfo(Nil)) { #(info.socket_id, []) },
+      init: fn(info: socket.ConnectInfo(Nil)) {
+        case actor_pids {
+          Some(pids) -> process.send(pids, process.self())
+          None -> Nil
+        }
+        #(info.socket_id, [])
+      },
       update: fn(model, event) { app_update(model, event, events) },
     )
   channels
@@ -571,6 +1019,277 @@ pub fn late_tracked_ack_after_timeout_is_compensated_test() -> Nil {
   presence_entries(handle, "room:a") |> should.equal([])
 }
 
+/// A socket can disconnect after a track times out but before presence
+/// finishes it. Its actor must die normally, and presence's owner monitor
+/// must remove only the late runtime ref.
+pub fn timed_out_track_is_cleaned_after_socket_disconnect_test() -> Nil {
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let diffs = process.new_subject()
+  let handle = start_recording_gated_presence(gate, diffs)
+  let assert Ok(public_ref) =
+    presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
+  next_diff(diffs) |> should.equal(#([public_ref], []))
+  let events = process.new_subject()
+  let actor_pids = process.new_subject()
+  let channels =
+    start_system_reporting_actor(
+      handle,
+      events,
+      beryl.with_presence_op_timeout(_, 150),
+      Some(actor_pids),
+    )
+
+  let frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(socket_actor) = process.receive(actor_pids, 1000)
+  arm(gate)
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+  await_entered(entered)
+  let #(runtime_joins, runtime_leaves) = next_diff(diffs)
+  runtime_leaves |> should.equal([])
+  let assert [runtime_ref] = runtime_joins
+
+  // The timeout resumes the remaining effects before disconnect is handled.
+  app_test_helper.recv(frames)
+  |> string.contains("presence_list")
+  |> should.be_true
+  transport.socket_disconnected(channels, "s1")
+  test_helper.wait_until(fn() { !process.is_alive(socket_actor) }, 2000, 10)
+  process.is_alive(socket_actor) |> should.be_false
+
+  release(gate)
+  // The owner monitor's cleanup follows the blocked track in presence's
+  // mailbox, so the late runtime ref is removed after it materializes.
+  next_diff(diffs) |> should.equal(#([], [runtime_ref]))
+  // Barrier: the leave has also reached the read model.
+  presence.untrack(handle, "no-such-ref") |> should.equal(Ok(Nil))
+  presence_count(handle, "room:a") |> should.equal(1)
+  let assert [entry] = presence_entries(handle, "room:a")
+  meta_phx_ref(entry.meta) |> should.equal(public_ref)
+  json.to_string(entry.meta) |> string.contains("public") |> should.be_true
+  let assert Ok(Nil) = beryl.stop(channels)
+  presence.untrack(handle, public_ref) |> should.equal(Ok(Nil))
+}
+
+/// If a track is still queued when its socket owner dies, presence must skip
+/// it rather than create a ref with no live owner. A fresh socket reusing the
+/// same id and key can then track normally; the dead owner's work must not
+/// remove that newer runtime ref or an unrelated public ref.
+pub fn queued_track_from_dead_owner_preserves_fresh_replacement_test() -> Nil {
+  let diffs = process.new_subject()
+  let pass_through = start_gate(process.new_subject())
+  let handle = start_recording_gated_presence(pass_through, diffs)
+  let assert Ok(public_ref) =
+    presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
+  next_diff(diffs) |> should.equal(#([public_ref], []))
+  let assert Ok(presence_pid) = process.subject_owner(presence.subject(handle))
+  test_helper.suspend_process(presence_pid)
+
+  let events = process.new_subject()
+  let actor_pids = process.new_subject()
+  let channels =
+    start_system_reporting_actor(
+      handle,
+      events,
+      beryl.with_presence_op_timeout(_, 150),
+      Some(actor_pids),
+    )
+
+  let old_frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(old_owner) = process.receive(actor_pids, 1000)
+  app_test_helper.join(channels, "s1", "room:a", "jr-old", "r-old")
+  app_test_helper.recv(old_frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = presence.queue_snapshot(handle)
+      current.items == 2
+    },
+    1000,
+    5,
+  )
+  // The timeout runs while TrackAsync is still queued, then disconnect
+  // removes the old socket actor before presence sees the request.
+  app_test_helper.recv(old_frames)
+  |> string.contains("presence_list")
+  |> should.be_true
+  transport.socket_disconnected(channels, "s1")
+  test_helper.wait_until(fn() { !process.is_alive(old_owner) }, 2000, 10)
+  test_helper.wait_until(
+    fn() {
+      case snapshot.get(channels) {
+        Ok(current) -> snapshot.connected_sockets(current) == 0
+        Error(_) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  let fresh_frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(fresh_owner) = process.receive(actor_pids, 1000)
+  fresh_owner |> should.not_equal(old_owner)
+  app_test_helper.join(channels, "s1", "room:a", "jr-new", "r-new")
+  app_test_helper.recv(fresh_frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = presence.queue_snapshot(handle)
+      current.items == 4
+    },
+    1000,
+    5,
+  )
+
+  test_helper.resume_process(presence_pid)
+  let fresh_diff = app_test_helper.recv(fresh_frames)
+  let fresh_ref = phx_ref_of(fresh_diff, "joins")
+  fresh_ref |> should.not_equal(public_ref)
+  app_test_helper.recv(fresh_frames)
+  |> string.contains("presence_list")
+  |> should.be_true
+  // The dead owner's queued track produced no diff.
+  process.receive(diffs, 200) |> should.equal(Ok(#([fresh_ref], [])))
+  process.receive(diffs, 100) |> should.be_error
+
+  presence.untrack(handle, "no-such-ref") |> should.equal(Ok(Nil))
+  presence_count(handle, "room:a") |> should.equal(2)
+  presence_entries(handle, "room:a")
+  |> entry_refs
+  |> list.sort(string.compare)
+  |> should.equal(list.sort([public_ref, fresh_ref], string.compare))
+
+  transport.socket_disconnected(channels, "s1")
+  test_helper.wait_until(fn() { !process.is_alive(fresh_owner) }, 2000, 10)
+  test_helper.wait_until(
+    fn() { presence_count(handle, "room:a") == 1 },
+    2000,
+    10,
+  )
+  let assert [public_entry] = presence_entries(handle, "room:a")
+  meta_phx_ref(public_entry.meta) |> should.equal(public_ref)
+  let assert Ok(Nil) = beryl.stop(channels)
+  presence.untrack(handle, public_ref) |> should.equal(Ok(Nil))
+}
+
+/// When the router dies, its replacement cannot know the old socket index.
+/// Presence's owner monitor cleans the old actor's runtime entries without
+/// requiring the replacement router's lost socket index or deleting public
+/// refs.
+pub fn router_crash_cleans_old_socket_presence_test() -> Nil {
+  let assert Ok(handle) = presence.start(presence.default_config("node1"))
+  let events = process.new_subject()
+  let actor_pids = process.new_subject()
+  let channels =
+    start_system_reporting_actor(
+      handle,
+      events,
+      identity_config,
+      Some(actor_pids),
+    )
+
+  let frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(socket_actor) = process.receive(actor_pids, 1000)
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let runtime_diff = app_test_helper.recv(frames)
+  let runtime_ref = phx_ref_of(runtime_diff, "joins")
+  let _snapshot = app_test_helper.recv(frames)
+  let assert Ok(public_ref) =
+    presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
+  presence_count(handle, "room:a") |> should.equal(2)
+
+  let assert Ok(old_router) = transport.runtime_pid(channels)
+  process.kill(old_router)
+  test_helper.wait_until(fn() { !process.is_alive(socket_actor) }, 2000, 10)
+  process.is_alive(socket_actor) |> should.be_false
+  test_helper.wait_until(
+    fn() {
+      case transport.runtime_pid(channels) {
+        Ok(new_router) ->
+          new_router != old_router && process.is_alive(new_router)
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  test_helper.wait_until(
+    fn() { presence_count(handle, "room:a") == 1 },
+    2000,
+    10,
+  )
+  presence_count(handle, "room:a") |> should.equal(1)
+  let assert [entry] = presence_entries(handle, "room:a")
+  meta_phx_ref(entry.meta) |> should.equal(public_ref)
+  meta_phx_ref(entry.meta) |> should.not_equal(runtime_ref)
+  json.to_string(entry.meta) |> string.contains("public") |> should.be_true
+  let assert Ok(Nil) = beryl.stop(channels)
+  presence.untrack(handle, public_ref) |> should.equal(Ok(Nil))
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = presence.queue_snapshot(handle)
+      current.items == 0 && current.bytes == 0
+    },
+    2000,
+    10,
+  )
+}
+
+/// Presence owns each socket-owner watcher. If presence itself dies while
+/// the socket stays live, that watcher must stop instead of surviving every
+/// supervised presence restart.
+pub fn presence_death_stops_live_socket_owner_watcher_test() -> Nil {
+  let assert Ok(handle) = presence.start(presence.default_config("node1"))
+  let events = process.new_subject()
+  let actor_pids = process.new_subject()
+  let channels =
+    start_system_reporting_actor(
+      handle,
+      events,
+      identity_config,
+      Some(actor_pids),
+    )
+
+  let frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(socket_actor) = process.receive(actor_pids, 1000)
+  let monitors_before_track = test_helper.monitored_by_count(socket_actor)
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let _diff = app_test_helper.recv(frames)
+  let _snapshot = app_test_helper.recv(frames)
+  test_helper.wait_until(
+    fn() {
+      test_helper.monitored_by_count(socket_actor) == monitors_before_track + 1
+    },
+    1000,
+    10,
+  )
+
+  test_helper.kill_presence(handle)
+  process.is_alive(socket_actor) |> should.be_true
+  test_helper.wait_until(
+    fn() {
+      test_helper.monitored_by_count(socket_actor) == monitors_before_track
+    },
+    1000,
+    10,
+  )
+  test_helper.monitored_by_count(socket_actor)
+  |> should.equal(monitors_before_track)
+
+  transport.socket_disconnected(channels, "s1")
+  test_helper.wait_until(fn() { !process.is_alive(socket_actor) }, 2000, 10)
+  let assert Ok(Nil) = beryl.stop(channels)
+  Nil
+}
+
 /// After a track times out, the app may reasonably retry it. The first
 /// attempt's stale acknowledgement is still going to show up; it must not
 /// leave its ref coexisting with the retry's, or presence would show the
@@ -782,7 +1501,7 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() ->
   // before the acknowledgement that produced the frames above, so it is
   // already in the actor's mailbox and is handled strictly before this
   // synchronous call returns.
-  presence.untrack(handle, "no-such-ref")
+  let assert Ok(_) = presence.untrack(handle, "no-such-ref")
 
   // Exactly one entry survives, and it is the retrack's.
   presence_count(handle, "room:a") |> should.equal(1)
@@ -849,7 +1568,7 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() -> Nil {
   let assert Ok(presence_pid) = process.subject_owner(presence.subject(handle))
   let _public_tracker =
     process.spawn_unlinked(fn() {
-      let ref =
+      let assert Ok(ref) =
         presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
       process.send(public_done, ref)
     })
@@ -870,7 +1589,7 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() -> Nil {
   let #(compensation_joins, compensation_leaves) = next_diff(diffs)
   compensation_joins |> should.equal([])
   compensation_leaves |> should.equal([runtime_ref])
-  presence.untrack(handle, "no-such-ref")
+  let assert Ok(_) = presence.untrack(handle, "no-such-ref")
 
   let assert [public_entry] = presence_entries(handle, "room:a")
   meta_phx_ref(public_entry.meta) |> should.equal(public_ref)
@@ -885,33 +1604,33 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() -> Nil {
     "[\"jr-1\",\"r-2\",\"room:a\",\"phx_leave\",{}]",
   )
   process.receive(events, 500) |> should.equal(Ok("closed:room:a"))
-  presence.untrack(handle, "no-such-ref")
+  let assert Ok(_) = presence.untrack(handle, "no-such-ref")
   presence_count(handle, "room:a") |> should.equal(1)
 
   // Replaying the compensated ref is a no-op, proving it is no longer
   // dangling in the actor's ref index.
-  presence.untrack(handle, runtime_ref)
+  let assert Ok(_) = presence.untrack(handle, runtime_ref)
   presence_count(handle, "room:a") |> should.equal(1)
   process.receive(diffs, 100) |> should.be_error
 
-  presence.untrack(handle, public_ref)
+  let assert Ok(_) = presence.untrack(handle, public_ref)
   let #(cleanup_joins, cleanup_leaves) = next_diff(diffs)
   cleanup_joins |> should.equal([])
   cleanup_leaves |> should.equal([public_ref])
   presence_count(handle, "room:a") |> should.equal(0)
 
   // A later entry cannot be reached through either old ref.
-  let later_ref =
+  let assert Ok(later_ref) =
     presence.track(handle, "room:a", "user:s1", "s1", meta("later"))
   let #(later_joins, later_leaves) = next_diff(diffs)
   later_joins |> should.equal([later_ref])
   later_leaves |> should.equal([])
-  presence.untrack(handle, runtime_ref)
-  presence.untrack(handle, public_ref)
+  let assert Ok(_) = presence.untrack(handle, runtime_ref)
+  let assert Ok(_) = presence.untrack(handle, public_ref)
   presence_count(handle, "room:a") |> should.equal(1)
   process.receive(diffs, 100) |> should.be_error
 
-  presence.untrack(handle, later_ref)
+  let assert Ok(_) = presence.untrack(handle, later_ref)
   let #(final_joins, final_leaves) = next_diff(diffs)
   final_joins |> should.equal([])
   final_leaves |> should.equal([later_ref])
@@ -948,7 +1667,7 @@ pub fn shutdown_stale_track_cleanup_preserves_newer_public_track_test() -> Nil {
   let assert Ok(presence_pid) = process.subject_owner(presence.subject(handle))
   let _public_tracker =
     process.spawn_unlinked(fn() {
-      let ref =
+      let assert Ok(ref) =
         presence.track(handle, "room:a", "user:s1", "s1", meta("public"))
       process.send(public_done, ref)
     })
@@ -969,15 +1688,15 @@ pub fn shutdown_stale_track_cleanup_preserves_newer_public_track_test() -> Nil {
   let #(sweep_joins, sweep_leaves) = next_diff(diffs)
   sweep_joins |> should.equal([])
   sweep_leaves |> should.equal([runtime_ref])
-  presence.untrack(handle, "no-such-ref")
+  let assert Ok(_) = presence.untrack(handle, "no-such-ref")
 
   let assert [public_entry] = presence_entries(handle, "room:a")
   meta_phx_ref(public_entry.meta) |> should.equal(public_ref)
-  presence.untrack(handle, runtime_ref)
+  let assert Ok(_) = presence.untrack(handle, runtime_ref)
   presence_count(handle, "room:a") |> should.equal(1)
   process.receive(diffs, 100) |> should.be_error
 
-  presence.untrack(handle, public_ref)
+  let assert Ok(_) = presence.untrack(handle, public_ref)
   let #(cleanup_joins, cleanup_leaves) = next_diff(diffs)
   cleanup_joins |> should.equal([])
   cleanup_leaves |> should.equal([public_ref])
@@ -1020,7 +1739,7 @@ pub fn shutdown_sweeps_sessions_owed_a_stale_track_test() -> Nil {
 
   // Barrier: the sweep was in the actor's mailbox before this synchronous
   // call, so it has been handled by the time it returns.
-  presence.untrack(handle, "no-such-ref")
+  let assert Ok(_) = presence.untrack(handle, "no-such-ref")
   presence_count(handle, "room:a") |> should.equal(0)
   presence_entries(handle, "room:a") |> should.equal([])
 }
@@ -1053,7 +1772,7 @@ pub fn closed_presence_track_replacement_during_stop_does_not_orphan_entry_test(
   // Barrier: any fire-and-forget presence message the runtime sent while
   // tearing down is already in the actor's mailbox by the time this
   // synchronous call returns.
-  presence.untrack(handle, "no-such-ref")
+  let assert Ok(_) = presence.untrack(handle, "no-such-ref")
   presence_count(handle, "reclose:room") |> should.equal(0)
   presence_entries(handle, "reclose:room") |> should.equal([])
 }
@@ -1075,7 +1794,7 @@ pub fn closed_presence_track_with_no_previous_ref_during_stop_creates_no_entry_t
   process.receive(events, 500)
   |> should.equal(Ok("closed:reclose-fresh:room"))
 
-  presence.untrack(handle, "no-such-ref")
+  let assert Ok(_) = presence.untrack(handle, "no-such-ref")
   presence_count(handle, "reclose-fresh:room") |> should.equal(0)
   presence_entries(handle, "reclose-fresh:room") |> should.equal([])
 }
@@ -1135,13 +1854,13 @@ pub fn shutdown_while_replacement_pending_emits_leave_and_cleans_refs_test() -> 
   watcher_leaves |> should.equal([watcher_ref])
 
   // Barrier: the replacement and both shutdown cleanups are now applied.
-  presence.untrack(handle, "no-such-ref")
+  let assert Ok(_) = presence.untrack(handle, "no-such-ref")
   presence_entries(handle, "room:a") |> should.equal([])
 
   // Neither superseded nor swept refs remain capable of touching later state.
-  presence.untrack(handle, previous_ref)
-  presence.untrack(handle, replacement_ref)
-  presence.untrack(handle, watcher_ref)
+  let assert Ok(_) = presence.untrack(handle, previous_ref)
+  let assert Ok(_) = presence.untrack(handle, replacement_ref)
+  let assert Ok(_) = presence.untrack(handle, watcher_ref)
   process.receive(diffs, 100) |> should.be_error
 }
 
@@ -1193,11 +1912,11 @@ pub fn shutdown_while_untrack_pending_emits_leave_and_cleans_ref_test() -> Nil {
   watcher_joins |> should.equal([])
   watcher_leaves |> should.equal([watcher_ref])
 
-  presence.untrack(handle, "no-such-ref")
+  let assert Ok(_) = presence.untrack(handle, "no-such-ref")
   presence_entries(handle, "room:a") |> should.equal([])
 
-  presence.untrack(handle, tracked_ref)
-  presence.untrack(handle, watcher_ref)
+  let assert Ok(_) = presence.untrack(handle, tracked_ref)
+  let assert Ok(_) = presence.untrack(handle, watcher_ref)
   process.receive(diffs, 100) |> should.be_error
 }
 
@@ -1246,7 +1965,13 @@ pub fn graceful_shutdown_cleanup_is_not_logged_as_a_failure_test() -> Nil {
 pub fn disconnect_while_track_is_pending_leaves_no_presence_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
-  let handle = start_gated_presence(gate)
+  let assert Ok(limits) = overload.limits(items: 3, bytes: 4096)
+  let assert Ok(handle) =
+    presence.start(
+      presence.default_config("node1")
+      |> presence.with_queue_limits(limits)
+      |> presence.with_on_diff(fn(_) { process.call(gate, 5000, Enter) }),
+    )
   let events = process.new_subject()
   let channels = start_system(handle, events, identity_config)
 
@@ -1263,6 +1988,8 @@ pub fn disconnect_while_track_is_pending_leaves_no_presence_test() -> Nil {
   let _reply = app_test_helper.recv(frames)
   await_entered(entered)
 
+  let assert Ok(full) = presence.queue_snapshot(handle)
+  full.items |> should.equal(3)
   transport.socket_disconnected(channels, "s1")
   release(gate)
 
@@ -1285,6 +2012,9 @@ pub fn disconnect_while_track_is_pending_leaves_no_presence_test() -> Nil {
   let assert [entry] = presence_entries(handle, "room:a")
   entry.key |> should.equal("user:watcher")
   app_test_helper.recv_none(watcher)
+  let assert Ok(remaining) = presence.queue_snapshot(handle)
+  remaining.items |> should.equal(1)
+  remaining.high_items |> should.equal(3)
 }
 
 /// Two mutations in one effect list park the socket twice. Work queued
@@ -1326,7 +2056,8 @@ pub fn second_mutation_keeps_queued_work_waiting_test() -> Nil {
 /// next read, and so is an untrack.
 pub fn public_presence_api_keeps_read_after_write_test() -> Nil {
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
-  let ref = presence.track(handle, "room:a", "user:1", "s1", meta("online"))
+  let assert Ok(ref) =
+    presence.track(handle, "room:a", "user:1", "s1", meta("online"))
   presence_count(handle, "room:a") |> should.equal(1)
   let assert [entry] = presence_entries(handle, "room:a")
   entry.session_id |> should.equal("s1")
@@ -1334,12 +2065,13 @@ pub fn public_presence_api_keeps_read_after_write_test() -> Nil {
   |> list.length
   |> should.equal(1)
 
-  presence.untrack(handle, ref)
+  let assert Ok(_) = presence.untrack(handle, ref)
   presence_count(handle, "room:a") |> should.equal(0)
   presence_entries(handle, "room:a") |> should.equal([])
 
-  let _second = presence.track(handle, "room:b", "user:1", "s1", meta("online"))
-  presence.untrack_all(handle, "s1")
+  let assert Ok(_second) =
+    presence.track(handle, "room:b", "user:1", "s1", meta("online"))
+  let assert Ok(_) = presence.untrack_all(handle, "s1")
   presence_count(handle, "room:b") |> should.equal(0)
 }
 

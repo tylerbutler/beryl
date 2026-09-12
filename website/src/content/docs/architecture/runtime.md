@@ -166,7 +166,7 @@ flowchart TB
 - The child specification contains the `init` and `update` closures. A restart
   resumes dispatch without a registration step.
 - The router uses a stable registered name. The `Sockets` handle works after a
-  restart. Sends during the restart window do nothing.
+  restart. Sends during the restart window return an admission error.
 - Router death stops all socket actors. The transports also monitor the router
   and close their connections. A restart starts with no sockets, so clients
   must reconnect and rejoin.
@@ -190,35 +190,35 @@ supervision tree. See the [Supervision guide](/guides/supervision/).
 
 ## Queue limits and overload
 
-beryl currently has no finite end-to-end queue or memory budget. Process
-isolation and rate limits do not establish one. The current controls limit
-admission or input rate, not all work that can accumulate after admission.
-See [Production hardening](/guides/production-hardening/) for configuration.
+beryl has finite local admission budgets. Reservations cover queued,
+executing, and deferred work until completion or cancellation. These limits
+do not establish an end-to-end or node-wide memory bound. See
+[overload handling](/guides/overload/) for configuration and Result APIs.
 
 | Boundary | Current control and overload behavior |
 |---|---|
 | Connection admission | Optional per-IP attempt-rate and concurrent connection limits, plus a node-wide concurrent connection limit. All default to disabled. The limiter owns accounting; a rejected upgrade receives HTTP `429`. |
 | Complete inbound frames | The connection process closes the connection for frames over 1 MiB by default, after assembly. Optional frame-rate limiting drops over-rate frames before decoding. Neither bounds pre-assembly buffers or router queues. |
 | Decoded socket input | Socket actors own optional message, join, and channel/topic rate buckets. Rates default to disabled. Over-rate messages are dropped; over-rate joins receive an error reply. These are not worker queue limits. |
-| Topic-worker input | No configured message or byte budget. A slow worker can accumulate input. |
-| Worker reports and action batches | No configured budget for pending `WorkerRan` reports or the effects they contain. |
-| Socket mailbox and deferred presence work | No configured queue budget. The presence operation timeout defaults to 5 seconds; it limits the acknowledgement wait, not queued messages or effect-list size. On timeout, the runtime logs and resumes without claiming success. |
-| Shared router ingress and fan-out | No aggregate queue budget. Per-socket input rates do not bound combined ingress, broadcasts, or fan-out work. |
-| Presence and PubSub admission | No global queue budget. Shared presence work, generic PubSub consumers, and external consumer mailboxes are not bounded by socket rate limits. |
+| Topic-worker input | 256 outstanding inputs and 8 MiB per worker. Client input rejection closes the topic; server notifications return errors. |
+| Worker reports and action batches | One normal report per worker, charged to the socket. Each callback result has a 256-effect / 8 MiB limit. Rejected batches apply no prefix. |
+| Socket work and deferred presence work | 1024 items / 8 MiB, including active effects, reports, and unanswered refs. Presence suspension retains capacity. |
+| Shared router ingress and fan-out | 4096 items / 32 MiB before local publication and connection-child startup. Fan-out reserves destination capacity and continues past saturated recipients. |
+| Presence mutations | 4096 items / 32 MiB, including reserved runtime-session cleanup. Pending timeouts cancel; running timeouts retain capacity. |
+| Generic PubSub and remote presence sync | No pre-receipt bound. Downstream local socket fan-out still needs admission. |
 | Outbound connection queue | Send requests have no configured count/byte budget or slow-reader eviction policy. A slow writer can accumulate requests independently of the socket actor. |
 
-[#397](https://github.com/tylerbutler/beryl/issues/397) tracks finite supported
-budgets, accounting and release paths, overflow semantics, occupancy/queue-age
-telemetry, and bounded-memory evidence. These are not current guarantees.
-[#249](https://github.com/tylerbutler/beryl/issues/249) separately tracks the
-outbound queue and slow-client eviction. beryl cannot promise a global bound
-for arbitrary PubSub subscribers or external consumers.
+Accounted bytes cover inspectable structure and binary backing allocations,
+not closure environments or arbitrary app state. Queue snapshots and
+`[beryl, queue, occupancy]` telemetry expose occupancy, rejections, and age.
+Owner death invalidates its reservations. Recovery reclaims unpublished work
+from dead producers; published work stays charged until consumption or
+cancellation.
 
-Until those contracts are implemented, do not treat rate settings, heartbeat
-eviction, or temporary supervision as backpressure. In particular, heartbeat
-checks need the socket actor to process its mailbox; they cannot interrupt a
-blocked callback. Use deployment-level limits and measure queue growth under
-your workload.
+[#249](https://github.com/tylerbutler/beryl/issues/249) tracks outbound queues
+and slow-client eviction. Heartbeat checks still cannot interrupt a blocked
+callback. Use finite connection/topic populations and deployment-level limits,
+and measure your workload.
 
 ## Performance evidence
 

@@ -3,6 +3,7 @@
          string_starts_with/2, stop_supervisor/1, rescue/1,
          admission_token_new/0, admission_token_cancel/1,
          admission_token_pending/1, admission_token_claim/1,
+         admission_token_owner/1, reservation_token_pending/1,
          connection_limit_state_open/2, connection_limit_state_put/2,
          pin_subject/1]).
 
@@ -42,16 +43,22 @@ monotonic_time_ns() -> erlang:monotonic_time(nanosecond).
 admission_token_new() ->
     Token = atomics:new(1, [{signed, false}]),
     atomics:put(Token, 1, 0),
-    Token.
+    {Token, self()}.
 
-admission_token_cancel(Token) ->
+admission_token_cancel({Token, _Owner}) ->
     atomics:compare_exchange(Token, 1, 0, 2) =:= ok.
 
-admission_token_pending(Token) ->
+admission_token_owner({_Token, Owner}) -> Owner.
+
+admission_token_pending({Token, Owner}) ->
+    is_process_alive(Owner) andalso atomics:get(Token, 1) =:= 0.
+
+%% Reservation ownership transfers independently of the token's creator.
+reservation_token_pending({Token, _Owner}) ->
     atomics:get(Token, 1) =:= 0.
 
-admission_token_claim(Token) ->
-    atomics:compare_exchange(Token, 1, 0, 1) =:= ok.
+admission_token_claim({Token, Owner}) ->
+    is_process_alive(Owner) andalso atomics:compare_exchange(Token, 1, 0, 1) =:= ok.
 
 %% Keep admission state in ETS across limiter worker replacement. The heir
 %% owns an inherited table only until the surrounding supervisor exits.

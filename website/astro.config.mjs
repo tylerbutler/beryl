@@ -205,6 +205,10 @@ export default defineConfig({
 									label: "Production hardening",
 									slug: "guides/production-hardening",
 								},
+								{
+									label: "Overload handling",
+									slug: "guides/overload",
+								},
 							],
 						},
 					],

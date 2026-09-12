@@ -202,7 +202,7 @@ pub fn limiter_restart_preserves_connection_state_test() -> Nil {
 
   let count_ip = "192.0.2.21"
   let assert Ok(counted) = transport.acquire_connection_slot(sockets, count_ip)
-  transport.bind_connection_slot(counted)
+  let assert Ok(Nil) = transport.bind_connection_slot(counted)
 
   let old_limiter = limiter_pid(sockets)
   process.kill(old_limiter)
@@ -505,7 +505,7 @@ pub fn update_crash_runs_socket_close_callback_test() -> Nil {
 
   // Drive an app-info event into the crashing update; the runtime rescues the
   // crash, tears the socket down, and runs its registered close callback.
-  socket.notify(sender, Nil)
+  let assert Ok(_) = socket.notify(sender, Nil)
 
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
   // The runtime itself survives the rescued crash and keeps serving.
@@ -620,7 +620,7 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() -> Nil {
     process.spawn(fn() {
       let assert Ok(permit) =
         transport.acquire_connection_slot(sockets, "203.0.113.10")
-      transport.bind_connection_slot(permit)
+      let assert Ok(Nil) = transport.bind_connection_slot(permit)
       let assert Ok(owner) = transport.runtime_pid(sockets)
       let result =
         transport.admit_socket(

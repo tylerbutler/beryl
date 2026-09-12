@@ -13,6 +13,24 @@
 //// browser); payloads that never leave the cluster are cheaper and safer as
 //// plain Gleam types.
 ////
+//// ## Scope recovery and delivery
+////
+//// Each node runs a shared beryl PubSub supervisor. Each scope has its own
+//// supervisor, membership registry, and `pg` process. The service outlives
+//// the process that calls `start`. A `pg` restart preserves the registry,
+//// which restores the topics of live local subscriber owners. Existing
+//// handles remain valid, and repeated joins still create one membership.
+////
+//// Broadcasts are best-effort. During recovery, broadcasts and subscriber
+//// queries can see empty or partial membership. Broadcasts are not buffered
+//// or replayed, and a `Nil` return does not confirm delivery. Each node must
+//// start its own scope; local recovery is not a cluster-wide readiness barrier.
+////
+//// Startup and membership operations can exit with an OTP error during
+//// service failure or recovery. A failed or timed-out join or leave may have
+//// recorded its intent; failure does not roll it back. Retrying is idempotent.
+//// See `start` for startup conflicts and loss of the membership registry.
+////
 //// ## Quick start
 ////
 //// ```gleam
@@ -90,25 +108,39 @@ pub opaque type PubSubConfig {
 /// sent through this instance. The scope identifies the runtime instance.
 /// All handles for one scope must use the same payload type.
 pub opaque type PubSub(payload) {
-  PubSub(scope: atom.Atom)
+  PubSub(scope: atom.Atom, registry: Pid)
 }
 
 // ── FFI declarations ────────────────────────────────────────────────────────
 
 @external(erlang, "beryl_pubsub_ffi", "start_pg_scope")
-fn ffi_start_pg_scope(scope: atom.Atom) -> Nil
+fn ffi_start_pg_scope(scope: atom.Atom) -> Pid
 
 @external(erlang, "beryl_pubsub_ffi", "join_group")
-fn ffi_join_group(scope: atom.Atom, group: String, pid: Pid) -> Nil
+fn ffi_join_group(
+  scope: atom.Atom,
+  registry: Pid,
+  group: String,
+  pid: Pid,
+) -> Nil
 
 @external(erlang, "beryl_pubsub_ffi", "leave_group")
-fn ffi_leave_group(scope: atom.Atom, group: String, pid: Pid) -> Nil
+fn ffi_leave_group(
+  scope: atom.Atom,
+  registry: Pid,
+  group: String,
+  pid: Pid,
+) -> Nil
 
 @external(erlang, "beryl_pubsub_ffi", "get_members")
-fn ffi_get_members(scope: atom.Atom, group: String) -> List(Pid)
+fn ffi_get_members(scope: atom.Atom, registry: Pid, group: String) -> List(Pid)
 
 @external(erlang, "beryl_pubsub_ffi", "get_local_members")
-fn ffi_get_local_members(scope: atom.Atom, group: String) -> List(Pid)
+fn ffi_get_local_members(
+  scope: atom.Atom,
+  registry: Pid,
+  group: String,
+) -> List(Pid)
 
 @external(erlang, "beryl_pubsub_ffi", "send_to_pid")
 fn ffi_send_to_pid(pid: Pid, scope: atom.Atom, message: Message(payload)) -> Nil
@@ -155,18 +187,29 @@ pub fn config_with_scope(name: String) -> PubSubConfig {
 
 /// Start a PubSub instance.
 ///
-/// This starts the configured `pg` scope on the current node. Repeated calls
-/// on the same node are harmless. Each participating node must start the same
-/// scope.
+/// This starts or attaches to a node-owned supervised scope. Repeated calls
+/// share its membership registry; the first caller does not own its lifetime.
+/// The registry restores live local subscriptions after a `pg` process restart.
+/// Each participating node must start the same scope.
+///
+/// Startup errors cause an OTP exit instead of returning a handle. A scope
+/// already owned by an external `pg` process is a startup conflict; beryl does
+/// not adopt or stop it. Startup waits for supervision and local membership
+/// reconciliation, but can fail if the service is recovering.
+///
+/// Loss of the registry itself, including supervisor restart-intensity
+/// exhaustion, invalidates existing handles. Their membership, broadcast, and
+/// subscriber-query calls exit rather than silently using an empty replacement.
+/// Call `start` again, create new subscribers, and rejoin their topics.
+/// This is not persistent storage across service or node failure.
 ///
 /// `payload` is fixed by how the returned value is used or annotated at the
 /// call site. For example: `pubsub.start(config) : PubSub(MySyncPayload)`.
 /// Starting the same scope again returns another handle to the same runtime
 /// instance, so every use of that scope must choose the same payload type.
 pub fn start(config: PubSubConfig) -> PubSub(payload) {
-  // pg:start treats already-started as success; the FFI swallows both
-  ffi_start_pg_scope(config.scope)
-  PubSub(scope: config.scope)
+  let registry = ffi_start_pg_scope(config.scope)
+  PubSub(scope: config.scope, registry: registry)
 }
 
 /// A typed subscription handle owned by a single process.
@@ -179,7 +222,7 @@ pub fn start(config: PubSubConfig) -> PubSub(payload) {
 /// Create it in the receiving process, such as an actor's initializer.
 /// A `Subject` delivers messages only to its owner.
 pub opaque type Subscriber(payload) {
-  Subscriber(scope: atom.Atom, owner: Pid)
+  Subscriber(scope: atom.Atom, registry: Pid, owner: Pid)
 }
 
 /// Create a subscription handle owned by the current process.
@@ -192,20 +235,45 @@ pub opaque type Subscriber(payload) {
 /// `selecting` uses each subscriber's scope to keep their raw mailbox messages
 /// separate.
 pub fn subscriber(pubsub_instance: PubSub(payload)) -> Subscriber(payload) {
-  Subscriber(scope: pubsub_instance.scope, owner: process.self())
+  Subscriber(
+    scope: pubsub_instance.scope,
+    registry: pubsub_instance.registry,
+    owner: process.self(),
+  )
 }
 
 /// Join a topic so this subscriber receives broadcasts sent to it.
 ///
-/// A subscriber can join many topics. All topics deliver through its one
-/// subject. Joining a topic is idempotent.
+/// A subscriber can join many topics. All topics deliver to its owner's
+/// mailbox. Repeated or concurrent joins create one membership per owner
+/// process, scope, and topic, including joins through different handles.
+/// Each broadcast delivers once to that owner, and subscriber counts include
+/// it once.
+///
+/// The registry retains the membership through `pg` restarts and removes it
+/// when its owner exits. During recovery this call can exit with an OTP error.
+/// The call uses a five-second registry timeout; an error or timeout does not
+/// roll back intent already recorded by the registry. Retrying is idempotent.
 pub fn join(subscriber: Subscriber(payload), topic: String) -> Nil {
-  ffi_join_group(subscriber.scope, topic, subscriber.owner)
+  ffi_join_group(subscriber.scope, subscriber.registry, topic, subscriber.owner)
 }
 
 /// Leave a topic previously joined with `join`.
+///
+/// One call removes the owner's membership for this scope and topic, even
+/// after repeated joins through different handles. Repeated leaves are
+/// harmless. Other owners, scopes, and topics are unaffected.
+///
+/// A leave removes recovery intent as well as live membership. Like `join`,
+/// it can exit during recovery or after a five-second registry timeout.
+/// A failed call may still take effect; retrying is idempotent.
 pub fn leave(subscriber: Subscriber(payload), topic: String) -> Nil {
-  ffi_leave_group(subscriber.scope, topic, subscriber.owner)
+  ffi_leave_group(
+    subscriber.scope,
+    subscriber.registry,
+    topic,
+    subscriber.owner,
+  )
 }
 
 /// Add a subscriber's PubSub message delivery to a `Selector`, alongside a
@@ -247,7 +315,8 @@ pub fn broadcast(
 ) -> Nil {
   let message =
     Message(topic: topic, event: event, payload: payload, from: System)
-  let members = ffi_get_members(pubsub_instance.scope, topic)
+  let members =
+    ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
   list.each(members, fn(pid) {
     ffi_send_to_pid(pid, pubsub_instance.scope, message)
   })
@@ -263,9 +332,27 @@ pub fn broadcast_from(
 ) -> Nil {
   let message =
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
-  ffi_get_members(pubsub_instance.scope, topic)
+  ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
   |> list.filter(fn(pid) { pid != from })
   |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
+}
+
+/// Send an internal message to one member obtained from `subscribers`.
+///
+/// Uses the same scoped wire tuple as broadcasts and records the calling PID.
+@internal
+pub fn send_to(
+  pubsub_instance: PubSub(payload),
+  member: Pid,
+  topic: String,
+  event: String,
+  payload: payload,
+) -> Nil {
+  ffi_send_to_pid(
+    member,
+    pubsub_instance.scope,
+    Message(topic:, event:, payload:, from: FromPid(process.self())),
+  )
 }
 
 /// Broadcast a message to all subscribers except a process.
@@ -286,12 +373,11 @@ pub fn broadcast_from_socket(
       payload: payload,
       from: FromSocket(from, except_socket_id),
     )
-  ffi_get_members(pubsub_instance.scope, topic)
+  ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
   |> list.filter(fn(pid) { pid != from })
   |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
 }
 
-// nolint: unused_exports -- public PubSub API intended for downstream consumers
 /// Broadcast a message only to subscribers on the current node.
 pub fn local_broadcast(
   pubsub_instance: PubSub(payload),
@@ -301,10 +387,31 @@ pub fn local_broadcast(
 ) -> Nil {
   let message =
     Message(topic: topic, event: event, payload: payload, from: System)
-  let members = ffi_get_local_members(pubsub_instance.scope, topic)
+  let members =
+    ffi_get_local_members(
+      pubsub_instance.scope,
+      pubsub_instance.registry,
+      topic,
+    )
   list.each(members, fn(pid) {
     ffi_send_to_pid(pid, pubsub_instance.scope, message)
   })
+}
+
+/// Broadcast to other local subscribers using the unchanged scoped wire tuple.
+@internal
+pub fn local_broadcast_from(
+  pubsub_instance: PubSub(payload),
+  from: Pid,
+  topic: String,
+  event: String,
+  payload: payload,
+) -> Nil {
+  let message =
+    Message(topic: topic, event: event, payload: payload, from: FromPid(from))
+  ffi_get_local_members(pubsub_instance.scope, pubsub_instance.registry, topic)
+  |> list.filter(fn(pid) { pid != from })
+  |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
 }
 
 /// Return all topic subscribers on all nodes.
@@ -312,7 +419,7 @@ pub fn subscribers(
   pubsub_instance: PubSub(payload),
   topic: String,
 ) -> List(Pid) {
-  ffi_get_members(pubsub_instance.scope, topic)
+  ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
 }
 
 /// Return the number of topic subscribers on all nodes.
@@ -320,5 +427,9 @@ pub fn subscriber_count(
   pubsub_instance: PubSub(payload),
   topic: String,
 ) -> Int {
-  list.length(ffi_get_members(pubsub_instance.scope, topic))
+  list.length(ffi_get_members(
+    pubsub_instance.scope,
+    pubsub_instance.registry,
+    topic,
+  ))
 }

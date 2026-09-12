@@ -5,7 +5,6 @@
 
 import beryl
 import beryl/channel
-import beryl/socket
 import beryl/transport
 import beryl/wire
 import channel_dispatch_helper as helper
@@ -105,7 +104,7 @@ fn room_channel(
       "terminate:"
         <> topic
         <> ":"
-        <> reason_name(reason)
+        <> helper.reason_name(reason)
         <> ":"
         <> int.to_string(count),
     )
@@ -153,15 +152,6 @@ fn on_info(count: Int, note: Note) -> channel.Next(Int) {
       process.send(reply, process.self())
       channel.stay(count)
     }
-  }
-}
-
-fn reason_name(reason: socket.StopReason) -> String {
-  case reason {
-    socket.Normal -> "normal"
-    socket.Shutdown -> "shutdown"
-    socket.HeartbeatTimeout -> "heartbeat_timeout"
-    socket.Errored(detail) -> "errored:" <> detail
   }
 }
 
@@ -531,7 +521,7 @@ pub fn typed_info_reaches_the_channels_on_info_test() -> Nil {
   let #(_channels, wiring, frames) = joined_room("room:a")
   let sender = next_sender(wiring)
 
-  channel.notify(sender, Announce("hello"))
+  let assert Ok(_) = channel.notify(sender, Announce("hello"))
 
   helper.recv(frames) |> string.contains("\"hello#1\"") |> should.be_true
 }
@@ -540,8 +530,8 @@ pub fn every_send_delivers_exactly_one_payload_in_order_test() -> Nil {
   let #(_channels, wiring, frames) = joined_room("room:a")
   let sender = next_sender(wiring)
 
-  channel.notify(sender, Announce("a"))
-  channel.notify(sender, Announce("b"))
+  let assert Ok(_) = channel.notify(sender, Announce("a"))
+  let assert Ok(_) = channel.notify(sender, Announce("b"))
 
   helper.recv(frames) |> string.contains("\"a#1\"") |> should.be_true
   helper.recv(frames) |> string.contains("\"b#2\"") |> should.be_true
@@ -554,7 +544,7 @@ pub fn sends_from_another_process_are_delivered_test() -> Nil {
   let done = process.new_subject()
 
   process.spawn_unlinked(fn() {
-    channel.notify(sender, Announce("remote"))
+    let assert Ok(_) = channel.notify(sender, Announce("remote"))
     process.send(done, Nil)
   })
 
@@ -576,11 +566,11 @@ pub fn a_stale_generations_send_is_never_delivered_test() -> Nil {
   // The stale sender belongs to the closed generation: its envelope is
   // dropped before the sealed thunk runs, so its payload reaches neither
   // generation.
-  channel.notify(stale, Announce("stale"))
+  let assert Error(_) = channel.notify(stale, Announce("stale"))
   helper.recv_none(frames)
 
   // ...and the live generation is unpolluted.
-  channel.notify(fresh, Announce("fresh"))
+  let assert Ok(_) = channel.notify(fresh, Announce("fresh"))
   helper.recv(frames) |> string.contains("\"fresh#1\"") |> should.be_true
 }
 
@@ -619,10 +609,10 @@ pub fn a_rejected_joins_sender_cannot_reach_a_later_accepted_join_test() -> Nil 
   helper.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
   let live_sender = next_sender_of(senders)
 
-  channel.notify(rejected_sender, Announce("ghost"))
+  let assert Error(_) = channel.notify(rejected_sender, Announce("ghost"))
   helper.recv_none(frames)
 
-  channel.notify(live_sender, Announce("real"))
+  let assert Ok(_) = channel.notify(live_sender, Announce("real"))
   helper.recv(frames) |> string.contains("\"real\"") |> should.be_true
 }
 
@@ -644,7 +634,7 @@ pub fn a_send_to_a_closed_channel_is_never_delivered_test() -> Nil {
   helper.next_trace(wiring.trace)
   |> should.equal("terminate:room:a:shutdown:0")
 
-  channel.notify(sender, Announce("gone"))
+  let assert Error(_) = channel.notify(sender, Announce("gone"))
   helper.recv_none(frames)
 }
 
@@ -652,7 +642,7 @@ pub fn an_info_result_can_close_the_channel_test() -> Nil {
   let #(_channels, wiring, frames) = joined_room("room:a")
   let sender = next_sender(wiring)
 
-  channel.notify(sender, Farewell)
+  let assert Ok(_) = channel.notify(sender, Farewell)
 
   helper.recv(frames) |> string.contains("\"farewell\"") |> should.be_true
   helper.recv(frames) |> string.contains("phx_close") |> should.be_true
@@ -674,7 +664,7 @@ pub fn join_and_info_run_in_the_topics_own_process_test() -> Nil {
     as "the join reported its process"
   let answers = process.new_subject()
 
-  channel.notify(sender, WhereAmI(answers))
+  let assert Ok(_) = channel.notify(sender, WhereAmI(answers))
 
   let assert Ok(info_pid) = process.receive(answers, 500)
     as "on_info reported its process"

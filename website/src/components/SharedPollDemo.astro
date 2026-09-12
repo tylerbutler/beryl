@@ -1,0 +1,216 @@
+---
+import "../styles/tutorial-demos.css";
+---
+
+<shared-poll-demo class="tutorial-demo not-content">
+	<figure aria-label="Two sockets, one shared poll">
+		<figcaption>Two sockets, one shared poll</figcaption>
+		<p>Which BEAM language are you using today?</p>
+		<fieldset disabled>
+			<legend class="demo-sr-only">Shared poll controls</legend>
+			<div class="demo-panels">
+				{["Alice", "Bob"].map((name) => (
+					<section class="demo-panel" data-client={name} aria-label={`${name}'s socket`}>
+						<div class="demo-heading"><strong>{name}</strong></div>
+						<p class="demo-label" data-connection>Connected; subscribed to poll:demo</p>
+						<span class="demo-label">Private model subset (sender omitted)</span>
+						<pre class="demo-code" data-private>topics: {"{"}"poll:demo"{"}"}</pre>
+						<div class="demo-controls">
+							<button type="button" data-vote="gleam">Vote Gleam</button>
+							<button type="button" data-vote="erlang">Vote Erlang</button>
+							<button type="button" data-toggle>Disconnect {name}</button>
+						</div>
+						<p class="demo-label">Last received totals</p>
+						<p data-receipt>Gleam 0 / Erlang 0</p>
+						<p class="demo-label" data-delivery>Reply to get_state</p>
+					</section>
+				))}
+			</div>
+			<p class="demo-route" data-route>Each join was accepted without totals, then get_state fetched them.</p>
+			<svg class="demo-paths" viewBox="0 0 600 64" preserveAspectRatio="none" aria-hidden="true">
+				{[
+					{ name: "Alice", path: "M150 0 V22 Q150 32 160 32 H290 Q300 32 300 42 V64" },
+					{ name: "Bob", path: "M450 0 V22 Q450 32 440 32 H310 Q300 32 300 42 V64" },
+				].map(({ name, path }) => (
+					<>
+						<path d={path} />
+						<path class="demo-travel" data-packet={name} d={path} pathLength="100" />
+					</>
+				))}
+			</svg>
+			<section class="demo-store" aria-label="Application-owned poll store">
+				<strong>Shared store actor: running</strong>
+				<p data-room>poll:demo: open</p>
+				<p class="demo-totals" data-totals>Gleam 0 / Erlang 0</p>
+				<p data-members>Room members: 2</p>
+			</section>
+			<p class="demo-label">Ordered output effects (pseudocode)</p>
+			<pre class="demo-code" data-effects>Join: AcceptJoin(ref, None)
+Fetch: ReplyOk(get_state ref, totals)</pre>
+			<button type="button" data-reset>Reset</button>
+		</fieldset>
+		<p class="demo-status" role="status" aria-atomic="true" data-status>
+			Alice and Bob have separate socket models. Both fetched the shared totals.
+		</p>
+		<p class="demo-caption">Local simulation, not a BEAM server. Each valid click adds a vote;
+			there is no one-vote-per-person rule. This Voting checkpoint has no poll-closing timer.</p>
+		<noscript><p>The voter receives a reply; the other subscribed socket receives a broadcast.
+			One disconnect discards that socket's model. The store keeps the poll while another member
+			remains, then deletes the room when its last member leaves.</p></noscript>
+	</figure>
+</shared-poll-demo>
+
+<script>
+	import { animate, cancelMotion, element } from "./tutorial-demo";
+
+	type Totals = { gleam: number; erlang: number };
+	type Client = {
+		name: string;
+		panel: HTMLElement;
+		packet: SVGPathElement;
+		connected: boolean;
+		generation: number;
+		received: Totals;
+		delivery: string;
+	};
+	const totalsText = (totals: Totals) => `Gleam ${totals.gleam} / Erlang ${totals.erlang}`;
+
+	class SharedPollDemo extends HTMLElement {
+		private resetDemo: (() => void) | undefined;
+
+		connectedCallback() {
+			if (this.resetDemo) return;
+			const clients: Client[] = ["Alice", "Bob"].map((name) => ({
+				name,
+				panel: element(this, `[data-client="${name}"]`, HTMLElement),
+				packet: element(this, `[data-packet="${name}"]`, SVGPathElement),
+				connected: true,
+				generation: 0,
+				received: { gleam: 0, erlang: 0 },
+				delivery: "Reply to get_state",
+			}));
+			const status = element(this, "[data-status]", HTMLElement);
+			const route = element(this, "[data-route]", HTMLElement);
+			const effects = element(this, "[data-effects]", HTMLElement);
+			let room: Totals | null = { gleam: 0, erlang: 0 };
+			let busy = false;
+
+			const render = () => {
+				this.dataset["busy"] = String(busy);
+				for (const client of clients) {
+					element(client.panel, "[data-connection]", HTMLElement).textContent = client.connected
+						? "Connected; subscribed to poll:demo" : "Disconnected; no subscription";
+					element(client.panel, "[data-private]", HTMLElement).textContent = client.connected
+						? 'topics: {"poll:demo"}' : "No model: socket stopped";
+					element(client.panel, "[data-receipt]", HTMLElement).textContent = totalsText(client.received);
+					element(client.panel, "[data-delivery]", HTMLElement).textContent = client.connected
+						? client.delivery : `${client.delivery} (offline; no new updates)`;
+					element(client.panel, "[data-toggle]", HTMLButtonElement).textContent =
+						`${client.connected ? "Disconnect" : "Reconnect"} ${client.name}`;
+					for (const button of client.panel.querySelectorAll<HTMLButtonElement>("[data-vote]")) {
+						button.disabled = !client.connected || busy;
+					}
+				}
+				element(this, "[data-room]", HTMLElement).textContent = room ? "poll:demo: open" : "Room removed";
+				element(this, "[data-totals]", HTMLElement).textContent = room ? totalsText(room) : "No poll stored";
+				element(this, "[data-members]", HTMLElement).textContent =
+					`Room members: ${clients.filter((client) => client.connected).length}`;
+			};
+			const reset = () => {
+				cancelMotion(this);
+				busy = false;
+				room = { gleam: 0, erlang: 0 };
+				for (const client of clients) {
+					client.generation += 1;
+					client.connected = true;
+					client.received = { ...room };
+					client.delivery = "Reply to get_state";
+				}
+				route.textContent = "Each join was accepted without totals, then get_state fetched them.";
+				effects.textContent = "Join: AcceptJoin(ref, None)\nFetch: ReplyOk(get_state ref, totals)";
+				status.textContent = "Alice and Bob have separate socket models. Both fetched the shared totals.";
+				render();
+			};
+			for (const client of clients) {
+				for (const button of client.panel.querySelectorAll<HTMLButtonElement>("[data-vote]")) {
+					button.addEventListener("click", () => {
+						const choice = button.dataset["vote"];
+						if (!client.connected || busy) return;
+						if (!room || (choice !== "gleam" && choice !== "erlang")) {
+							throw new Error("Voting needs an existing room and a Gleam or Erlang choice.");
+						}
+						room = { ...room, [choice]: room[choice] + 1 };
+						const payload = { ...room };
+						const targets = clients.filter((recipient) => recipient.connected).map((recipient) => ({
+							recipient, generation: recipient.generation,
+							delivery: recipient === client ? "Reply to vote" : "Peer broadcast: poll_state",
+						}));
+						busy = true;
+						render();
+						route.textContent = `${client.name} -> update -> shared store: vote ${choice}`;
+						status.textContent = `${client.name} voted. The store serialized the update: ${totalsText(payload)}.`;
+						effects.textContent = `Next(model, [\n  ReplyOk(vote ref, ${totalsText(payload)}),\n  BroadcastFrom("poll:demo", "poll_state", same totals)\n])`;
+						animate(client.packet, [
+							{ strokeDashoffset: "110", opacity: 1 },
+							{ strokeDashoffset: "-10", opacity: 1 },
+						], 250, () => {
+							route.textContent = `${client.name}: reply; other subscribed socket: broadcast. Effects run in that order, not a cross-client arrival guarantee.`;
+							let remaining = targets.length;
+							for (const { recipient, generation, delivery } of targets) {
+								animate(recipient.packet, [
+									{ strokeDashoffset: "-10", opacity: 1 },
+									{ strokeDashoffset: "110", opacity: 1 },
+								], 350, () => {
+									if (recipient.connected && recipient.generation === generation) {
+										recipient.received = { ...payload };
+										recipient.delivery = delivery;
+									}
+									remaining -= 1;
+									if (remaining === 0) {
+										busy = false;
+										status.textContent = "Vote delivery finished. Only the original, still-connected recipients received it.";
+									}
+									render();
+								});
+							}
+						});
+					});
+				}
+				element(client.panel, "[data-toggle]", HTMLButtonElement).addEventListener("click", () => {
+					client.generation += 1;
+					client.connected = !client.connected;
+					if (client.connected) {
+						const created = room === null;
+						room ??= { gleam: 0, erlang: 0 };
+						client.received = { ...room };
+						client.delivery = "Reply to get_state";
+						route.textContent = `${client.name}: connect -> AcceptJoin(ref, None) -> get_state -> reply`;
+						status.textContent = `${client.name} created a fresh socket model and fetched ${
+							created ? "a new poll with zero totals." : "the existing room totals."}`;
+					} else {
+						const empty = clients.every((member) => !member.connected);
+						if (empty) room = null;
+						route.textContent = `${client.name}: disconnect -> Closed("poll:demo") -> store.leave`;
+						status.textContent = `${client.name}'s socket model ended. ${empty
+							? "The last member left: the room was deleted. The store actor is still running."
+							: "The other member keeps the room and its totals."}`;
+					}
+					render();
+				});
+			}
+			element(this, "[data-reset]", HTMLButtonElement).addEventListener("click", reset);
+			this.resetDemo = reset;
+			render();
+			element(this, "fieldset", HTMLFieldSetElement).disabled = false;
+			this.dataset["ready"] = "true";
+		}
+
+		disconnectedCallback() {
+			this.resetDemo?.();
+		}
+	}
+
+	if (!customElements.get("shared-poll-demo")) {
+		customElements.define("shared-poll-demo", SharedPollDemo);
+	}
+</script>

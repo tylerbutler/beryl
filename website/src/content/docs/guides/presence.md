@@ -57,9 +57,10 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
-`track`, `update`, `untrack`, and `untrack_all` panic if the actor is
-unavailable or does not reply within this timeout. Presence reads bypass the
-actor mailbox and do not use it.
+Mutations return typed admission, owner-exit, or timeout errors. `update`
+wraps call failures in `RequestFailed`; it also reports `UnknownRef`.
+A timeout cancels pending work, but a running mutation may still complete.
+Reads bypass the mutation queue. See [overload handling](/guides/overload/).
 
 ## Track connected users
 
@@ -69,7 +70,7 @@ Track a user's presence when they join a channel:
 import gleam/json
 
 // Track a user in a topic
-let ref = presence.track(
+let assert Ok(ref) = presence.track(
   presence_handle,
   "room:lobby",   // topic
   "user:alice",    // key (groups multiple connections)
@@ -106,10 +107,10 @@ or non-public ref returns `Error(presence.UnknownRef(ref))`.
 
 ```gleam
 // Remove a specific presence, using the ref returned by `track`
-presence.untrack(presence_handle, new_ref)
+let assert Ok(Nil) = presence.untrack(presence_handle, new_ref)
 
 // Remove all presences for a session ID / socket (e.g., on disconnect)
-presence.untrack_all(presence_handle, socket_id)
+let assert Ok(Nil) = presence.untrack_all(presence_handle, socket_id)
 ```
 
 `track` returns a ref for the new presence entry. Keep the ref if you must
@@ -147,7 +148,7 @@ unaffected.
 Both the stable actor name and the read model's ETS table are node-local, so a
 `Presence` handle must stay on the node where its child specification runs.
 From another BEAM node, `track`/`update`/`untrack`/`untrack_all` cannot reach
-the owning actor and panic as unavailable, while `list`/`get_by_key`/`count`
+the owning actor and return a call error, while `list`/`get_by_key`/`count`
 return `Error(Nil)`. Use PubSub replication (`with_pubsub`) to share presence
 state across nodes instead of moving the handle itself.
 
@@ -195,13 +196,19 @@ on the changed topic:
 
 ```gleam
 import beryl
+import beryl/overload
+import gleam/io
 
 let config =
   presence.default_config("node1")
   |> presence.with_pubsub(pubsub_handle)
   |> presence.with_broadcast_interval(1500)
   |> presence.with_on_diff(fn(diff) {
-    beryl.broadcast_presence_diff(channels, "room:lobby", diff)
+    // Keep the original diff so the helper can apply its delivery scope.
+    case beryl.broadcast_presence_diff(channels, "room:lobby", diff) {
+      Ok(Nil) -> Nil
+      Error(reason) -> io.println(overload.describe(reason))
+    }
   })
 ```
 
@@ -212,7 +219,10 @@ let config =
   diff
   |> presence.diff_topics
   |> list.each(fn(topic) {
-    beryl.broadcast_presence_diff(channels, topic, diff)
+    case beryl.broadcast_presence_diff(channels, topic, diff) {
+      Ok(Nil) -> Nil
+      Error(reason) -> io.println(overload.describe(reason))
+    }
   })
 })
 ```
@@ -229,20 +239,71 @@ The payload matches Phoenix Presence's shape, with joins and leaves grouped by p
 ```
 
 For direct integrations, `beryl/presence/wire.encode_diff(diff, topic)`
-returns the encoded JSON payload without broadcasting it. If channels use
-PubSub, `broadcast_presence_diff` uses the same cross-node delivery as
-`beryl.broadcast`.
+returns the encoded JSON payload without broadcasting it. The JSON contains
+no delivery-scope metadata. `beryl.broadcast_presence_diff` reads
+`presence.diff_scope(diff)` before encoding:
+
+| Diff source | Scope | Socket delivery |
+|---|---|---|
+| Application mutations or `presence.diff(...)` | `Cluster` | Normal local and cross-node PubSub delivery |
+| Remote snapshots, replica failure, and recovery | `LocalNode` | Local socket subscribers, including other local runtimes in the same PubSub scope |
+
+A node's failure detector reports its own view, not a cluster-wide leave.
+For example, B can hide A during a presence-scope outage while A still has
+live sessions. The local diff must not remove those sessions from A's clients.
+Normal application track/untrack diffs still cross the application PubSub
+scope even while presence replication is unavailable.
+
+:::caution[Preserve the diff's scope]
+Use the callback above on each presence node. Do not replace the helper with
+`encode_diff` followed by an unconditional `beryl.broadcast`, or rebuild a
+received diff through `presence.diff(...)`: both discard its local scope.
+Custom publishers must inspect `diff_scope` and publish `LocalNode` diffs
+only on the observing node. A local worker may handle the callback; do not
+forward a local-view diff to another node for publication.
+:::
+
+Application mutations publish cluster-wide at their source. Replication
+callbacks repair each receiver's local clients; they are not cluster-wide
+relays. Applications that previously used one receiver's callback as the sole
+global publisher must move application-change publishing to the source.
 
 ## Replicate presence across nodes
 
 When you configure PubSub, the presence actor:
 
-1. Sends its full CRDT state to `beryl:presence:sync` at set intervals.
-2. Receives remote state from other nodes through PubSub.
+1. Requests full owner snapshots from the current `pg` members at startup and
+   every configured interval (1500 ms by default).
+2. Replies to peer requests even when local state has not changed.
 3. Merges remote state with the AWORSet merge algorithm.
 4. Calls `on_diff` for changes from the merge.
 
-Self-delivery is prevented by `pubsub.broadcast_from`, so nodes don't process their own sync messages.
+Requests exclude the actor itself and carry a unique reply ref. Periodic
+requests repair missed delivery and late joins without a new `track`. The
+interval is a repair cadence, not a maximum convergence time; membership and
+delivery must recover, and actors must finish processing their work.
+
+A non-positive interval disables periodic requests, not the initial exchange
+or replies. Keep a positive interval for quiet recovery. Presence sync
+version 2 does not interoperate with version 1; upgrade all replicas in one
+presence scope together. The outer PubSub wire format has not changed.
+
+Remote entries disappear, with leave diffs, when beryl detects their actor
+exit, node disconnection, or loss of sync-group membership. This also applies
+to temporary partitions: your local sessions remain available, but peers can
+show them as offline. beryl retains their causal history for 60 seconds.
+A fresh snapshot after reconnect restores the source actor's current entries,
+without first exposing obsolete retained entries. See
+[replica availability](/architecture/presence/#replica-availability).
+
+Use one live actor per replica base. beryl orders receiver-issued requests to
+reject delayed old-incarnation replies, and accepts only the answering
+owner's entries and clocks. A confirmed replacement retires its predecessor.
+After the retention window, beryl invalidates outstanding requests before
+compacting unavailable history; a returning actor must provide a new full
+snapshot. See [safe retirement](/architecture/presence/#incarnation-freshness-and-retirement)
+for the conditions and bounds. Remote visibility requires a direct node
+connection, not a snapshot relayed by another peer.
 
 The underlying CRDT state is intentionally internal. Applications should use PubSub replication rather than constructing or merging raw presence state values.
 

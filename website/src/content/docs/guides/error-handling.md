@@ -128,6 +128,7 @@ socket.Closed(topic, reason) -> {
     socket.Normal -> Nil
     socket.Shutdown -> Nil
     socket.Errored(_) -> Nil
+    socket.AdmissionRejected(_) -> Nil
   }
   socket.Next(prune(model, topic), [])
 }
@@ -222,10 +223,11 @@ case group.create(groups, name) {
 }
 ```
 
-`group.broadcast` resolves the group's topics synchronously and never returns
-an error. If the group does not exist, the call does nothing. Like other group
-operations, it panics if the groups actor is unavailable or does not reply
-within 5 seconds.
+`group.broadcast` returns lookup or partial-admission errors. Like other group
+operations, its topic lookup still panics if the groups actor is unavailable
+or exceeds its configured call timeout. Notification and broadcast APIs
+return admission Results; presence mutations also report timeouts and owner
+exit. See [overload handling](/guides/overload/) for migration and close behavior.
 
 ## Startup configuration errors
 

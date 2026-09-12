@@ -1,4 +1,5 @@
 import beryl/bridge
+import beryl/overload
 import beryl/socket
 import gleam/erlang/process
 import gleam/string
@@ -10,7 +11,35 @@ import test_helper
 fn capturing_sender(
   into received: process.Subject(message),
 ) -> socket.Sender(message) {
-  socket.make_sender(fn(message) { process.send(received, message) })
+  socket.make_sender(
+    fn(message) {
+      process.send(received, message)
+      Ok(Nil)
+    },
+    fn() { Error(overload.Unavailable) },
+  )
+}
+
+pub fn bridge_stops_after_rejected_delivery_without_retry_test() -> Nil {
+  let attempts = process.new_subject()
+  let sender =
+    socket.make_sender(
+      fn(value: Int) {
+        process.send(attempts, value)
+        Error(overload.Overloaded(overload.SocketQueue))
+      },
+      fn() { Error(overload.Unavailable) },
+    )
+  let assert Ok(started) = bridge.start(to: sender, with: fn(value) { value })
+  let monitor = process.monitor(bridge.pid(started))
+  process.send(bridge.subject(started), 1)
+  process.send(bridge.subject(started), 2)
+  process.receive(attempts, 1000) |> should.equal(Ok(1))
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(1000)
+  process.receive(attempts, 0) |> should.equal(Error(Nil))
 }
 
 pub fn bridge_forwards_subject_values_to_sender_test() -> Nil {

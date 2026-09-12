@@ -1,6 +1,16 @@
 -module(beryl_telemetry_ffi).
 -export([execute/1, monotonic_time/0, mailbox_length/0]).
 
+execute({queue_occupancy,
+         {occupancy, Boundary, Items, Bytes, MaxItems, MaxBytes,
+          HighItems, HighBytes, Rejected, Cancelled, Age}, Outcome}) ->
+    telemetry:execute([beryl, queue, occupancy],
+        #{items => Items, bytes => Bytes, high_items => HighItems,
+          high_bytes => HighBytes, oldest_age_ms => Age,
+          rejected => Rejected, cancelled => Cancelled,
+          max_items => MaxItems, max_bytes => MaxBytes},
+        #{boundary => Boundary, outcome => queue_outcome(Outcome)}),
+    nil;
 execute({transport_upgrade_stop, Duration, Transport, Outcome}) ->
     telemetry:execute(
         [beryl, transport, upgrade, stop],
@@ -61,6 +71,13 @@ execute({broadcast_stop, Duration, Recipients, Origin}) ->
         },
         #{origin => broadcast_origin(Origin)}
     ),
+    nil;
+execute(presence_sync_rejected) ->
+    telemetry:execute(
+        [beryl, presence, sync, rejected],
+        #{count => 1},
+        #{reason => same_replica}
+    ),
     nil.
 
 monotonic_time() ->
@@ -74,6 +91,9 @@ mailbox_length() ->
 transport(mist) -> mist;
 transport(ewe) -> ewe.
 
+queue_outcome(queue_changed) -> changed;
+queue_outcome(queue_rejected) -> rejected.
+
 outcome(upgrade_succeeded) -> success;
 outcome(origin_rejected) -> origin_rejected;
 outcome(version_rejected) -> version_rejected;
@@ -84,6 +104,7 @@ outcome(frame_routed) -> routed;
 outcome(frame_oversized) -> oversized;
 outcome(frame_rate_limited) -> rate_limited;
 outcome(frame_decode_failed) -> decode_failed;
+outcome(frame_admission_rejected) -> admission_rejected;
 outcome(join_accepted) -> accepted;
 outcome(join_handler_rejected) -> handler_rejected;
 outcome(join_no_handler) -> no_handler;
@@ -91,6 +112,7 @@ outcome(join_invalid_topic) -> invalid_topic;
 outcome(join_topic_limit) -> topic_limit;
 outcome(join_rate_limited) -> rate_limited;
 outcome(join_callback_failed) -> callback_error;
+outcome(join_admission_rejected) -> admission_rejected;
 outcome(join_socket_missing) -> socket_missing;
 outcome(message_handled) -> handled;
 outcome(message_unjoined) -> unjoined;
@@ -98,6 +120,7 @@ outcome(message_stale) -> stale;
 outcome(message_invalid) -> invalid;
 outcome(message_rate_limited) -> rate_limited;
 outcome(message_callback_failed) -> callback_error;
+outcome(message_admission_rejected) -> admission_rejected;
 outcome(message_socket_missing) -> socket_missing.
 
 frame_kind(text_frame) -> text;
@@ -115,12 +138,14 @@ callback_result(reply) -> reply;
 callback_result(reply_error) -> reply_error;
 callback_result(push) -> push;
 callback_result(stop) -> stop;
-callback_result(callback_failed) -> failed.
+callback_result(callback_failed) -> failed;
+callback_result(callback_admission_rejected) -> admission_rejected.
 
 disconnect_reason(normal_disconnect) -> normal;
 disconnect_reason(heartbeat_timeout) -> heartbeat_timeout;
 disconnect_reason(shutdown_disconnect) -> shutdown;
-disconnect_reason(callback_disconnect) -> callback_error.
+disconnect_reason(callback_disconnect) -> callback_error;
+disconnect_reason(admission_disconnect) -> admission_rejected.
 
 broadcast_origin(local) -> local;
 broadcast_origin(remote) -> remote.

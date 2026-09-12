@@ -71,6 +71,7 @@ fn route(sockets: beryl.Sockets, socket_id: String, raw: String) -> Nil {
   let assert Ok(message) =
     codec.decode_text(transport.active_codec(sockets))(raw)
   transport.route_decoded(sockets, socket_id, message)
+  |> should.equal(Ok(Nil))
 }
 
 fn join(sockets: beryl.Sockets, socket_id: String, topic: String) -> Nil {

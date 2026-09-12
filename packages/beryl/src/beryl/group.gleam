@@ -21,6 +21,7 @@
 //// ```
 
 import beryl
+import beryl/overload
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/json
@@ -59,6 +60,13 @@ pub type GroupError {
   GroupAlreadyExists(name: String)
   /// The group was not found.
   GroupNotFound(name: String)
+}
+
+/// A group lookup or one topic's local broadcast admission failed.
+pub type BroadcastError {
+  GroupLookupFailed(GroupError)
+  /// Earlier topics were admitted; the failing topic and later topics were not.
+  BroadcastRejected(admitted_topics: Int, reason: overload.AdmissionError)
 }
 
 /// Messages that the groups actor handles.
@@ -230,7 +238,9 @@ pub fn list_groups(groups: Groups) -> List(String) {
 ///
 /// This function sends the message to each topic through `beryl.broadcast`.
 /// The groups actor performs the topic lookup. The caller performs the
-/// fan-out. If the group does not exist, this function does nothing.
+/// fan-out. A missing group returns `GroupLookupFailed`. On admission failure,
+/// `BroadcastRejected` reports the number of earlier topics admitted. Those
+/// admissions remain valid; fan-out is not transactional.
 ///
 /// Panics if the groups actor is unavailable or does not reply within the
 /// configured call timeout.
@@ -240,12 +250,11 @@ pub fn broadcast(
   group_name: String,
   event: String,
   payload: json.Json,
-) -> Nil {
-  case topics(groups, group_name) {
-    Ok(topics) -> broadcast_to_topics(topics, channels, event, payload)
-    Error(GroupAlreadyExists(_)) -> Nil
-    Error(GroupNotFound(_)) -> Nil
-  }
+) -> Result(Nil, BroadcastError) {
+  use topics <- result.try(
+    topics(groups, group_name) |> result.map_error(GroupLookupFailed),
+  )
+  broadcast_to_topics(topics, channels, event, payload)
 }
 
 // ── Actor loop ──────────────────────────────────────────────────────────────
@@ -339,7 +348,12 @@ fn broadcast_to_topics(
   channels: beryl.Sockets,
   event: String,
   payload: json.Json,
-) -> Nil {
+) -> Result(Nil, BroadcastError) {
   set.to_list(topics)
-  |> list.each(fn(topic) { beryl.broadcast(channels, topic, event, payload) })
+  |> list.try_fold(0, fn(admitted, topic) {
+    beryl.broadcast(channels, topic, event, payload)
+    |> result.map(fn(_) { admitted + 1 })
+    |> result.map_error(fn(error) { BroadcastRejected(admitted, error) })
+  })
+  |> result.map(fn(_) { Nil })
 }

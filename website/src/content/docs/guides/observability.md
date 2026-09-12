@@ -3,10 +3,11 @@ title: Monitor beryl
 description: Collect telemetry events, read runtime counts, and export application metrics.
 ---
 
-beryl provides two sources of monitoring data:
+beryl provides these sources of monitoring data:
 
 - Optional `:telemetry` events report rates, outcomes, and operation durations.
 - `beryl/snapshot.get` reports local runtime state at one time.
+- Queue snapshots report capacity and age without waiting for an actor turn.
 
 beryl does not include a Prometheus or OpenTelemetry exporter. Your application
 must aggregate, label, and export the data.
@@ -39,6 +40,14 @@ These stable event names use a fixed set of measurement and metadata keys:
 | `[:beryl, :channel, :join, :stop]` | `count`, `duration` | `outcome` |
 | `[:beryl, :channel, :message, :stop]` | `count`, `duration` | `kind`, `outcome`, `callback_result` |
 | `[:beryl, :broadcast, :stop]` | `count`, `duration`, `recipients` | `origin` |
+| `[:beryl, :queue, :occupancy]` | `items`, `bytes`, `max_items`, `max_bytes`, `high_items`, `high_bytes`, `rejected`, `cancelled`, `oldest_age_ms` | `boundary`, `outcome` |
+
+Queue age uses monotonic **milliseconds**, unlike the `duration` fields below.
+Queue outcomes are `changed` and `rejected`. Admission failures also use
+`admission_rejected` in frame, join, message, callback, and disconnect outcomes.
+Enable presence queue events with `presence.with_telemetry(config)`.
+See [queue snapshots and labels](/guides/overload/#observe-capacity) for the
+snapshot functions, byte-accounting exclusions, and concurrent event ordering.
 
 The `:channel` event-name segment is retained for telemetry compatibility
 even though raw dispatch now owns routing. For an app `update`,

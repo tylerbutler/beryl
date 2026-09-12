@@ -42,7 +42,7 @@ fn presence_handler() -> channel.Handler {
         ])
       })
 
-    channel.notify(context.self, Nil)
+    let assert Ok(_) = channel.notify(context.self, Nil)
     result
   })
 }

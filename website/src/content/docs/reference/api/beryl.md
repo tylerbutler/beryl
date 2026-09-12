@@ -104,6 +104,7 @@ beryl: type-safe real-time communication
 <li><a href="#api-function-with_channel_rate"><code>with_channel_rate</code></a></li>
 <li><a href="#api-function-with_channel_rate_max_keys_per_socket"><code>with_channel_rate_max_keys_per_socket</code></a></li>
 <li><a href="#api-function-with_connection_rate_per_ip"><code>with_connection_rate_per_ip</code></a></li>
+<li><a href="#api-function-with_effect_limits"><code>with_effect_limits</code></a></li>
 <li><a href="#api-function-with_frame_rate"><code>with_frame_rate</code></a></li>
 <li><a href="#api-function-with_heartbeat"><code>with_heartbeat</code></a></li>
 <li><a href="#api-function-with_join_rate"><code>with_join_rate</code></a></li>
@@ -118,8 +119,11 @@ beryl: type-safe real-time communication
 <li><a href="#api-function-with_payload_preview_bytes"><code>with_payload_preview_bytes</code></a></li>
 <li><a href="#api-function-with_presence_handle"><code>with_presence_handle</code></a></li>
 <li><a href="#api-function-with_pubsub"><code>with_pubsub</code></a></li>
+<li><a href="#api-function-with_router_queue_limits"><code>with_router_queue_limits</code></a></li>
+<li><a href="#api-function-with_socket_queue_limits"><code>with_socket_queue_limits</code></a></li>
 <li><a href="#api-function-with_telemetry"><code>with_telemetry</code></a></li>
 <li><a href="#api-function-with_topic_rate"><code>with_topic_rate</code></a></li>
+<li><a href="#api-function-with_worker_queue_limits"><code>with_worker_queue_limits</code></a></li>
   </ul>
 </section>
 </nav>
@@ -291,7 +295,7 @@ pub fn broadcast(
   String,
   String,
   json.Json
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Broadcast a message to all subscribers of a topic.
@@ -322,7 +326,7 @@ pub fn broadcast_from(
   String,
   String,
   json.Json
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Broadcast a message to all subscribers except one socket.
@@ -353,7 +357,7 @@ pub fn broadcast_presence_diff(
   Sockets,
   String,
   presence.Diff
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Broadcast a Phoenix-compatible `presence_diff` event for a topic.
@@ -367,8 +371,14 @@ Broadcast a Phoenix-compatible `presence_diff` event for a topic.
  }
  ```
 
- When the system was started with PubSub, the broadcast is distributed
- using the same semantics as `broadcast`.
+ Honors `presence.diff_scope`: application-mutation and explicitly constructed
+ `Cluster` diffs use the same distributed semantics as `broadcast`.
+ `LocalNode` diffs from replication, failure detection, and recovery reach
+ only local socket subscribers, including other local runtimes in the same
+ PubSub scope. They must not change healthy clients on another node.
+
+ Pass the original diff from `presence.with_on_diff`. Encoding or rebuilding
+ the diff before an unconditional `broadcast` loses this routing metadata.
 
 <div class="api-entry-anchor" id="api-function-child_spec" aria-hidden="true"></div>
 
@@ -392,8 +402,7 @@ Build the app-side dispatch supervision child specification.
  The returned `Sockets` handle is name-backed and usable immediately, even
  before the supervision tree that owns the returned child specification is
  started. Before startup, during a runtime restart window, and after
- shutdown, fire-and-forget handle operations are no-ops and connection
- admission fails cleanly rather than panicking.
+ shutdown, sends return admission errors and connection admission fails.
 
  #### Example
 
@@ -533,6 +542,19 @@ Configure a per-IP connection-attempt rate limit.
 
  This uses the same peer IP and trusted-proxy caveats as
  `with_max_connections_per_ip`.
+
+<div class="api-entry-anchor" id="api-function-with_effect_limits" aria-hidden="true"></div>
+
+### `with_effect_limits`
+
+```gleam
+pub fn with_effect_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound each callback's effect count and inspectable result bytes.
 
 <div class="api-entry-anchor" id="api-function-with_frame_rate" aria-hidden="true"></div>
 
@@ -815,6 +837,32 @@ pub fn with_pubsub(
 
 Add PubSub to a configuration for distributed broadcasts.
 
+<div class="api-entry-anchor" id="api-function-with_router_queue_limits" aria-hidden="true"></div>
+
+### `with_router_queue_limits`
+
+```gleam
+pub fn with_router_queue_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound outstanding local router requests.
+
+<div class="api-entry-anchor" id="api-function-with_socket_queue_limits" aria-hidden="true"></div>
+
+### `with_socket_queue_limits`
+
+```gleam
+pub fn with_socket_queue_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound outstanding socket work, including presence-suspended continuations.
+
 <div class="api-entry-anchor" id="api-function-with_telemetry" aria-hidden="true"></div>
 
 ### `with_telemetry`
@@ -848,3 +896,16 @@ Configure a per-topic-pattern message rate limit for an app-dispatch
  only after a socket has joined the topic. A non-positive `per_second`
  explicitly disables limiting for matching topics, including any global
  channel limit, and allocates no bucket.
+
+<div class="api-entry-anchor" id="api-function-with_worker_queue_limits" aria-hidden="true"></div>
+
+### `with_worker_queue_limits`
+
+```gleam
+pub fn with_worker_queue_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound outstanding input for each topic-worker incarnation.

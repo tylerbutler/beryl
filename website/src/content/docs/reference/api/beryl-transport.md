@@ -78,7 +78,8 @@ A held connection slot returned by `acquire_connection_slot`.
  Hold it for the connection's lifetime. Pass it to
  `release_connection_slot` when the connection closes. When no connection
  limit is configured, the permit allows all connections. Releasing it does
- nothing.
+ nothing. A configured permit belongs to the acquiring process until
+ `bind_connection_slot` transfers it to the connection process.
 
 <div class="api-entry-anchor" id="api-type-framekind" aria-hidden="true"></div>
 
@@ -103,6 +104,7 @@ pub type FrameOutcome {
   FrameOversized
   FrameRateLimited
   FrameDecodeFailed
+  FrameAdmissionRejected
 }
 ```
 
@@ -223,13 +225,16 @@ Register a socket and its closer against the captured connection owner.
 ### `bind_connection_slot`
 
 ```gleam
-pub fn bind_connection_slot(ConnectionPermit) -> Nil
+pub fn bind_connection_slot(ConnectionPermit) -> Result(Nil, Nil)
 ```
 
-Bind an acquired connection slot to the calling connection process.
+Transfer an acquired connection slot to the calling connection process.
 
- The limiter monitors the caller. It reclaims the slot if the process dies
- without running its close path.
+ Acquisition already monitors the requesting process. This function replaces
+ that monitor without leaving the reservation unowned, so either process
+ dying reclaims the slot at the correct lifecycle stage. Returns
+ `Error(Nil)` when the reservation was already reclaimed or the limiter
+ cannot acknowledge the transfer. The connection must close on error.
 
 <div class="api-entry-anchor" id="api-function-max_inbound_frame_bytes" aria-hidden="true"></div>
 
@@ -260,7 +265,7 @@ pub fn route_binary(
   sockets: beryl.Sockets,
   socket_id: String,
   data: BitArray
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Route a raw binary frame for a codec without a binary decoder.
@@ -276,7 +281,7 @@ pub fn route_decoded(
   sockets: beryl.Sockets,
   socket_id: String,
   message: codec.Inbound
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Route a transport-decoded inbound message to the runtime. Decode in
@@ -297,7 +302,7 @@ pub fn route_decoded_binary(
   sockets: beryl.Sockets,
   socket_id: String,
   message: codec.Inbound
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Route a transport-decoded binary message while preserving its binary

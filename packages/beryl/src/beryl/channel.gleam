@@ -82,6 +82,7 @@
 //// then.
 
 import beryl
+import beryl/overload
 import beryl/presence
 import beryl/presence/wire as presence_wire
 import beryl/socket
@@ -194,32 +195,43 @@ fn check_duplicates(
 /// You can share it with any process. The channel's `on_info` callback
 /// receives each message with its type intact.
 ///
-/// A sender is scoped to the join that produced it. Sending is asynchronous
-/// and never fails. It cannot report that the channel is gone. The message
-/// goes to the worker process for that join. After the join ends, the worker
-/// no longer exists and the runtime drops the message. A later join of the
-/// same topic has a different worker. It cannot receive the message.
+/// A sender is scoped to the join that produced it. Sending reserves worker
+/// capacity and returns an admission Result. A closed or stale sender returns
+/// an error; it cannot send to a later join of the same topic.
 ///
 /// ## Cost
 ///
 /// A sealed function carries each message to the worker. The worker opens
-/// the function and uses a selective receive in the same turn. One delivery
-/// can scan queued work for that topic. Work for other topics does not add
-/// to this cost.
+/// the function and uses a selective receive in the same turn.
+/// Function environments are not included in accounted bytes. Bound typed
+/// message payloads in the application as well as configuring item limits.
 pub opaque type Sender(info) {
-  Sender(send: fn(info) -> Nil)
+  Sender(
+    send: fn(info) -> Result(Nil, overload.AdmissionError),
+    snapshot: fn() -> Result(overload.Occupancy, overload.AdmissionError),
+  )
+}
+
+/// Read this worker incarnation's queue accounting without waiting for it.
+pub fn queue_snapshot(
+  sender: Sender(info),
+) -> Result(overload.Occupancy, overload.AdmissionError) {
+  sender.snapshot()
 }
 
 /// Send a typed server-side message to the channel that owns `sender`.
 ///
-/// Each call enqueues one message. Each enqueued message produces one
-/// `on_info` call. The runtime does not combine sends. It delivers them in
-/// the order that the worker receives them.
+/// Each accepted call queues one message. The runtime does not combine sends.
+/// The worker processes accepted messages in queue order.
 ///
-/// This is a fire-and-forget send. It returns when the message is enqueued,
-/// whether or not the channel is still joined. The runtime discards a message
-/// for a channel that has ended. See [`Sender`](#sender) for delivery cost.
-pub fn notify(sender: Sender(info), message: info) -> Nil {
+/// `Ok(Nil)` confirms admission, not callback completion. Queue saturation,
+/// oversized input, and a closed or unavailable worker return an error.
+/// Rejection alone does not close the channel. See [`Sender`](#sender) for
+/// delivery cost and the limits of sealed-message byte accounting.
+pub fn notify(
+  sender: Sender(info),
+  message: info,
+) -> Result(Nil, overload.AdmissionError) {
   sender.send(message)
 }
 
@@ -770,9 +782,12 @@ pub fn handler(
     // worker no longer exists.
     let handoff = process.new_subject()
     let sender =
-      Sender(send: fn(message) {
-        context.deliver(fn() { process.send(handoff, message) })
-      })
+      Sender(
+        send: fn(message) {
+          context.deliver(fn() { process.send(handoff, message) })
+        },
+        snapshot: context.queue_snapshot,
+      )
     let join_context =
       JoinContext(
         socket_id: context.socket_id,

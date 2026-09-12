@@ -49,7 +49,7 @@ fn observer(
   handle: fn(Int, presence.Event) -> channel.Next(Int),
 ) -> channel.Handler {
   channel.handler("room:*", fn(context: channel.JoinContext(Nil)) {
-    channel.notify(context.self, Nil)
+    let assert Ok(Nil) = channel.notify(context.self, Nil)
     channel.accept(0)
     |> channel.on_presence(handle)
     |> channel.on_info(fn(state, _) {
@@ -78,7 +78,7 @@ fn disconnect(channels: beryl.Sockets, frames: helper.Frames) -> Nil {
 
 pub fn presence_callbacks_receive_roster_and_update_private_state_test() -> Nil {
   let presence = start_presence()
-  let first =
+  let assert Ok(first) =
     presence.track(presence, "room:a", "alice", "first", json.object([]))
   let trace = process.new_subject()
   let channels =
@@ -98,7 +98,7 @@ pub fn presence_callbacks_receive_roster_and_update_private_state_test() -> Nil 
   entry.session_id |> should.equal("first")
   presence.count(presence, "room:a") |> should.equal(Ok(1))
 
-  let second =
+  let assert Ok(second) =
     presence.track(presence, "room:a", "alice", "second", json.object([]))
   frame(frames, "roster") |> decode.run(decode.int) |> should.equal(Ok(2))
   let assert presence.Changed([entry], []) = event(trace)
@@ -107,7 +107,7 @@ pub fn presence_callbacks_receive_roster_and_update_private_state_test() -> Nil 
     presence.update(presence, first, json.object([#("away", json.bool(True))]))
   frame(frames, "roster") |> decode.run(decode.int) |> should.equal(Ok(2))
   let assert presence.Changed([_], [_]) = event(trace)
-  presence.untrack(presence, second)
+  let assert Ok(Nil) = presence.untrack(presence, second)
   frame(frames, "roster") |> decode.run(decode.int) |> should.equal(Ok(1))
   let assert presence.Changed([], [_]) = event(trace)
   helper.push(channels, "s1", "room:a", "read", "2")
@@ -147,7 +147,7 @@ pub fn tracking_and_observing_compose_in_either_builder_order_test() -> Nil {
         entry.session_id |> should.equal("s1")
       }
       presence.Snapshot([entry]) -> entry.session_id |> should.equal("s1")
-      _ -> should.fail()
+      presence.Snapshot([_, _, ..]) | presence.Changed(_, _) -> should.fail()
     }
     process.receive(trace, 50) |> should.be_error
     disconnect(channels, frames)
@@ -170,7 +170,8 @@ pub fn observation_is_not_triggered_by_wire_events_or_other_topics_test() -> Nil
   let assert presence.Snapshot([]) = event(trace)
   let _info = frame(frames, "info")
   let _other = presence.track(presence, "room:b", "bob", "other", json.null())
-  beryl.broadcast(channels, "room:a", "presence_diff", json.object([]))
+  let assert Ok(Nil) =
+    beryl.broadcast(channels, "room:a", "presence_diff", json.object([]))
   let _fake_diff = frame(frames, "presence_diff")
   helper.push(channels, "s1", "room:a", "presence_diff", "2")
   let _count = frame(frames, "count")

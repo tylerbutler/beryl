@@ -144,6 +144,12 @@ case result {
 
 ### Documentation
 
+The website installation example selects the highest published `vMAJOR.MINOR`
+tag with `git ls-remote` during rendering. Website builds need Git and network
+access to GitHub; they fail if the lookup fails or no minor tag exists. Local
+tags and shallow clone depth do not affect the selected ref. Rebuild the
+website after publishing a new minor tag to update the example.
+
 Document all public functions with `///` comments:
 
 ```gleam
@@ -173,6 +179,18 @@ just test
 # Run with verbose output
 gleam test -- --verbose
 ```
+
+### Tutorial browser demos
+
+Run `just site-demos-test` to build the documentation site and test its three
+tutorial simulations with Playwright. After a site build, run
+`pnpm --dir website test:demos` to repeat only the browser tests. To select
+one demo, append its test file, such as `e2e/socket-loop.spec.ts`.
+
+The tests start a local preview on port 4329. Stop any other service on that
+port before running them. Install Chromium with
+`pnpm --dir website exec playwright install chromium` if Playwright reports
+a missing browser. Test reports and traces stay in ignored website directories.
 
 ### Writing Tests
 
@@ -233,6 +251,22 @@ test: add edge case tests for topic matching
 
 Releases are driven by trellis changelog fragments (TOML files in
 `.changes/unreleased/` with `project`, `kind`, and `body` fields).
+
+### When a fragment is required
+
+A fragment applies only to what a released package ships — its `src/`,
+`gleam.toml`, or `manifest.toml`. It describes what a consumer of the
+published package receives. Add a fragment when you change a package's public
+API, its observable behavior, its dependency requirements, or its `///` doc
+comments (these ship in the API reference).
+
+Do not add a fragment for anything a package does not ship. The `website/`,
+`docs/`, and `examples/` directories and the dev tooling reach no consumer, so
+a fragment for them bumps a version that nobody sees. Test files, internal
+refactors, and formatting that keep the consumer-visible behavior the same
+also need no fragment.
+
+### Steps
 
 1. Make changes following the commit message convention
 2. Add a changelog entry: `just change <package> <kind> "<body>"`

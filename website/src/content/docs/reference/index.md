@@ -57,7 +57,7 @@ frames, or select a compatible client.
 | Broadcast to all sockets on a topic | `socket.Broadcast(topic, event, payload)` inside `update`, or `beryl.broadcast(sockets, topic, event, payload)` outside it | All subscribers, including the sender |
 | Broadcast, excluding sender | `socket.BroadcastFrom(topic, event, payload)` inside `update`, or `beryl.broadcast_from(sockets, socket_id, topic, event, payload)` outside it | Excludes one socket ID; preserved across PubSub nodes |
 | Send a typed server-side message to one socket | `socket.notify(sender, message)` | Store `ConnectInfo.self` from `init`; delivered later as `socket.Info(message)` |
-| Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Manual Phoenix-shaped `presence_diff`; ordinary socket/channel presence effects are applied asynchronously by the runtime |
+| Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Phoenix-shaped `presence_diff`; application diffs use cluster delivery, replica-view diffs stay node-local |
 
 The channel layer provides topic-scoped versions through ordered
 `channel.Action(Active)` lists. These actions include `push`, `broadcast`,
