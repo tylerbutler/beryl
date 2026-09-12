@@ -306,7 +306,8 @@ pub fn with_pubsub(config: Config, pubsub: PubSub(json.Json)) -> Config {
   Config(..config, pubsub: Some(pubsub))
 }
 
-/// Attach the presence actor used by socket presence effects.
+/// Attach the presence actor used by socket presence effects and
+/// `channel.on_presence` callbacks.
 pub fn with_presence_handle(
   config: Config,
   presence presence: presence.Presence,
@@ -314,13 +315,14 @@ pub fn with_presence_handle(
   Config(..config, presence: Some(presence))
 }
 
-/// Bound how long a socket waits for a presence mutation to be applied.
+/// Bound presence mutation and channel subscription startup waits.
 ///
 /// Presence effects are asynchronous: the socket that issued one has its
 /// remaining effects held until the presence actor confirms the mutation.
 /// This bounds that wait — after it the runtime logs and resumes without
 /// claiming the mutation succeeded. The default (5 s) matches the timeout
 /// the previous blocking implementation used.
+/// A channel subscription that exceeds this wait closes its topic instead.
 @internal
 pub fn with_presence_op_timeout(config: Config, timeout_ms: Int) -> Config {
   Config(..config, presence_op_timeout_ms: timeout_ms)

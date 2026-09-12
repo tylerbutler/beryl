@@ -2,12 +2,23 @@
 -export([identity/1, monotonic_time_ms/0, monotonic_time_ns/0,
          string_starts_with/2, stop_supervisor/1, rescue/1,
          admission_token_new/0, admission_token_cancel/1,
-         admission_token_pending/1, admission_token_claim/1, admission_token_owner/1,
-         reservation_token_pending/1,
-         connection_limit_state_open/2, connection_limit_state_put/2]).
+         admission_token_pending/1, admission_token_claim/1,
+         admission_token_owner/1, reservation_token_pending/1,
+         connection_limit_state_open/2, connection_limit_state_put/2,
+         pin_subject/1]).
 
 %% Used only after a selector validates the frozen raw PubSub record shape.
 identity(X) -> X.
+
+%% Resolve once and retain the existing subject tag. Sending to this captured
+%% pid after an exit is safe and cannot reach a replacement registered name.
+pin_subject({named_subject, Name}) when is_atom(Name) ->
+    case erlang:whereis(Name) of
+        undefined -> {error, nil};
+        Pid -> {ok, {{subject, Pid, Name}, Pid}}
+    end;
+pin_subject({subject, Pid, _Tag} = Subject) when is_pid(Pid) ->
+    {ok, {Subject, Pid}}.
 
 %% Run a callback, converting any crash (error/exit/throw) into an
 %% {error, Description} result so a crashing callback cannot take down the

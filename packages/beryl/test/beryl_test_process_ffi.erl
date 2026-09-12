@@ -1,7 +1,7 @@
 -module(beryl_test_process_ffi).
 -export([mailbox_length/1, queue_memory_evidence/0, with_suspended/2,
          queue_call_lifecycle/0, publication_cleanup_races/0,
-         stale_lifecycle_signals/3, monitored_by_count/1,
+         stale_lifecycle_signals/3, monitor_count/1, monitored_by_count/1,
          suspend_process/1, resume_process/1, socket_queue/2]).
 
 socket_queue(Router, SocketId) ->
@@ -103,6 +103,12 @@ publication_cleanup_races() ->
 mailbox_length(Pid) ->
     case erlang:process_info(Pid, message_queue_len) of
         {message_queue_len, Length} -> Length;
+        undefined -> 0
+    end.
+
+monitor_count(Pid) ->
+    case erlang:process_info(Pid, monitors) of
+        {monitors, Monitors} -> length(Monitors);
         undefined -> 0
     end.
 

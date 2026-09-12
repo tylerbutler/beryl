@@ -18,6 +18,9 @@ import gleeunit/should
 @external(erlang, "beryl_test_process_ffi", "mailbox_length")
 pub fn mailbox_length(pid: process.Pid) -> Int
 
+@external(erlang, "beryl_test_process_ffi", "monitor_count")
+pub fn monitor_count(pid: process.Pid) -> Int
+
 @external(erlang, "beryl_test_process_ffi", "monitored_by_count")
 pub fn monitored_by_count(pid: process.Pid) -> Int
 
