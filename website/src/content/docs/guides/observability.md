@@ -72,7 +72,7 @@ remain bounded:
 | join `outcome` | `accepted`, `handler_rejected`, `no_handler`, `invalid_topic`, `topic_limit`, `rate_limited`, `callback_error`, `socket_missing` |
 | message `outcome` | `handled`, `unjoined`, `stale`, `invalid`, `rate_limited`, `callback_error`, `socket_missing` |
 | `frame_type` | `text`, `binary` |
-| message `kind` | `text`, `binary`, `info`, `heartbeat` |
+| message `kind` | `text`, `binary`, `info`, `presence`, `heartbeat` |
 | `callback_result` | `not_applicable`, `no_reply`, `reply`, `reply_error`, `push`, `stop`, `failed` |
 | disconnect `reason` | `normal`, `heartbeat_timeout`, `shutdown`, `callback_error` |
 | broadcast `origin` | `local`, `remote` |

@@ -1,5 +1,7 @@
 import app_test_helper
 import beryl
+import beryl/channel
+import beryl/presence
 import beryl/pubsub
 import beryl/socket.{
   AcceptJoin, Binary, Closed, Info, Join, Message, Next, Push, RejectJoin,
@@ -8,6 +10,7 @@ import beryl/socket.{
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
+import channel_dispatch_helper
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{None, Some}
@@ -56,6 +59,32 @@ fn expect_none(handler_id: TelemetryHandle) -> Bool
 
 type AppMessage {
   Tick
+}
+
+pub fn presence_callbacks_use_the_presence_telemetry_kind_test() -> Nil {
+  let capture = attach()
+  let assert Ok(presence) = presence.start(presence.default_config("telemetry"))
+  let sockets =
+    channel_dispatch_helper.start(
+      telemetry_config() |> beryl.with_presence_handle(presence),
+      handlers: [
+        channel.handler("room:*", fn(_) {
+          channel.accept(Nil)
+          |> channel.on_presence(fn(state, _) { channel.stay(state) })
+        }),
+      ],
+    )
+  let frames = channel_dispatch_helper.connect(sockets, "s1")
+  channel_dispatch_helper.join(sockets, "s1", "room:a", "join", "1")
+  let _reply = channel_dispatch_helper.recv(frames)
+  expect_connected(capture) |> should.be_true
+  expect_join(capture, "accepted") |> should.be_true
+  expect_message(capture, "presence", "handled", "no_reply") |> should.be_true
+  expect_none(capture) |> should.be_true
+  detach(capture)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  let _close = channel_dispatch_helper.recv(frames)
+  Nil
 }
 
 fn telemetry_config() -> beryl.Config {

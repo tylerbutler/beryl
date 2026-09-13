@@ -88,8 +88,10 @@ pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil
   helper.recv(healthy) |> string.contains("queued") |> should.be_true
   test_helper.wait_until(
     fn() {
-      let assert Ok(current) = snapshot.get(sockets)
-      snapshot.connected_sockets(current) == 1
+      case snapshot.get(sockets) {
+        Ok(current) -> snapshot.connected_sockets(current) == 1
+        Error(_) -> False
+      }
     },
     1000,
     5,
