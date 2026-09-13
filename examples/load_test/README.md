@@ -67,6 +67,7 @@ rate is non-positive, the limit is disabled regardless of its burst value.
 | `BIND_ADDRESS` | `127.0.0.1` | Listener interface |
 | `PORT` | `8000` | Listener TCP port |
 | `SERVER` | Mist | `ewe` selects Ewe in the shipment entry point; every other value selects Mist |
+| `BENCH_CALLBACK_ELAPSED_US` | `0` | Minimum elapsed time added to each message callback, in microseconds |
 | `BERYL_HEARTBEAT_TIMEOUT_MS` | `60000` | Server staleness/eviction window, in ms |
 | `BERYL_MAX_CONNECTIONS_PER_IP` | `0` | Concurrent connections per real peer IP; `<= 0` is unlimited |
 | `BERYL_MAX_CONNECTIONS` | `0` | Concurrent connections on this BEAM node; `<= 0` is unlimited |
@@ -84,6 +85,14 @@ rate is non-positive, the limit is disabled regardless of its burst value.
 | `BERYL_MAX_INBOUND_FRAME_BYTES` | `1048576` | Maximum assembled inbound frame size in bytes (1 MiB) |
 | `BERYL_MAX_JOINED_TOPICS_PER_SOCKET` | `1000` | Maximum simultaneous joined topics per socket |
 | `BERYL_TELEMETRY` | `false` | Enables beryl telemetry for `1`, `true`, `yes`, or `on`, case-insensitively |
+
+`BENCH_CALLBACK_ELAPSED_US` uses a monotonic deadline and busy-waits while the
+callback process is scheduled. The loop is preemptible. Scheduler contention
+and suspension advance the deadline, so the value is elapsed callback time,
+not fixed or calibrated CPU work. Keep it at zero for CPU-capacity comparisons
+unless this elapsed-delay model is intentional. For comparative runs, record
+the value, OTP and scheduler settings, hardware, and that no CPU calibration
+applies.
 
 If `BERYL_TELEMETRY` is missing it is false; any value not in the four-value
 true set is also false. Enabling it only emits events. This fixture does not
