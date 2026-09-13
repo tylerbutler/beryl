@@ -495,7 +495,11 @@ pub fn untrack_all(
 ) -> Result(Nil, overload.CallError)
 ```
 
-Untrack all presences for a session, such as when a socket disconnects.
+Untrack all presences locally tracked for a session, such as when a socket
+ disconnects.
+
+ Replicated entries owned by another presence actor are not removed, even
+ when they use the same session ID.
 
  Returns a typed call error on admission failure, owner exit, or timeout.
  A timeout cancels pending work, but a running mutation may still complete.
