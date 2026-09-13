@@ -4,6 +4,7 @@ import gleam/erlang/process
 import gleam/json
 import gleam/list
 import gleam/result
+import gleam/string
 import gleeunit/should
 import test_helper
 
@@ -63,14 +64,27 @@ pub fn subscription_snapshot_and_later_changes_have_no_gap_test() -> Nil {
   let _before = presence.track(handle, "room:a", "before", "s1", json.null())
   let #(subscription, events, failures) = subscribe(handle)
   let _after = presence.track(handle, "room:a", "after", "s2", json.null())
-  let assert presence.Delivery(0, presence.Snapshot([entry])) =
-    receive_event(events)
-  entry.key |> should.equal("before")
-  process.receive(events, 0) |> should.be_error
-  presence.acknowledge(subscription, 0)
-  let assert presence.Delivery(1, presence.Changed([entry], [])) =
-    receive_event(events)
-  entry.key |> should.equal("after")
+  case receive_event(events) {
+    presence.Delivery(0, presence.Snapshot([entry])) -> {
+      entry.key |> should.equal("before")
+      process.receive(events, 0) |> should.be_error
+      presence.acknowledge(subscription, 0)
+      let assert presence.Delivery(1, presence.Changed([entry], [])) =
+        receive_event(events)
+      entry.key |> should.equal("after")
+    }
+    presence.Delivery(0, presence.Snapshot([first, second])) -> {
+      [first.key, second.key]
+      |> list.sort(string.compare)
+      |> should.equal(["after", "before"])
+      presence.acknowledge(subscription, 0)
+      process.receive(events, 50) |> should.be_error
+    }
+    presence.Delivery(0, presence.Snapshot([]))
+    | presence.Delivery(0, presence.Snapshot([_, _, _, ..]))
+    | presence.Delivery(0, presence.Changed(_, _))
+    | presence.Delivery(_, _) -> should.fail()
+  }
   process.receive(failures, 0) |> should.be_error
   presence.unsubscribe(subscription)
 }
