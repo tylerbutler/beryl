@@ -6,7 +6,8 @@
          suspend_server_peer/1, resume_process/1, outbound_queue_usage/1,
          attach_transport_events/0, detach_transport_events/1,
          receive_upgrade_event/1, receive_frame_event/1,
-         receive_message_event/1]).
+         receive_message_event/1, coalesced_upgrade_frames/0,
+         split_upgrade_frames/0]).
 
 attach_transport_events() ->
     HandlerId = {beryl_ewe_transport_test, make_ref()},
@@ -309,9 +310,98 @@ read_headers(Socket, Acc) ->
                 {ok, Chunk} -> read_headers(Socket, <<Acc/binary, Chunk/binary>>);
                 _ -> {error, nil}
             end;
-        _ ->
-            {ok, Acc}
+        {Start, MarkerLength} ->
+            HeaderLength = Start + MarkerLength,
+            <<Headers:HeaderLength/binary, Rest/binary>> = Acc,
+            case Rest of
+                <<>> ->
+                    {ok, Headers};
+                _ ->
+                    case gen_tcp:unrecv(Socket, Rest) of
+                        ok -> {ok, Headers};
+                        _ -> {error, nil}
+                    end
+            end
     end.
+
+coalesced_upgrade_frames() ->
+    run_upgrade_server([[
+        upgrade_response(),
+        websocket_frame(<<"first">>),
+        websocket_frame(<<"second">>)
+    ]], 2).
+
+split_upgrade_frames() ->
+    run_upgrade_server([
+        <<"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n">>,
+        [<<"Connection: Upgrade\r\n\r\n">>, <<16#81>>],
+        [
+            <<5>>, <<"third">>,
+            websocket_frame(<<"fourth">>)
+        ]
+    ], 2).
+
+run_upgrade_server(Chunks, FrameCount) ->
+    {ok, ListenSocket} = gen_tcp:listen(
+        0,
+        [binary, {active, false}, {reuseaddr, true}]
+    ),
+    {ok, {_Address, Port}} = inet:sockname(ListenSocket),
+    {ServerPid, MonitorRef} = spawn_monitor(fun() ->
+        serve_upgrade(ListenSocket, Chunks)
+    end),
+    Result =
+        case connect_websocket(Port, <<"/socket">>) of
+            {ok, Socket} ->
+                Frames = receive_text_frames(Socket, FrameCount, []),
+                close(Socket),
+                Frames;
+            {error, nil} ->
+                {error, nil}
+        end,
+    gen_tcp:close(ListenSocket),
+    receive
+        {'DOWN', MonitorRef, process, ServerPid, normal} -> Result;
+        {'DOWN', MonitorRef, process, ServerPid, _Reason} -> {error, nil}
+    after
+        5000 -> {error, nil}
+    end.
+
+serve_upgrade(ListenSocket, Chunks) ->
+    {ok, Socket} = gen_tcp:accept(ListenSocket, 5000),
+    {ok, _Request} = read_headers(Socket, <<>>),
+    ok = send_chunks(Socket, Chunks),
+    gen_tcp:close(Socket).
+
+send_chunks(_Socket, []) ->
+    ok;
+send_chunks(Socket, [Chunk | Rest]) ->
+    ok = gen_tcp:send(Socket, Chunk),
+    case Rest of
+        [] ->
+            ok;
+        _ ->
+            timer:sleep(25),
+            send_chunks(Socket, Rest)
+    end.
+
+receive_text_frames(_Socket, 0, Acc) ->
+    {ok, lists:reverse(Acc)};
+receive_text_frames(Socket, Count, Acc) ->
+    case receive_text(Socket, 1000) of
+        {ok, Text} ->
+            receive_text_frames(Socket, Count - 1, [Text | Acc]);
+        {error, nil} ->
+            {error, nil}
+    end.
+
+upgrade_response() ->
+    <<"HTTP/1.1 101 Switching Protocols\r\n",
+      "Upgrade: websocket\r\n",
+      "Connection: Upgrade\r\n\r\n">>.
+
+websocket_frame(Payload) when byte_size(Payload) < 126 ->
+    <<16#81, (byte_size(Payload)), Payload/binary>>.
 
 encode_client_length(Len) when Len < 126 ->
     <<(16#80 bor Len)>>;
