@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Surface presence read-model deletion failures instead of treating them as successful publication."
