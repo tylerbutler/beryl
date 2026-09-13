@@ -6954,6 +6954,8 @@ fn serve(
             }),
           )
         }
+        WorkerPresence(delivery) ->
+          queue_or_serve_presence(worker, link, delivery)
         WorkerTerminate(reason) -> {
           work_queue.close(link.input)
           serve_worker_queue(
@@ -6961,30 +6963,6 @@ fn serve(
             WorkerLink(..link, terminate: Some(reason)),
           )
         }
-        WorkerPresence(delivery) ->
-          case link.current {
-            Some(_) -> {
-              let _queued =
-                work_queue.send(link.input, WorkerPresence(delivery))
-              Ok(state)
-            }
-            None ->
-              case link.reserve_output() {
-                Error(error) -> {
-                  link.report(WorkerAdmissionFailed(error, InfoSource(0)), None)
-                  Ok(WorkerClosing(worker, link))
-                }
-                Ok(output) ->
-                  Ok(serve_presence(
-                    worker,
-                    WorkerLink(
-                      ..link,
-                      current: Some(ReportReservation(None, output)),
-                    ),
-                    delivery,
-                  ))
-              }
-          }
       }
     WorkerClosing(worker, link) ->
       case message {
@@ -7040,14 +7018,11 @@ fn serve_worker_queue(
         Ok(#(input, message)) ->
           case link.reserve_output() {
             Ok(output) ->
-              serve(
-                WorkerRunning(
-                  worker,
-                  WorkerLink(
-                    ..link,
-                    current: Some(ReportReservation(Some(input), output)),
-                  ),
-                ),
+              serve_reserved_worker_message(
+                worker,
+                link,
+                input,
+                output,
                 message,
               )
             Error(error) -> {
@@ -7061,6 +7036,46 @@ fn serve_worker_queue(
   }
 }
 
+fn queue_or_serve_presence(
+  worker: Worker,
+  link: WorkerLink,
+  delivery: presence.Delivery,
+) -> Result(WorkerState, Nil) {
+  case link.current {
+    None -> Ok(serve_presence(worker, link, delivery))
+    Some(_) ->
+      case work_queue.send(link.input, WorkerPresence(delivery)) {
+        Ok(Nil) -> Ok(WorkerRunning(worker, link))
+        Error(error) -> {
+          link.report(WorkerAdmissionFailed(error, presence_source(link)), None)
+          Ok(WorkerClosing(worker, link))
+        }
+      }
+  }
+}
+
+fn serve_reserved_worker_message(
+  worker: Worker,
+  link: WorkerLink,
+  input: work_queue.Reservation,
+  output: work_queue.Reservation,
+  message: WorkerMessage,
+) -> Result(WorkerState, Nil) {
+  let link =
+    WorkerLink(..link, current: Some(ReportReservation(Some(input), output)))
+  case message {
+    WorkerPresence(delivery) -> Ok(serve_presence(worker, link, delivery))
+    WorkerAvailable
+    | WorkerRecoveryTick
+    | WorkerReportApplied(_)
+    | WorkerDeliver(..)
+    | WorkerInfo(..)
+    | WorkerTerminate(..)
+    | WorkerHalt
+    | WorkerGo(_) -> serve(WorkerRunning(worker, link), message)
+  }
+}
+
 fn serve_presence(
   worker: Worker,
   link: WorkerLink,
@@ -7068,19 +7083,98 @@ fn serve_presence(
 ) -> WorkerState {
   case worker.on_presence, link.subscription {
     Some(callback), Some(subscription) ->
-      worker_step(
+      case link.current {
+        Some(_) ->
+          run_presence_callback(worker, link, delivery, subscription, callback)
+        None ->
+          reserve_presence_callback(
+            worker,
+            link,
+            delivery,
+            subscription,
+            callback,
+          )
+      }
+    Some(_), None -> WorkerRunning(worker, link)
+    None, Some(_) -> WorkerRunning(worker, link)
+    None, None -> WorkerRunning(worker, link)
+  }
+}
+
+fn reserve_presence_callback(
+  worker: Worker,
+  link: WorkerLink,
+  delivery: presence.Delivery,
+  subscription: presence.Subscription,
+  callback: fn(presence.Event) -> socket.WorkerStep,
+) -> WorkerState {
+  case work_queue.retain(link.input, delivery) {
+    Error(error) -> {
+      link.report(WorkerAdmissionFailed(error, presence_source(link)), None)
+      WorkerClosing(worker, link)
+    }
+    Ok(input) ->
+      reserve_presence_output(
         worker,
         link,
-        MessageSource(
-          link.topic,
-          telemetry.PresenceMessage,
-          start_time_if(link.telemetry),
-        ),
-        Some(#(subscription, delivery.sequence)),
-        fn() { callback(delivery.event) },
+        input,
+        delivery,
+        subscription,
+        callback,
       )
-    None, _ | _, None -> WorkerRunning(worker, link)
   }
+}
+
+fn reserve_presence_output(
+  worker: Worker,
+  link: WorkerLink,
+  input: work_queue.Reservation,
+  delivery: presence.Delivery,
+  subscription: presence.Subscription,
+  callback: fn(presence.Event) -> socket.WorkerStep,
+) -> WorkerState {
+  case link.reserve_output() {
+    Error(error) -> {
+      work_queue.release(link.input, input)
+      link.report(WorkerAdmissionFailed(error, presence_source(link)), None)
+      WorkerClosing(worker, link)
+    }
+    Ok(output) ->
+      run_presence_callback(
+        worker,
+        WorkerLink(
+          ..link,
+          current: Some(ReportReservation(Some(input), output)),
+        ),
+        delivery,
+        subscription,
+        callback,
+      )
+  }
+}
+
+fn run_presence_callback(
+  worker: Worker,
+  link: WorkerLink,
+  delivery: presence.Delivery,
+  subscription: presence.Subscription,
+  callback: fn(presence.Event) -> socket.WorkerStep,
+) -> WorkerState {
+  worker_step(
+    worker,
+    link,
+    presence_source(link),
+    Some(#(subscription, delivery.sequence)),
+    fn() { callback(delivery.event) },
+  )
+}
+
+fn presence_source(link: WorkerLink) -> Source {
+  MessageSource(
+    link.topic,
+    telemetry.PresenceMessage,
+    start_time_if(link.telemetry),
+  )
 }
 
 fn terminate_worker(

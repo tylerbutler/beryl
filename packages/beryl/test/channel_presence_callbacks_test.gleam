@@ -1,6 +1,8 @@
 import beryl
 import beryl/channel
 import beryl/presence
+import beryl/socket
+import beryl/transport
 import beryl/wire
 import channel_dispatch_helper as helper
 import gleam/dynamic
@@ -8,7 +10,9 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/json
 import gleam/list
+import gleam/option.{None}
 import gleam/otp/static_supervisor
+import gleam/string
 import gleeunit/should
 import test_helper
 
@@ -74,6 +78,38 @@ fn disconnect(channels: beryl.Sockets, frames: helper.Frames) -> Nil {
   helper.disconnect(channels, "s1")
   let _close = frame(frames, "phx_close")
   beryl.stop(channels) |> should.equal(Ok(Nil))
+}
+
+fn connect_with_blocked_send(
+  channels: beryl.Sockets,
+  entered: process.Subject(process.Subject(Nil)),
+) -> helper.Frames {
+  let sent = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(channels)
+  transport.admit_socket(
+    sockets: channels,
+    owner: owner,
+    socket_id: "s1",
+    send: fn(message) {
+      case string.contains(message, "\"blocked\"") {
+        False -> Nil
+        True -> {
+          let release = process.new_subject()
+          process.send(entered, release)
+          let assert Ok(Nil) = process.receive(release, 5000)
+          Nil
+        }
+      }
+      process.send(sent, message)
+      Ok(Nil)
+    },
+    send_binary: fn(_) { Ok(Nil) },
+    codec: None,
+    seed: socket.empty_seed(),
+    close: fn() { Nil },
+  )
+  |> should.equal(Ok(Nil))
+  sent
 }
 
 pub fn presence_callbacks_receive_roster_and_update_private_state_test() -> Nil {
@@ -476,6 +512,60 @@ pub fn snapshot_credit_waits_for_its_presence_effects_test() -> Nil {
   let assert presence.Changed([_], []) = event(changes)
   helper.push(channels, "s1", "room:a", "count", "2")
   frame(frames, "count") |> decode.run(decode.int) |> should.equal(Ok(1))
+  disconnect(channels, frames)
+}
+
+pub fn presence_waits_for_active_report_and_releases_queue_capacity_test() -> Nil {
+  let assert Ok(presence) =
+    presence.start(presence.default_config("report_interleaving"))
+  let send_entered = process.new_subject()
+  let senders = process.new_subject()
+  let changes = process.new_subject()
+  let channels =
+    helper.start(config(presence), handlers: [
+      channel.handler("room:*", fn(context: channel.JoinContext(Nil)) {
+        process.send(senders, context.self)
+        channel.accept(Nil)
+        |> channel.on_presence(fn(state, change) {
+          process.send(changes, change)
+          channel.stay(state)
+        })
+        |> channel.on_message(fn(state, _) {
+          channel.next(state, [channel.push("blocked", json.null())])
+        })
+      }),
+    ])
+  let frames = connect_with_blocked_send(channels, send_entered)
+  helper.join(channels, "s1", "room:a", "join", "1")
+  let _reply = frame(frames, "phx_reply")
+  let assert presence.Snapshot([]) = event(changes)
+  let assert Ok(sender) = process.receive(senders, 1000)
+
+  helper.push(channels, "s1", "room:a", "block", "2")
+  let assert Ok(release) = process.receive(send_entered, 1000)
+  let assert Ok(_tracked) =
+    presence.track(presence, "room:a", "alice", "session", json.null())
+  process.receive(changes, 0) |> should.be_error
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queued) = channel.queue_snapshot(sender)
+      queued.items == 2
+    },
+    1000,
+    1,
+  )
+
+  process.send(release, Nil)
+  let _blocked = frame(frames, "blocked")
+  let assert presence.Changed([_], []) = event(changes)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(empty) = channel.queue_snapshot(sender)
+      empty.items == 0
+    },
+    1000,
+    1,
+  )
   disconnect(channels, frames)
 }
 
