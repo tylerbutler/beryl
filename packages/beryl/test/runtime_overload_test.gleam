@@ -305,6 +305,64 @@ pub fn unanswered_refs_remain_charged_and_close_reclaims_them_test() -> Nil {
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
+pub fn discarded_ignored_and_broadcast_refs_reclaim_socket_capacity_test() -> Nil {
+  let senders = process.new_subject()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      config() |> beryl.with_socket_queue_limits(limits(4, 4096)),
+      init: fn(info) {
+        process.send(senders, info.self)
+        #(Nil, [])
+      },
+      update: fn(model, input) {
+        case input {
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [socket.AcceptJoin(ref, option.None)])
+          socket.Message(topic, "broadcast", _, option.Some(ref)) ->
+            socket.Next(model, [
+              socket.Broadcast(topic, "observed", json.null()),
+              socket.DiscardReply(ref),
+            ])
+          socket.Message(_, _, _, option.Some(ref)) ->
+            socket.Next(model, [socket.DiscardReply(ref)])
+          _ -> socket.Next(model, [])
+        }
+      },
+    )
+  let frames = helper.connect(sockets, "discarded")
+  let assert Ok(sender) = process.receive(senders, 1000)
+  helper.join(sockets, "discarded", "room:a", "j", "r")
+  let _ = helper.recv(frames)
+
+  list.repeat(Nil, 100)
+  |> list.index_map(fn(_, count) { count + 1 })
+  |> list.each(fn(count) {
+    let event = case count % 2 {
+      0 -> "broadcast"
+      _ -> "ignored"
+    }
+    helper.push(sockets, "discarded", "room:a", event, string.inspect(count))
+    case event {
+      "broadcast" ->
+        helper.recv(frames) |> string.contains("observed") |> should.be_true
+      _ -> Nil
+    }
+    test_helper.wait_until(
+      fn() {
+        let assert Ok(current) = socket.queue_snapshot(sender)
+        current.items == 0
+      },
+      1000,
+      5,
+    )
+  })
+
+  let assert Ok(current) = socket.queue_snapshot(sender)
+  current.items |> should.equal(0)
+  current.high_items |> fn(items) { items <= 4 } |> should.be_true
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
 pub fn repeated_disconnects_coalesce_while_callback_is_blocked_test() -> Nil {
   let senders = process.new_subject()
   let entered = process.new_subject()

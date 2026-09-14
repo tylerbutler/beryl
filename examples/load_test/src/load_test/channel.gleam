@@ -182,6 +182,7 @@ fn actions(
         Ok(channel.reply_ok(message.reply, payload))
       socket.ReplyError(payload: payload, ..) ->
         Ok(channel.reply_error(message.reply, payload))
+      socket.DiscardReply(..) -> Ok(channel.discard_reply(message.reply))
       socket.Broadcast(event: event, payload: payload, ..) ->
         Ok(channel.broadcast(event, payload))
       // `message_effects` does not produce these effects. This list makes a

@@ -297,6 +297,7 @@ observe them:
 | `broadcast_from(event, payload)` | To every subscriber except this socket |
 | `reply_ok(reply, payload)` | Success reply when `Message.reply` is `Some`; no effect for `None` |
 | `reply_error(reply, payload)` | Error reply with the same optional-ref behavior |
+| `discard_reply(reply)` | Release an intentionally unanswered reply handle without a wire reply |
 | `presence_track(key, meta)` | Track this socket under `key` and emit the `presence_diff` join |
 | `presence_untrack(key)` | Untrack and emit the `presence_diff` leave |
 | `push_presence(event, encode)` | Presence snapshot for this topic, to this socket |
