@@ -36,6 +36,17 @@ async function waitForJoinReply(page) {
 }
 
 test.describe("Chat Rooms Demo", () => {
+  test.afterEach(async ({ page, request }) => {
+    await page.goto("about:blank");
+    await expect
+      .poll(async () => {
+        const response = await request.get("/api/rooms");
+        const rooms = await response.json();
+        return rooms.reduce((total, room) => total + room.users, 0);
+      })
+      .toBe(0);
+  });
+
   test.describe("Page structure", () => {
     test("renders the page title", async ({ page }) => {
       await page.goto("/?token=beryl-demo");
