@@ -37,7 +37,7 @@ async function waitForJoinReply(page) {
 
 test.describe("Chat Rooms Demo", () => {
   test.afterEach(async ({ page, request }) => {
-    await page.goto("about:blank");
+    await page.close();
     await expect
       .poll(async () => {
         const response = await request.get("/api/rooms");
