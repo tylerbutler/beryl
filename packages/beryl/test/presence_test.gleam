@@ -10,12 +10,54 @@ import gleeunit
 import gleeunit/should
 import test_helper
 
+type ReadTableWriteError {
+  ReadTableUnavailable
+}
+
+@external(erlang, "beryl_presence_read_test_ffi", "delete_absent_topic")
+fn delete_absent_topic() -> Result(Nil, ReadTableWriteError)
+
+@external(erlang, "beryl_presence_read_test_ffi", "delete_gone_table")
+fn delete_gone_table() -> Result(Nil, ReadTableWriteError)
+
+@external(erlang, "beryl_presence_read_test_ffi", "delete_unowned_table")
+fn delete_unowned_table() -> Result(Nil, ReadTableWriteError)
+
 pub fn main() -> Nil {
   gleeunit.main()
 }
 
 fn test_config(replica: String) -> presence.Config {
   presence.default_config(replica)
+}
+
+pub fn explicitly_constructed_diffs_have_cluster_scope_test() -> Nil {
+  presence.diff(joins: [], leaves: [])
+  |> presence.diff_scope
+  |> should.equal(presence.Cluster)
+}
+
+pub fn application_mutation_diffs_have_cluster_scope_test() -> Nil {
+  let scopes = process.new_subject()
+  let assert Ok(tracker) =
+    presence.start(
+      test_config("application-diffs")
+      |> presence.with_on_diff(fn(diff) {
+        process.send(scopes, presence.diff_scope(diff))
+      }),
+    )
+  let assert Ok(ref) =
+    presence.track(tracker, "room:lobby", "user", "session", json.object([]))
+  let assert Ok(updated) = presence.update(tracker, ref, json.object([]))
+  let assert Ok(Nil) = presence.untrack(tracker, updated)
+  let assert Ok(_) =
+    presence.track(tracker, "room:lobby", "user", "session", json.object([]))
+  let assert Ok(Nil) = presence.untrack_all(tracker, "session")
+  list.each(list.repeat(presence.Cluster, 5), fn(scope) {
+    process.receive(scopes, 1000) |> should.equal(Ok(scope))
+  })
+  process.receive(scopes, 0) |> should.equal(Error(Nil))
+  test_helper.kill_presence(tracker)
 }
 
 pub fn presence_start_test() -> Nil {
@@ -796,6 +838,15 @@ pub fn configured_call_timeout_is_used_test() -> Nil {
 // checks prove that in practice: several presence actors' reads stay fully
 // isolated from one another, and terminating one actor's table has no
 // effect on the others.
+
+pub fn deleting_absent_topic_from_valid_read_table_succeeds_test() -> Nil {
+  delete_absent_topic() |> should.equal(Ok(Nil))
+}
+
+pub fn invalid_read_table_deletions_return_errors_test() -> Nil {
+  delete_gone_table() |> should.equal(Error(ReadTableUnavailable))
+  delete_unowned_table() |> should.equal(Error(ReadTableUnavailable))
+}
 
 pub fn multiple_presence_actors_have_independent_read_tables_test() -> Nil {
   let assert Ok(tracker1) = presence.start(test_config("node1"))

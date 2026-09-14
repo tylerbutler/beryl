@@ -3,9 +3,8 @@
 ## Project Summary
 
 beryl is a Gleam library for type-safe real-time channels and presence on the
-Erlang/BEAM runtime. It's a trellis-managed monorepo with three packages — two
-of them currently publishable, since `beryl_ewe` is release-excluded — plus
-runnable examples and an Astro/Starlight documentation website.
+Erlang/BEAM runtime. It's a trellis-managed monorepo with three releasable
+packages, plus runnable examples and an Astro/Starlight documentation website.
 
 ## Essential Commands
 
@@ -30,7 +29,7 @@ Run a single test: `cd packages/beryl && gleam test -- --filter "test_name"`
 packages/
   beryl/           # core library (app dispatch, presence, pubsub, wire, transport SPI)
   beryl_mist/      # Mist WebSocket transport (depends on beryl via path)
-  beryl_ewe/       # Ewe WebSocket transport (depends on beryl via path; NOT published)
+  beryl_ewe/       # Ewe WebSocket transport (depends on beryl via path)
 examples/          # runnable example apps (workspace members, excluded from release)
 website/           # Astro/Starlight docs site (NOT a workspace member)
 docs/              # ADRs, design docs, architecture deck, security docs
@@ -167,11 +166,36 @@ Header max 72 chars. Body max line length 100 chars.
 
 ### Changelog Fragments
 
-Use `just change <package> <kind> "<body>"` for any public API, behavior,
-dependency, or user-visible change. Kinds: `Initial Release` (major),
-`Added`/`Changed`/`Removed` (minor), `Fixed`/`Performance`/`Deprecated`/`Security`/`Dependencies` (patch).
+Create a fragment with `just change <package> <kind> "<body>"`. Kinds:
+`Initial Release` (major), `Added`/`Changed`/`Removed` (minor),
+`Fixed`/`Performance`/`Deprecated`/`Security`/`Dependencies` (patch).
 
-PR CI enforces fragments via `trellis changelog check`.
+**A fragment applies only to what a released package ships** — its `src/`,
+`gleam.toml`, or `manifest.toml`. The fragment describes what a consumer of
+the published package receives. Write a fragment when you change a released
+package's:
+
+- public API (types, functions, labels, or signatures)
+- observable runtime behavior, or a bug in that behavior
+- dependency requirements in `gleam.toml` or `manifest.toml`
+- `///` or `////` doc comments, because these ship in the API reference
+
+**Do not write a fragment** for anything a package does not ship. The website,
+`docs/`, examples, and dev tooling reach no consumer, so a fragment for them
+bumps a version that nobody sees:
+
+- `website/` content, components, styles, or generator scripts
+- `docs/` ADRs, design notes, and decks
+- `examples/` (release-excluded workspace members)
+- root config, `justfile`, `.github/` workflows, and audit or lint settings
+- `packages/*/test/`, internal refactors, and formatting that keep the
+  consumer-visible behavior the same
+
+All three packages under `packages/` are releasable, so each one takes its own
+fragments. Only `examples/**` is release-excluded.
+
+PR CI enforces fragments via `trellis changelog check`. Preview the effect of
+the current fragments with `just version-plan`.
 
 ### Release Flow
 
@@ -209,9 +233,11 @@ users; keep everything else in `.mise.toml` limited to mise-only helper tools.
 
 ### Trellis Exclusions
 
-`beryl_ewe` is excluded from release (`@release` key in `gleam.toml`) — it's
-built, tested, and linted but excluded from changelog, versioning, tagging,
-and publishing.
+Only `examples/**` is excluded from release (`@release` key in the root
+`gleam.toml`). Examples are built and tested, but they get no changelog,
+version, tag, or fragment. All three packages under `packages/` are
+releasable on the `git_only` lifecycle: they get tags and GitHub releases,
+but Hex.pm publishing is disabled.
 
 ## Examples
 

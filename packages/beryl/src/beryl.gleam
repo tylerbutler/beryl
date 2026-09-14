@@ -651,6 +651,8 @@ pub type AppHandle {
     route_binary: fn(String, BitArray) -> Result(Nil, overload.AdmissionError),
     broadcast: fn(String, String, json.Json, Option(String)) ->
       Result(Nil, overload.AdmissionError),
+    broadcast_local: fn(String, String, json.Json) ->
+      Result(Nil, overload.AdmissionError),
     stop: fn() -> Result(Nil, StopError),
     /// Current pid of the supervised runtime, if running (used by tests
     /// and PubSub sender attribution).
@@ -1238,6 +1240,12 @@ fn app_handle(
         runtime.Broadcast(topic_name, event_name, payload, except),
       )
     },
+    broadcast_local: fn(topic_name, event_name, payload) {
+      send_runtime(
+        name,
+        runtime.LocalBroadcast(topic_name, event_name, payload),
+      )
+    },
     stop: fn() { request_runtime_stop(supervisor) },
     runtime_owner: fn() { process.subject_owner(subject) },
     socket_factory_owner: fn() { process.subject_owner(factory) },
@@ -1407,19 +1415,26 @@ pub fn broadcast(
 /// }
 /// ```
 ///
-/// When the system was started with PubSub, the broadcast is distributed
-/// using the same semantics as `broadcast`.
+/// Honors `presence.diff_scope`: application-mutation and explicitly constructed
+/// `Cluster` diffs use the same distributed semantics as `broadcast`.
+/// `LocalNode` diffs from replication, failure detection, and recovery reach
+/// only local socket subscribers, including other local runtimes in the same
+/// PubSub scope. They must not change healthy clients on another node.
+///
+/// Pass the original diff from `presence.with_on_diff`. Encoding or rebuilding
+/// the diff before an unconditional `broadcast` loses this routing metadata.
 pub fn broadcast_presence_diff(
   channels: Sockets,
   topic_name: String,
   diff: Diff,
 ) -> Result(Nil, overload.AdmissionError) {
-  broadcast(
-    channels,
-    topic_name,
-    "presence_diff",
-    presence_wire.encode_diff(diff, topic_name),
-  )
+  let payload = presence_wire.encode_diff(diff, topic_name)
+  case presence.diff_scope(diff) {
+    presence.Cluster ->
+      broadcast(channels, topic_name, "presence_diff", payload)
+    presence.LocalNode ->
+      channels.app.broadcast_local(topic_name, "presence_diff", payload)
+  }
 }
 
 /// Broadcast a message to all subscribers except one socket.

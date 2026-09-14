@@ -371,8 +371,14 @@ Broadcast a Phoenix-compatible `presence_diff` event for a topic.
  }
  ```
 
- When the system was started with PubSub, the broadcast is distributed
- using the same semantics as `broadcast`.
+ Honors `presence.diff_scope`: application-mutation and explicitly constructed
+ `Cluster` diffs use the same distributed semantics as `broadcast`.
+ `LocalNode` diffs from replication, failure detection, and recovery reach
+ only local socket subscribers, including other local runtimes in the same
+ PubSub scope. They must not change healthy clients on another node.
+
+ Pass the original diff from `presence.with_on_diff`. Encoding or rebuilding
+ the diff before an unconditional `broadcast` loses this routing metadata.
 
 <div class="api-entry-anchor" id="api-function-child_spec" aria-hidden="true"></div>
 
