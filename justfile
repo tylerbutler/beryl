@@ -58,15 +58,14 @@ lint:
 
 # Analyze package Erlang sources against their compiled Gleam modules
 dialyzer: build-strict
-    bash scripts/check-beam-ffi.sh dialyzer
+    bash scripts/check-ffi-dialyzer.sh
 
 # Check package Erlang sources for undefined function calls
 xref: build-strict
-    bash scripts/check-beam-ffi.sh xref
+    bash scripts/check-ffi-xref.sh
 
 # Run all BEAM FFI checks
-beam-check: build-strict
-    bash scripts/check-beam-ffi.sh
+beam-check: dialyzer xref
 
 # Check workspace invariants (members, graph, versions, fragments)
 doctor:

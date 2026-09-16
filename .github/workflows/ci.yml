@@ -47,7 +47,7 @@ jobs:
               - '.mise.toml'
               - '.tool-versions'
               - 'justfile'
-              - 'scripts/check-beam-ffi.sh'
+              - 'scripts/check-ffi-*.sh'
             docs:
               - 'packages/**'
               - 'website/**'
