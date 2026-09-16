@@ -6,15 +6,21 @@
 //// - a node-wide ceiling (`max_total`), which caps concurrent connections
 ////   across every IP so distributed/rotating source addresses cannot exhaust
 ////   the node's process, socket, and runtime budget, and
-//// - a per-IP token bucket, which prevents reconnect churn from repeatedly
-////   refreshing per-connection frame and message bursts.
+//// - a per-IP token bucket, which limits how often reconnects can refresh
+////   per-connection frame and message bursts.
 ////
 //// All three are checked atomically inside `handle_message` on acquire, so
 //// concurrent opens cannot race past either ceiling. A single `Permit` tracks
-//// both dimensions and the same process monitor reclaims both when the holder
-//// dies without releasing. Counts and rate buckets are checkpointed to an ETS
-//// table with a supervisor-scoped heir, so they survive reconnects and worker
-//// restarts, then expire once idle long enough to have fully refilled.
+//// concurrency dimensions and the same process monitor reclaims both when the
+//// holder dies without releasing. Counts and rate buckets are checkpointed
+//// to an ETS table with an heir, so a replacement limiter worker can recover
+//// live holders and per-IP rate history. Disconnects release concurrency
+//// capacity without resetting the IP's rate bucket. Idle rate buckets expire
+//// once their allowance has fully refilled.
+////
+//// The heir stops with the enclosing beryl supervisor. This state survives
+//// router and limiter-worker restarts, but not shutdown or replacement of
+//// that supervisor, or a node restart.
 
 import beryl/rate_limit
 import gleam/bool
