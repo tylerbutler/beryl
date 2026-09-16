@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Stop heartbeat-evicted socket actors after lifecycle teardown completes."

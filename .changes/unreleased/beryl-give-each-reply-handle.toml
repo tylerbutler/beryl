@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Give each reply handle a unique request identity so stale replies cannot consume requests that reuse wire identifiers, including after a topic closes and rejoins."

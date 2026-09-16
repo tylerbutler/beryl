@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Bound each connection's outbound queue by frames and bytes, and close slow clients before enqueueing beyond the configured budget."
