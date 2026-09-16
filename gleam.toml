@@ -14,7 +14,7 @@ docs = ["examples/**"]
 # Examples excluded from `trellis run test`: example_helper has no test/
 # directory (gleam test fails when the <package>_test module is missing), and
 # chatroom/cursor have tests that are not wired into the workspace run yet.
-# collab_document, its client, and showcase run here.
+# collab_document, todo, their clients, and showcase run here.
 test = [
   "examples/chatrooms",
   "examples/cursors",

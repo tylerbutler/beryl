@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Added"
+body = "Add a server-authoritative Lustre Todo example with realtime synchronization, validation, and Phoenix wire coverage."
