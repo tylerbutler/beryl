@@ -58,8 +58,8 @@ let config =
   // Concurrent connections per client IP. Size to your expected
   // clients-behind-one-NAT worst case; see the caveat below.
   |> beryl.with_max_connections_per_ip(max_connections: 100)
-  // Node-wide ceiling on concurrent connections across all IPs. Size to a
-  // single node's process/socket/runtime budget; see below.
+  // Per-system ceiling on this node across all IPs. Size all systems on a
+  // node to its combined process/socket/runtime budget; see below.
   |> beryl.with_max_connections(max_connections: 10_000)
 
 let assert Ok(websocket_config) =
@@ -105,20 +105,23 @@ removed after their allowance has fully refilled.
 
 `with_max_connections_per_ip` separately throttles a single peer's concurrent
 connections, while `with_max_connections` caps concurrent connections across
-the whole node. A connection must pass every configured rate and concurrency
-limit; otherwise the transport rejects it with `429` **before** allocating any
-long-lived socket or runtime state. Freed concurrency capacity is reclaimed on
-normal close, transport failure, heartbeat eviction, crash, and setup failure.
+all IP addresses for one beryl system on one BEAM node. A connection must pass
+every configured rate and concurrency limit; otherwise the transport rejects it
+with `429` **before** allocating any long-lived socket or runtime state. Freed
+concurrency capacity is reclaimed on normal close, transport failure, heartbeat
+eviction, crash, and setup failure.
 
 A per-IP limit cannot stop many source addresses. A botnet or a host that
 rotates IPv6 addresses can open a few connections from each address. Together,
-these connections can exhaust the node. The node-wide ceiling limits the total
-number of connections across all IP addresses.
+these connections can exhaust the system's capacity. The per-system ceiling
+limits the total number of connections across all IP addresses.
 
-Because it is enforced per BEAM node, a load-balanced cluster of N nodes has an
-effective ceiling of roughly `max_connections × N`. Size the per-node value
-against one node's capacity, and use your load balancer's own global
-connection/rate controls when you need a cluster-wide cap.
+Each independently constructed `Sockets` system has its own limiter. Two
+systems on one node can therefore each admit up to their configured limit. With
+one system per node, a load-balanced cluster of N nodes has an effective
+ceiling of roughly `max_connections × N`. If a node runs multiple systems, size
+their combined limits against that node's capacity. Use your load balancer's
+own global connection/rate controls when you need a cluster-wide cap.
 
 ### Limits behind proxies and shared IP addresses
 

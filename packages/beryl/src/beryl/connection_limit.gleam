@@ -3,9 +3,10 @@
 //// Enforces three independent dimensions in a single serialized actor:
 ////
 //// - a per-IP ceiling (`max_per_ip`), which throttles a single peer, and
-//// - a node-wide ceiling (`max_total`), which caps concurrent connections
-////   across every IP so distributed/rotating source addresses cannot exhaust
-////   the node's process, socket, and runtime budget, and
+//// - a per-system total ceiling (`max_total`) on one node, which caps
+////   concurrent connections across every IP so distributed/rotating source
+////   addresses cannot exhaust that system's process, socket, and runtime
+////   budget, and
 //// - a per-IP token bucket, which prevents reconnect churn from repeatedly
 ////   refreshing per-connection frame and message bursts.
 ////
@@ -75,7 +76,7 @@ type State {
     store_key: process.Name(Message),
     /// Per-IP ceiling; 0 disables the per-IP check.
     max_per_ip: Int,
-    /// Node-wide ceiling across all IPs; 0 disables the global check.
+    /// Per-system ceiling across all IPs; 0 disables the total check.
     max_total: Int,
     /// Per-IP connection-attempt rate limit; `None` disables it.
     connection_rate: Option(rate_limit.RateLimitConfig),
@@ -317,7 +318,7 @@ fn release_reservation(
   }
 }
 
-/// Reclaim a slot in both dimensions: decrement the node-wide total and the
+/// Reclaim a slot in both dimensions: decrement the per-system total and the
 /// per-IP count. Every acquire increments both, so every release (explicit or
 /// via a holder's death) decrements both symmetrically.
 fn release_slot(state: State, ip: String) -> State {
