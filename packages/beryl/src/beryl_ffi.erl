@@ -4,7 +4,8 @@
          admission_token_new/0, admission_token_cancel/1,
          admission_token_pending/1, admission_token_claim/1, admission_token_owner/1,
          reservation_token_pending/1,
-         connection_limit_state_open/2, connection_limit_state_put/2]).
+         connection_limit_state_open/2, connection_limit_state_put/2,
+         connection_limit_state_heir_start/2]).
 
 %% Used only after a selector validates the frozen raw PubSub record shape.
 identity(X) -> X.
@@ -77,15 +78,18 @@ connection_limit_supervisor() ->
     end.
 
 connection_limit_state_new(Supervisor, PersistentKey, Key, InitialState) ->
-    Heir = spawn(fun() ->
-        connection_limit_state_heir(Supervisor, PersistentKey)
-    end),
+    Heir = connection_limit_state_heir_start(Supervisor, PersistentKey),
     Table = ets:new(beryl_connection_limit_state,
                     [set, public, {heir, Heir, Key}]),
     true = ets:insert(Table, {state, InitialState}),
     persistent_term:put(PersistentKey, Table),
     Heir ! {connection_limit_table, Table},
     InitialState.
+
+connection_limit_state_heir_start(Supervisor, PersistentKey) ->
+    spawn(fun() ->
+        connection_limit_state_heir(Supervisor, PersistentKey)
+    end).
 
 connection_limit_state_heir(Supervisor, PersistentKey) ->
     Monitor = erlang:monitor(process, Supervisor),
@@ -95,7 +99,10 @@ connection_limit_state_heir(Supervisor, PersistentKey) ->
                 Supervisor, Monitor, PersistentKey, Table);
         {'ETS-TRANSFER', Table, _From, _HeirData} ->
             connection_limit_state_heir_wait(
-                Supervisor, Monitor, PersistentKey, Table)
+                Supervisor, Monitor, PersistentKey, Table);
+        {'DOWN', Monitor, process, Supervisor, _Reason} ->
+            _ = persistent_term:erase(PersistentKey),
+            ok
     end.
 
 connection_limit_state_heir_wait(Supervisor, Monitor, PersistentKey, Table) ->
