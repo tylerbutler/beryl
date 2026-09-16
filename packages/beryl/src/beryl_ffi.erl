@@ -19,8 +19,9 @@ rescue(Fun) ->
     catch
         Class:Reason ->
             Formatted = unicode:characters_to_binary(
-                io_lib:format("~p:~P", [Class, Reason, 10])),
-            {error, string:slice(Formatted, 0, 512)}
+                io_lib:format(
+                    "~p:~P", [Class, Reason, 10], [{chars_limit, 512}])),
+            {error, binary:copy(string:slice(Formatted, 0, 512))}
     end.
 
 %% Return Erlang monotonic time in milliseconds
