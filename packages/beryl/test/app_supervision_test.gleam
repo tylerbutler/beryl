@@ -44,6 +44,12 @@ fn connection_limit_checkpoint_heir(
   limiter: process.Pid,
 ) -> Result(process.Pid, Nil)
 
+@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_heir_stops_before_table")
+fn connection_limit_heir_stops_before_table() -> Nil
+
+@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_heir_stops_before_announcement")
+fn connection_limit_heir_stops_before_announcement() -> Nil
+
 // ── A trivial named sibling worker used to prove parent/sibling survival ────
 
 fn start_sibling(
@@ -291,6 +297,14 @@ pub fn replacement_subtree_owns_a_fresh_checkpoint_test() -> Nil {
   limiter_pid(sockets) |> should.equal(replacement_limiter)
   transport.release_connection_slot(next)
   beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn checkpoint_heir_stops_before_table_creation_test() -> Nil {
+  connection_limit_heir_stops_before_table()
+}
+
+pub fn checkpoint_heir_stops_before_table_announcement_test() -> Nil {
+  connection_limit_heir_stops_before_announcement()
 }
 
 // ── a runtime crash while stopping does not poison later lifecycle events ──
