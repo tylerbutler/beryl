@@ -10,6 +10,10 @@ on:
 env:
   HEXPM_READ_API_KEY: ${{ secrets.HEXPM_API_KEY }}
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   changes:
     runs-on: ubuntu-latest
@@ -406,8 +410,6 @@ jobs:
       }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: read
       actions: read
       contents: read
       pull-requests: write
