@@ -56,6 +56,17 @@ check:
 lint:
     trellis run lint
 
+# Analyze package Erlang sources against their compiled Gleam modules
+dialyzer: build-strict
+    bash scripts/check-ffi-dialyzer.sh
+
+# Check package Erlang sources for undefined function calls
+xref: build-strict
+    bash scripts/check-ffi-xref.sh
+
+# Run all BEAM FFI checks
+beam-check: dialyzer xref
+
 # Check workspace invariants (members, graph, versions, fragments)
 doctor:
     trellis doctor
@@ -189,7 +200,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: format-check check docs site-snippets test build-strict examples-test site-demos-test
+ci: format-check docs site-snippets beam-check test examples-test site-demos-test
 
 # Alias for PR checks
 alias pr := ci
