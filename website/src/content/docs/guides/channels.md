@@ -265,9 +265,10 @@ function and sends it to the worker process of that join. Only that join can
 read the value during delivery. No mailbox stores the typed value between
 turns.
 
-Admission reserves worker capacity before publication. A sealed function's
-environment does not have a retained-byte guarantee; bound application
-payloads as well as item counts.
+Because `notify` admits work to the channel's worker queue, it reserves worker
+capacity before publication. Gleam does not guarantee how many bytes a sealed
+function retains, so limit application payload sizes as well as queue item
+counts.
 
 ### Senders from closed or rejoined channels
 
