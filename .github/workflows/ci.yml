@@ -11,7 +11,66 @@ env:
   HEXPM_READ_API_KEY: ${{ secrets.HEXPM_API_KEY }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    name: Detect changed paths
+    outputs:
+      source: ${{ steps.filter.outputs.source }}
+      docs: ${{ steps.filter.outputs.docs }}
+      examples: ${{ steps.filter.outputs.examples }}
+      load: ${{ steps.filter.outputs.load }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check changed paths
+        id: filter
+        uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6 # ratchet:dorny/paths-filter@v3
+        with:
+          filters: |
+            source:
+              - 'packages/**'
+              - '**/gleam.toml'
+              - '**/manifest.toml'
+              - '.mise.toml'
+              - '.tool-versions'
+              - 'justfile'
+            docs:
+              - 'packages/**'
+              - 'website/**'
+              - '**/gleam.toml'
+              - '**/manifest.toml'
+              - '.mise.toml'
+              - '.tool-versions'
+              - 'justfile'
+            examples:
+              - 'examples/**'
+              - 'packages/**'
+              - '**/gleam.toml'
+              - '**/manifest.toml'
+              - '.mise.toml'
+              - '.tool-versions'
+              - 'justfile'
+            load:
+              - 'load/**'
+              - 'examples/load_test/**'
+              - 'packages/**'
+              - '**/gleam.toml'
+              - '**/manifest.toml'
+              - '.mise.toml'
+              - '.tool-versions'
+              - 'justfile'
+
   dependencies:
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.source == 'true' ||
+        needs.changes.outputs.docs == 'true' ||
+        needs.changes.outputs.examples == 'true' ||
+        needs.changes.outputs.load == 'true'
+      }}
     runs-on: ubuntu-latest
     name: Dependencies
     outputs:
@@ -57,7 +116,8 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
   test:
-    needs: dependencies
+    needs: [changes, dependencies]
+    if: needs.changes.outputs.source == 'true'
     runs-on: ubuntu-latest
     name: Test (Erlang ${{ matrix.erlang }})
     strategy:
@@ -105,7 +165,8 @@ jobs:
         run: just test
 
   docs:
-    needs: dependencies
+    needs: [changes, dependencies]
+    if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     name: Docs
     steps:
@@ -165,7 +226,8 @@ jobs:
         run: just site-demos-test
 
   examples:
-    needs: dependencies
+    needs: [changes, dependencies]
+    if: needs.changes.outputs.examples == 'true'
     runs-on: ubuntu-latest
     name: Examples
     steps:
@@ -213,7 +275,8 @@ jobs:
         run: just examples-test
 
   load-smoke:
-    needs: dependencies
+    needs: [changes, dependencies]
+    if: needs.changes.outputs.load == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     name: Protocol smoke (Erlang ${{ matrix.erlang }}, ${{ matrix.transport }})
@@ -343,6 +406,8 @@ jobs:
       }}
     runs-on: ubuntu-latest
     permissions:
+      contents: read
+      pull-requests: read
       actions: read
       contents: read
       pull-requests: write
