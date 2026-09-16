@@ -55,7 +55,7 @@ routing in one Ewe listener:
 import beryl
 import beryl/transport/server
 import beryl_ewe as ewe_transport
-import ewe.{type Connection, type ResponseBody}
+import ewe
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 
@@ -64,7 +64,9 @@ pub fn start_ewe(sockets: beryl.Sockets) -> Nil {
     ewe_transport.handler(
       sockets,
       server.default_config("/socket/websocket"),
-      fn(http_request: Request(Connection)) -> Response(ResponseBody) {
+      fn(
+        http_request: Request(ewe.Connection),
+      ) -> Response(ewe.ResponseBody) {
         case request.path_segments(http_request) {
           [] ->
             response.new(200)
