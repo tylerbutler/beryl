@@ -2430,6 +2430,13 @@ fn apply_stopping_report(
   worker: WorkerRef,
   message: Message(message),
 ) -> State(model, message) {
+  run(state, socket_id, committed_worker_report_steps(worker, message))
+}
+
+fn committed_worker_report_steps(
+  worker: WorkerRef,
+  message: Message(message),
+) -> List(Step(message)) {
   case message {
     WorkerReport(_, topic, _, report, reservation) -> {
       let report = case report {
@@ -2442,12 +2449,49 @@ fn apply_stopping_report(
         ]
         None -> []
       }
-      run(state, socket_id, [
-        StepWorkerReport(topic, report, ContinueDriving),
-        ..acknowledgements
-      ])
+      [StepWorkerReport(topic, report, ContinueDriving), ..acknowledgements]
     }
-    _ -> state
+    _ -> []
+  }
+}
+
+fn take_committed_worker_report_steps(
+  state: State(model, message),
+  socket_id: String,
+  worker: WorkerRef,
+) -> #(State(model, message), List(Step(message))) {
+  let #(queued, others) =
+    dict.get(state.queued, socket_id)
+    |> result.unwrap([])
+    |> list.partition(fn(message) {
+      case message {
+        WorkerReport(worker: pid, ..) -> pid == worker.pid
+        _ -> False
+      }
+    })
+  let state =
+    State(..state, queued: case others {
+      [] -> dict.delete(state.queued, socket_id)
+      _ -> dict.insert(state.queued, socket_id, others)
+    })
+  let queued_steps =
+    queued
+    |> list.reverse
+    |> list.flat_map(committed_worker_report_steps(worker, _))
+  #(state, list.append(queued_steps, take_committed_inbox_steps(state, worker)))
+}
+
+fn take_committed_inbox_steps(
+  state: State(model, message),
+  worker: WorkerRef,
+) -> List(Step(message)) {
+  case take_worker_report(state.inbox, worker.pid) {
+    Error(Nil) -> []
+    Ok(#(_, message)) ->
+      list.append(
+        committed_worker_report_steps(worker, message),
+        take_committed_inbox_steps(state, worker),
+      )
   }
 }
 
@@ -7215,9 +7259,11 @@ fn close_worker_topic(
   continuation: Continuation,
 ) -> Execution(model, message) {
   // A stopped worker has no termination callback to run. Its `Down` message
-  // can still be queued or not yet received. Continue the close without
-  // waiting for the termination timeout.
+  // can still be queued or not yet received. Apply reports it committed
+  // before death, then continue the close without a termination timeout.
   use <- bool.lazy_guard(when: !process.is_alive(worker.pid), return: fn() {
+    let #(state, reports) =
+      take_committed_worker_report_steps(state, socket_id, worker)
     work_queue.release_producer(state.inbox, worker.pid)
     state.logger
     |> log.error("Topic worker already exited; closing without on_terminate", [
@@ -7225,14 +7271,17 @@ fn close_worker_topic(
       #("topic", topic_name),
     ])
     process.demonitor_process(worker.monitor)
-    Continue(state, [
-      StepEffects(
-        [],
-        None,
-        [],
-        ContinueClosingTopic(topic_name, close_join_ref, reason, continuation),
-      ),
-    ])
+    Continue(
+      state,
+      list.append(reports, [
+        StepEffects(
+          [],
+          None,
+          [],
+          ContinueClosingTopic(topic_name, close_join_ref, reason, continuation),
+        ),
+      ]),
+    )
   })
   case state.stopping {
     False -> {
