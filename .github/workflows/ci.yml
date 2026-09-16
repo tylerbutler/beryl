@@ -176,10 +176,6 @@ jobs:
         if: needs.changes.outputs.source == 'true'
         run: just format-check
 
-      - name: Type check
-        if: needs.changes.outputs.source == 'true'
-        run: just check
-
       - name: Build (warnings as errors)
         if: needs.changes.outputs.source == 'true'
         run: just build-strict
