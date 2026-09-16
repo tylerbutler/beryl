@@ -225,8 +225,9 @@ See [Use the typed sender](/guides/channels/#read-joincontext-and-use-its-typed-
   time and return the result as `on_connect` metadata. The `Join` branches in
   `update` should only apply authorization rules to the verified claims.
 - **Cookie sessions need origin checks.** If you authenticate from a cookie
-  instead of a token, always pair it with `with_allowed_origins` to prevent
-  Cross-Site WebSocket Hijacking. See
+  instead of a token, keep the default same-origin policy or configure an
+  explicit `with_allowed_origins` list to prevent Cross-Site WebSocket
+  Hijacking. See
   [Block Cross-Site WebSocket Hijacking](/guides/websocket#block-cross-site-websocket-hijacking-cswsh).
 - **Rejection response.** For the client-visible error when a join or connection is
   refused, see [Reject a connection during authentication](/guides/error-handling#reject-a-connection-during-authentication).

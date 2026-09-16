@@ -205,7 +205,7 @@ do not establish an end-to-end or node-wide memory bound. See
 | Shared router ingress and fan-out | 4096 items / 32 MiB before local publication and connection-child startup. Fan-out reserves destination capacity and continues past saturated recipients. |
 | Presence mutations | 4096 items / 32 MiB, including reserved runtime-session cleanup. Pending timeouts cancel; running timeouts retain capacity. |
 | Generic PubSub and remote presence sync | No pre-receipt bound. Downstream local socket fan-out still needs admission. |
-| Outbound connection queue | Send requests have no configured count/byte budget or slow-reader eviction policy. A slow writer can accumulate requests independently of the socket actor. |
+| Outbound connection queue | Each transport connection has a configurable frame and payload-byte budget. A slow writer can still cause the connection to close when it reaches that budget. Inbound transport buffering before frame receipt remains outside this ledger. |
 
 Accounted bytes cover inspectable structure and binary backing allocations,
 not closure environments or arbitrary app state. Queue snapshots and
@@ -214,8 +214,8 @@ Owner death invalidates its reservations. Recovery reclaims unpublished work
 from dead producers; published work stays charged until consumption or
 cancellation.
 
-[#249](https://github.com/tylerbutler/beryl/issues/249) tracks outbound queues
-and slow-client eviction. Heartbeat checks still cannot interrupt a blocked
+Outbound budgets reduce the risk from slow clients, but they do not provide
+an end-to-end memory bound. Heartbeat checks still cannot interrupt a blocked
 callback. Use finite connection/topic populations and deployment-level limits,
 and measure your workload.
 

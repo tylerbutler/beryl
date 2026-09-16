@@ -130,10 +130,11 @@ Monitor its mailbox and limit queued work. Another process avoids adding work
 to the request, but an unlimited mailbox can still overload the system. Detach
 the handler during shutdown. beryl does not need an exporter dependency.
 
-Useful derived signals include upgrade rejection rate by outcome, frame decode
-and rate-limit rates, join/message callback failures, connection lifetime,
-broadcast recipient counts, and latency histograms. Alert on sustained rates
-and tail latency rather than individual events.
+Candidate derived signals include upgrade rejection rate by outcome, frame
+decode and rate-limit rates, join/message callback failures, connection
+lifetime, broadcast recipient counts, and latency histograms. Consider alerts
+for sustained rates and tail latency rather than individual events, then tune
+those thresholds from observed workload behavior.
 
 ## Read runtime counts
 
@@ -165,19 +166,21 @@ across nodes in the monitoring system. `joined_socket_topic_pairs` counts
 memberships. One socket on two topics adds two. The runtime records counts when
 it handles the request, so concurrent connection changes can appear later.
 
-Poll no more than once per second. Each poll sends a request through the
-runtime. Many synchronized scrapers can add load. Use one application poller
-per node. Cache the latest successful snapshot, add jitter, and expose the
-snapshot age. Do not convert a timeout to a zero-valued snapshot. A timeout can
-mean restart or overload, not an idle system.
+Start with polling at once per second or less, then measure the overhead for
+your workload. Each poll sends a request through the runtime, and many
+synchronized scrapers can add load. Use one application poller per node. Cache
+the latest successful snapshot, add jitter, and expose the snapshot age. Do not
+convert a timeout to a zero-valued snapshot. A timeout can mean restart or
+overload, not an idle system.
 
 For a runnable JSON endpoint combining beryl and BEAM runtime gauges, see the
 benchmark server's [`/stats` reference](https://github.com/tylerbutler/beryl/blob/main/examples/load_test/README.md#health-and-stats)
 and
 [`http.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/load_test/src/load_test/http.gleam).
 That endpoint polls on request and is a benchmark fixture, not a bundled
-exporter. In production, prefer one application-owned poller per node and
-serve its cached snapshot through your metrics handler.
+exporter. For a deployment, one application-owned poller per node can reduce
+scraper-driven load; serve its cached snapshot through your metrics handler
+and validate that this pattern fits your workload.
 
 ## Measure capacity
 
