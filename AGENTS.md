@@ -15,7 +15,8 @@ just test              # run all tests (scope: `just test beryl_mist`)
 just format            # format all packages
 just format-check      # check formatting (CI uses this)
 just lint              # glinter with warnings_as_errors
-just ci                # full CI: format-check, check, test, build-strict, examples-test
+just beam-check        # Dialyzer and Xref checks for Erlang FFI
+just ci                # full CI: format-check, BEAM analysis, tests, docs, examples
 just pr                # alias for ci — run before creating/updating PRs
 just change P K "B"    # create changelog fragment (trellis changelog new)
 just doctor            # validate workspace invariants

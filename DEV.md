@@ -55,6 +55,9 @@ just check
 # Run tests
 just test
 
+# Run Dialyzer and Xref against Erlang FFI
+just beam-check
+
 # Format code (do this before committing)
 just format
 ```

@@ -47,6 +47,7 @@ jobs:
               - '.mise.toml'
               - '.tool-versions'
               - 'justfile'
+              - 'scripts/check-beam-ffi.sh'
             docs:
               - 'packages/**'
               - 'website/**'
@@ -101,7 +102,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
@@ -122,7 +123,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/save@v4
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
@@ -165,7 +166,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
@@ -176,9 +177,9 @@ jobs:
         if: needs.changes.outputs.source == 'true'
         run: just format-check
 
-      - name: Build (warnings as errors)
+      - name: Build and analyze BEAM FFI
         if: needs.changes.outputs.source == 'true'
-        run: just build-strict
+        run: just beam-check
 
       - name: Run tests
         if: needs.changes.outputs.source == 'true'
@@ -211,7 +212,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
@@ -300,7 +301,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
@@ -370,7 +371,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
