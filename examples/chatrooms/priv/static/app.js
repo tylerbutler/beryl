@@ -31,6 +31,36 @@
   });
   socket.connect();
 
+  function disconnect() {
+    if (typingTimer) {
+      clearTimeout(typingTimer);
+      typingTimer = null;
+    }
+
+    if (typingSweepTimer) {
+      clearInterval(typingSweepTimer);
+    }
+
+    if (currentChannel) {
+      currentChannel.leave();
+      currentChannel = null;
+    }
+
+    if (lobbyChannel) {
+      lobbyChannel.leave();
+      lobbyChannel = null;
+    }
+
+    socket.disconnect();
+  }
+
+  window.__chatroomsDisconnect = disconnect;
+  window.addEventListener("pagehide", disconnect, { once: true });
+
+  window.addEventListener("beforeunload", () => {
+    disconnect();
+  }, { once: true });
+
   // --- DOM References ---
   const roomList = document.getElementById("room-list");
   const roomTitle = document.getElementById("room-title");
@@ -286,7 +316,7 @@
   }
 
   // Clean up stale typing indicators
-  setInterval(() => {
+  const typingSweepTimer = setInterval(() => {
     const now = Date.now();
     for (const [name, timestamp] of typingUsers) {
       if (now - timestamp > 3000) {

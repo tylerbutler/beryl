@@ -36,8 +36,10 @@ async function waitForJoinReply(page) {
 }
 
 test.describe("Chat Rooms Demo", () => {
-  test.afterEach(async ({ page, request }) => {
-    await page.close();
+  test.afterEach(async ({ page, context, request }) => {
+    await page
+      .evaluate(() => window.__chatroomsDisconnect?.())
+      .catch(() => {});
     await expect
       .poll(async () => {
         const response = await request.get("/api/rooms");
@@ -45,6 +47,7 @@ test.describe("Chat Rooms Demo", () => {
         return rooms.reduce((total, room) => total + room.users, 0);
       })
       .toBe(0);
+    await context.close().catch(() => {});
   });
 
   test.describe("Page structure", () => {
