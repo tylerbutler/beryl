@@ -6,7 +6,9 @@
 //// mutation.
 
 import beryl
+import beryl/overload
 import gleam/erlang/process.{type Pid, type Selector, type Subject}
+import gleam/io
 import gleam/json
 import gleam/option.{type Option, None, Some}
 
@@ -201,7 +203,16 @@ fn broadcast_snapshot(
 ) -> Nil {
   case sockets {
     Some(sockets) ->
-      beryl.broadcast(sockets, topic, "presence_list", json.object(sessions))
+      case
+        beryl.broadcast(sockets, topic, "presence_list", json.object(sessions))
+      {
+        Ok(Nil) -> Nil
+        Error(error) ->
+          io.println_error(
+            "[session_presence] broadcast rejected: "
+            <> overload.describe(error),
+          )
+      }
     None -> Nil
   }
 }

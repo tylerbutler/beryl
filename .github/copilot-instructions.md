@@ -50,7 +50,8 @@ Example Playwright runs can create untracked test artifacts; clean those before 
 
 - Before creating or updating a PR, fetch the current default branch and validate the branch against it; PR CI tests the merge result, so local `just ci` on an outdated branch can miss failures.
 - PR titles must follow Conventional Commits and should keep type/scope lowercase, for example `fix(pubsub): preserve broadcast_from exclusion`.
-- Add a trellis changelog fragment for public API, behavior, dependency, or user-visible changes. Use `just change <package> <kind> "<body>"` (trellis changelog new) instead of inventing changelog filenames.
+- Add a trellis changelog fragment only for what a released package ships — its `src/`, `gleam.toml`, or `manifest.toml`. This covers public API, observable behavior, dependency requirements, and `///` doc comments (which ship in the API reference). Use `just change <package> <kind> "<body>"` (trellis changelog new) instead of inventing changelog filenames.
+- Do not add a fragment for anything a package does not ship. Website, `docs/`, examples, dev tooling, test files, and behavior-preserving refactors reach no consumer, so a fragment for them bumps a version that nobody sees.
 - Commit only intended source, test, docs, manifest, and changelog fragment files. Do not stage generated Playwright output or temporary PR body files.
 
 ## Code conventions

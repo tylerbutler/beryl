@@ -39,6 +39,17 @@ fn release_gate(gate: Gate) -> Nil
 @external(erlang, "beryl_supervisor_test_ffi", "active_child_count")
 fn active_child_count(supervisor: process.Pid) -> Int
 
+@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_checkpoint_heir")
+fn connection_limit_checkpoint_heir(
+  limiter: process.Pid,
+) -> Result(process.Pid, Nil)
+
+@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_heir_stops_before_table")
+fn connection_limit_heir_stops_before_table() -> Nil
+
+@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_heir_stops_before_announcement")
+fn connection_limit_heir_stops_before_announcement() -> Nil
+
 // ── A trivial named sibling worker used to prove parent/sibling survival ────
 
 fn start_sibling(
@@ -202,7 +213,7 @@ pub fn limiter_restart_preserves_connection_state_test() -> Nil {
 
   let count_ip = "192.0.2.21"
   let assert Ok(counted) = transport.acquire_connection_slot(sockets, count_ip)
-  transport.bind_connection_slot(counted)
+  let assert Ok(Nil) = transport.bind_connection_slot(counted)
 
   let old_limiter = limiter_pid(sockets)
   process.kill(old_limiter)
@@ -226,6 +237,74 @@ pub fn limiter_restart_preserves_connection_state_test() -> Nil {
   transport.acquire_connection_slot(sockets, count_ip) |> should.be_ok
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn replacement_subtree_owns_a_fresh_checkpoint_test() -> Nil {
+  let assert Ok(#(sockets, beryl_spec)) =
+    beryl.child_spec(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(1),
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
+    )
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(beryl_spec)
+    |> static_supervisor.start()
+
+  test_helper.wait_until(
+    fn() { beryl.app_limiter_pid(sockets) |> result.is_ok },
+    2000,
+    10,
+  )
+  let old_limiter = limiter_pid(sockets)
+  let assert Ok(_old_permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.22")
+  let assert Ok(old_heir) = connection_limit_checkpoint_heir(old_limiter)
+  // Gate old cleanup until its replacement has opened and written a checkpoint.
+  test_helper.suspend_process(old_heir)
+
+  let runtime1 = app_test_helper.runtime_pid(sockets)
+  process.kill(runtime1)
+  let runtime2 = wait_for_new_runtime(sockets, runtime1)
+  process.kill(runtime2)
+  let runtime3 = wait_for_new_runtime(sockets, runtime2)
+  process.kill(runtime3)
+  let runtime4 = wait_for_new_runtime(sockets, runtime3)
+  process.kill(runtime4)
+  test_helper.wait_until(
+    fn() {
+      case beryl.app_limiter_pid(sockets) {
+        Ok(pid) -> pid != old_limiter
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    10,
+  )
+
+  let replacement_limiter = limiter_pid(sockets)
+  // The replacement generation does not inherit the old live connection.
+  let assert Ok(replacement_permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.22")
+  transport.release_connection_slot(replacement_permit)
+
+  test_helper.resume_process(old_heir)
+  test_helper.wait_until(fn() { !process.is_alive(old_heir) }, 2000, 10)
+
+  // Old cleanup cannot remove the replacement's checkpoint or crash its worker.
+  let assert Ok(next) = transport.acquire_connection_slot(sockets, "192.0.2.22")
+  limiter_pid(sockets) |> should.equal(replacement_limiter)
+  transport.release_connection_slot(next)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn checkpoint_heir_stops_before_table_creation_test() -> Nil {
+  connection_limit_heir_stops_before_table()
+}
+
+pub fn checkpoint_heir_stops_before_table_announcement_test() -> Nil {
+  connection_limit_heir_stops_before_announcement()
 }
 
 // ── a runtime crash while stopping does not poison later lifecycle events ──
@@ -505,7 +584,7 @@ pub fn update_crash_runs_socket_close_callback_test() -> Nil {
 
   // Drive an app-info event into the crashing update; the runtime rescues the
   // crash, tears the socket down, and runs its registered close callback.
-  socket.notify(sender, Nil)
+  let assert Ok(_) = socket.notify(sender, Nil)
 
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
   // The runtime itself survives the rescued crash and keeps serving.
@@ -620,7 +699,7 @@ pub fn timed_out_admission_cannot_register_or_apply_init_effects_test() -> Nil {
     process.spawn(fn() {
       let assert Ok(permit) =
         transport.acquire_connection_slot(sockets, "203.0.113.10")
-      transport.bind_connection_slot(permit)
+      let assert Ok(Nil) = transport.bind_connection_slot(permit)
       let assert Ok(owner) = transport.runtime_pid(sockets)
       let result =
         transport.admit_socket(

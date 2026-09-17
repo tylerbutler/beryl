@@ -4,12 +4,14 @@
 
 import app_test_helper
 import beryl
+import beryl/snapshot
 import beryl/socket.{AcceptJoin, Binary, Closed, Info, Join, Message, Next}
 import beryl/wire
 import gleam/erlang/process
 import gleam/int
 import gleam/option
 import gleeunit/should
+import test_helper
 
 /// Start an app that accepts every join and forwards events to the
 /// observer, with a generous channel rate but a small bucket cap.
@@ -194,8 +196,15 @@ pub fn heartbeat_eviction_releases_channel_buckets_test() -> Nil {
   event_frame(channels, "socket-heartbeat", "room:one", "ref-one")
   expect_handled(events, "room:one")
 
-  // Let the socket go stale and get evicted by the periodic check.
-  process.sleep(120)
+  // Wait for eviction and the router's removal before reusing the socket id.
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = snapshot.get(channels)
+      snapshot.connected_sockets(current) == 0
+    },
+    1000,
+    5,
+  )
 
   // A reconnect under the same socket id starts with a free cap: if the old
   // bucket had leaked, this event would exceed max_keys_per_socket = 1.

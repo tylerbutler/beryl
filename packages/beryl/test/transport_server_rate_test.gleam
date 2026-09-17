@@ -62,6 +62,8 @@ fn connect(channels: beryl.Sockets, ip: String) -> Connection {
       seed: socket.empty_seed(),
       connection_permit: permit,
       base_selector: process.new_selector(),
+      config: server.default_config("/socket"),
+      force_close: fn() { Ok(Nil) },
       logger_name: "transport_server_rate_test",
       telemetry: transport.telemetry(channels, transport.Mist),
       codec: option.None,
@@ -86,8 +88,8 @@ fn heartbeat(ref: String) -> String {
 /// arrives within the timeout.
 fn receive_text(connection: Connection) -> Result(String, Nil) {
   case process.selector_receive(from: connection.selector, within: 300) {
-    Ok(server.SendText(text)) -> Ok(text)
-    Ok(server.SendBinary(_)) -> Error(Nil)
+    Ok(server.SendText(text, _)) -> Ok(text)
+    Ok(server.SendBinary(_, _)) -> Error(Nil)
     Ok(server.Close) -> Error(Nil)
     Error(Nil) -> Error(Nil)
   }

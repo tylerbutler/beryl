@@ -9,6 +9,14 @@
 //// meaningful runtime load.
 
 import beryl
+import beryl/overload
+
+/// Read local router admission accounting without waiting for a router turn.
+pub fn queue(
+  sockets: beryl.Sockets,
+) -> Result(overload.Occupancy, overload.AdmissionError) {
+  beryl.app_dispatch(sockets).queue_snapshot()
+}
 
 /// A point-in-time snapshot of local runtime state.
 pub opaque type Snapshot {
@@ -25,13 +33,15 @@ pub type SnapshotError {
   RuntimeUnavailable
   /// The runtime did not process the request before the timeout.
   RequestTimedOut
+  /// The request did not enter the runtime queue.
+  AdmissionRejected(overload.AdmissionError)
 }
 
 /// Request a snapshot from the local runtime.
 ///
 /// The request waits for about one second at most. During a runtime restart,
 /// this function returns `RuntimeUnavailable` or `RequestTimedOut`. An
-/// overloaded runtime returns `RequestTimedOut`.
+/// full runtime queue returns `AdmissionRejected`.
 /// Neither condition panics. This API reports only the node represented by
 /// `sockets`; aggregate multi-node statistics outside beryl.
 ///
@@ -40,6 +50,10 @@ pub fn get(sockets: beryl.Sockets) -> Result(Snapshot, SnapshotError) {
   case beryl.app_dispatch(sockets).stats() {
     Error(beryl.StatsRuntimeUnavailable) -> Error(RuntimeUnavailable)
     Error(beryl.StatsRequestTimedOut) -> Error(RequestTimedOut)
+    Error(beryl.StatsAdmissionRejected(overload.Unavailable)) ->
+      Error(RuntimeUnavailable)
+    Error(beryl.StatsAdmissionRejected(error)) ->
+      Error(AdmissionRejected(error))
     Ok(stats) ->
       Ok(Snapshot(
         connected_sockets: stats.connected_sockets,

@@ -218,7 +218,8 @@ pub fn decoded_binary_route_preserves_message_kind_test() -> Nil {
   let text_event = "[\"join-ref\",\"text-ref\",\"room:lobby\",\"noop\",{}]"
   let assert Ok(text_message) =
     codec.decode_text(transport.active_codec(sockets))(text_event)
-  transport.route_decoded(sockets, "decoded-binary", text_message)
+  let assert Ok(_) =
+    transport.route_decoded(sockets, "decoded-binary", text_message)
   expect_message(handler, "text", "handled", "no_reply") |> should.be_true
 
   let binary_event = <<
@@ -236,7 +237,8 @@ pub fn decoded_binary_route_preserves_message_kind_test() -> Nil {
   let assert Some(decode_binary) =
     codec.decode_binary(transport.active_codec(sockets))
   let assert Ok(binary_message) = decode_binary(binary_event)
-  transport.route_decoded_binary(sockets, "decoded-binary", binary_message)
+  let assert Ok(_) =
+    transport.route_decoded_binary(sockets, "decoded-binary", binary_message)
   expect_message(handler, "binary", "handled", "no_reply") |> should.be_true
 
   expect_none(handler) |> should.be_true
@@ -278,12 +280,13 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
   let _joined = app_test_helper.recv(frames)
   expect_join(handler, "accepted") |> should.be_true
 
-  transport.route_binary(sockets, "ok", <<1, 2, 3>>)
+  let assert Ok(_) = transport.route_binary(sockets, "ok", <<1, 2, 3>>)
   expect_message(handler, "binary", "handled", "no_reply") |> should.be_true
-  socket.notify(sender, Tick)
+  let assert Ok(_) = socket.notify(sender, Tick)
   expect_message(handler, "info", "handled", "no_reply") |> should.be_true
 
-  beryl.broadcast(sockets, "room:lobby", "event", json.object([]))
+  let assert Ok(_) =
+    beryl.broadcast(sockets, "room:lobby", "event", json.object([]))
   let _local = app_test_helper.recv(frames)
   expect_broadcast(handler, "local", 1) |> should.be_true
 

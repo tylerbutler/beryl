@@ -3,6 +3,8 @@ title: "Move from raw dispatch to channel handlers"
 description: Move from one socket-wide update function to channel handlers that each keep their own state and message type.
 ---
 
+import TopicCompositionDemo from '../../../components/TopicCompositionDemo.astro';
+
 In Elm and Lustre, a parent component owns its children. The parent model
 stores each child model. The parent message type has one variant for each child
 message type. The parent update function looks at the message and sends it to
@@ -53,8 +55,23 @@ Add a second, unrelated `guide` topic and three things grow. `Message` gets
 more variants. `Model` gets more fields. The update function gets more
 branches.
 
-This is not a type-safety problem. It is the price you pay when your app owns
-the full socket router.
+This is the price you pay when your app owns the full socket router.
+
+<TopicCompositionDemo />
+
+Vote, send a guide tip, then leave the poll and send another tip. The
+connection and guide subscription remain active. Switch the explanatory view
+at any point: the poll and guide counts do not change, and no join or message
+runs because you changed views.
+
+The demo extends the poll example with a `guide` topic. With raw dispatch,
+you add its state and messages to the socket-wide `Model` and `Message` types.
+With channel handlers, you keep each handler's state and message type separate.
+Compare both implementations in
+[`tutorial_composition.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/test/tutorial_composition.gleam).
+
+This demo has one poll member, so leaving the poll removes its room. Rejoining
+starts at zero.
 
 ## Channel handlers route topics for you
 
@@ -169,6 +186,10 @@ store the state and callbacks inside more closures. Each `channel.next` does
 the same with the new state. The types stay concrete inside those closures.
 From the outside, every handler has the same type.
 
+In the experiment above, compare the poll instance's `String` state and
+`PollInfo` with guide's `Int` state and `GuideInfo`. A guide tip changes only
+guide's count. Poll totals belong to the shared store, not either instance.
+
 beryl does not turn your state or info messages into `Dynamic`. Only the
 client payload is `Dynamic`, because it comes from the wire. That is true for
 both APIs.
@@ -231,6 +252,10 @@ channel.broadcast_from("poll_state", poll.to_json(state))
 The channel already knows its topic. Your callback code is shorter, and an
 action cannot go to the wrong topic by mistake.
 
+Switch the experiment's view after a guide tip or vote. The raw output names
+`guide` or `poll:demo`; the channel action uses the topic of its accepted
+instance. The recipient and payload stay the same.
+
 This is a real limit. A raw update function can act on several topics in one
 effect list. A channel callback can act only on its own channel. To publish
 across topics, use the `beryl.Sockets` handle from outside the channel, or from
@@ -255,6 +280,9 @@ Ok(state) ->
 
 The channel layer turns each action into one core `socket.Effect`. It keeps the
 order. The same runtime runs them, so the reply goes out before the broadcast.
+
+This is effect execution order, not an arrival-order promise across different
+client connections.
 
 A join can also return actions. Use `channel.with_actions` on an accepted join.
 beryl sends the join acknowledgment first, then those actions. A push can never

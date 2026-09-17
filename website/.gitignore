@@ -4,3 +4,5 @@ dist/
 node_modules/
 *.tsbuildinfo
 *.done.build.log
+test-results/
+playwright-report/

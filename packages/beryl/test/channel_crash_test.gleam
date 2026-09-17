@@ -244,7 +244,7 @@ pub fn a_panic_handling_info_closes_only_that_topic_test() -> Nil {
   let assert Ok(sender) = process.receive(senders, 500)
     as "the join reported its sender"
 
-  channel.notify(sender, Poke)
+  let assert Ok(_) = channel.notify(sender, Poke)
 
   // The mail reached the topic's own worker, so the crash is attributed
   // to that topic alone: it closes with the crash as its reason and its
@@ -354,7 +354,7 @@ pub fn a_terminate_panic_ends_the_channel_for_its_sender_test() -> Nil {
   helper.recv(leaver) |> string.contains("phx_close") |> should.be_true
 
   // The terminated join's sender reaches nothing.
-  channel.notify(stale, Poke)
+  let assert Error(_) = channel.notify(stale, Poke)
   helper.no_trace(trace)
   helper.recv_none(peer)
 
@@ -364,9 +364,9 @@ pub fn a_terminate_panic_ends_the_channel_for_its_sender_test() -> Nil {
   helper.recv(leaver) |> string.contains("\"status\":\"ok\"") |> should.be_true
   let assert Ok(fresh) = process.receive(senders, 500)
     as "the rejoin reported its own sender"
-  channel.notify(stale, Poke)
+  let assert Error(_) = channel.notify(stale, Poke)
   helper.no_trace(trace)
-  channel.notify(fresh, Poke)
+  let assert Ok(_) = channel.notify(fresh, Poke)
   helper.next_trace(trace) |> should.equal("info:crash_term:a")
   helper.recv(peer) |> string.contains("\"late\"") |> should.be_true
 }

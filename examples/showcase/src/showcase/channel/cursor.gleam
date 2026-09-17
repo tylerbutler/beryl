@@ -8,10 +8,12 @@
 //// example-local ETS tracker used by the standalone app.
 
 import beryl/channel
+import beryl/overload
 import example_helper/color
 import example_helper/payload
 import example_helper/session_presence
 import gleam/dynamic.{type Dynamic}
+import gleam/io
 import gleam/json.{type Json}
 import gleam/list
 import gleam/result
@@ -53,7 +55,13 @@ pub fn channel(application_context: Context) -> channel.Handler {
       join_context.socket_id,
       meta(state),
     )
-    channel.notify(join_context.self, PublishRoster)
+    case channel.notify(join_context.self, PublishRoster) {
+      Ok(Nil) -> Nil
+      Error(error) ->
+        io.println_error(
+          "[cursor] roster notification rejected: " <> overload.describe(error),
+        )
+    }
 
     channel.accept(state)
     |> channel.on_message(fn(state: State, message: channel.Message) {

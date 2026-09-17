@@ -1,0 +1,3 @@
+package = "beryl_mist"
+kind = "Dependencies"
+body = "Remove the unused direct gleam_crypto dependency."

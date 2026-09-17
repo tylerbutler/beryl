@@ -81,6 +81,7 @@ fn route(channels: beryl.Sockets, socket_id: String, frame: String) -> Nil {
   let assert Ok(input) =
     codec.decode_text(transport.active_codec(channels))(frame)
   transport.route_decoded(channels, socket_id, input)
+  |> should.equal(Ok(Nil))
 }
 
 // A socket announced with an explicit codec is framed with that codec,
@@ -151,7 +152,8 @@ pub fn sockets_with_different_codecs_share_a_topic_test() -> Nil {
   )
   let assert Ok(_) = process.receive(tagged_sent, 500)
 
-  beryl.broadcast(channels, "room:lobby", "op", json.object([]))
+  let assert Ok(_) =
+    beryl.broadcast(channels, "room:lobby", "op", json.object([]))
 
   let assert Ok(phoenix_frame) = process.receive(phoenix_sent, 500)
   phoenix_frame

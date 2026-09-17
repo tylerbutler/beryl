@@ -29,6 +29,14 @@ pub fn config_builders_instantiate_for_ewe_test() -> Nil {
   should.be_true(True)
 }
 
+pub fn outbound_limits_builder_instantiate_for_ewe_test() -> Nil {
+  let assert Ok(_config) =
+    server.default_config("/socket")
+    |> server.with_outbound_limits(max_frames: 8, max_bytes: 4096)
+
+  should.be_true(True)
+}
+
 // `upgrade` is the path-matching entry point used by callers that compose their
 // own request handler. Reference it here so the export stays covered.
 pub fn upgrade_is_exported_test() -> Nil {

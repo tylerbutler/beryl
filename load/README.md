@@ -8,6 +8,30 @@ not capacity.
 
 ## Local setup
 
+### Admission safety fixture
+
+`results/admission-bounds.json` records a local queue-safety fixture, not a
+capacity benchmark. Eight 4096-byte binary publications fill the queue.
+After 10, 1010, and 11010 rejected attempts, queue storage remains 648 words
+and retained queued binaries remain 32768 bytes. Cancellation returns storage
+to the empty fixture's 463 words and queued binary bytes to zero.
+
+The fixture records the VM version, process memory after GC, mailbox length,
+referenced binaries, and its predeclared structural limits. These measurements
+do not cover application state, transport buffers, outbound queues, or RSS.
+The core `work_queue_test` suite runs the assertions. To regenerate the raw
+measurement from the repository root:
+
+```sh
+cd packages/beryl
+gleam build
+erl -noshell -pa build/dev/erlang/*/ebin \
+  -eval 'code:add_patha("build/dev/erlang/beryl/ebin"), io:format("~s~n", [beryl_test_process_ffi:queue_memory_evidence()]), halt().' \
+  > ../../load/results/admission-bounds.json
+```
+
+### k6 setup
+
 Install Erlang 27+, Gleam 1.16+, `rebar3`, `just`, `trellis`, `pnpm`,
 Node.js 22, and Docker. Then, from the repository root:
 
@@ -127,6 +151,13 @@ least 1 and strictly less than the group size. `LOAD_GENERATOR_INDEX` is a
 non-negative integer. Profile files accept only `constant-vus`,
 `per-vu-iterations`, or `constant-arrival-rate`, require a non-empty `exec`
 and threshold arrays, and require positive VUs or arrival-rate allocation.
+
+The benchmark server's `BENCH_CALLBACK_ELAPSED_US` setting models elapsed
+callback delay. Its preemptible loop uses CPU only while scheduled; contention
+or suspension counts toward the deadline. It is not a calibrated CPU workload.
+Keep it at zero for CPU-capacity comparisons unless this elapsed-delay model
+is part of the workload. Record the exact value and this assumption with the
+target's hardware, OTP version, and scheduler settings.
 
 The benchmark contract is explicit: `echo` returns the submitted marker;
 `broadcast` and `broadcast_ack` fan out unchanged payloads;
@@ -286,7 +317,8 @@ repeats from overwriting one another.
 ## Controlled baselines
 
 1. Pin the commit, k6 image digest, target image digest, OS and OTP settings,
-   topology, profile, and effective environment.
+   topology, profile, and effective client and server environment, including
+   `BENCH_CALLBACK_ELAPSED_US`.
 2. Pass `protocol-smoke`, then run an unrecorded whole-system warmup long
    enough for code loading, pools, and caches. `BROADCAST_WARMUP_MS` only
    coordinates group membership.

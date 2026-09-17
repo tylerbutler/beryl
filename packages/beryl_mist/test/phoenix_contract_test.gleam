@@ -356,12 +356,13 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() -> Nil {
 
   drain_text_messages(client)
   drain_text_messages(other_client)
-  beryl.broadcast(
-    channels,
-    "room:lobby",
-    "announcement",
-    json.object([#("body", json.string("hello"))]),
-  )
+  let assert Ok(_) =
+    beryl.broadcast(
+      channels,
+      "room:lobby",
+      "announcement",
+      json.object([#("body", json.string("hello"))]),
+    )
   let broadcast = latest_text_message(client)
   let assert Ok(broadcast_frame) = serializer.decode(broadcast)
   broadcast_frame.join_ref |> should.equal(None)
@@ -407,12 +408,13 @@ pub fn json_contract_join_custom_broadcast_heartbeat_leave_test() -> Nil {
   reason |> should.equal(socket.Normal)
 
   drain_text_messages(client)
-  beryl.broadcast(
-    channels,
-    "room:lobby",
-    "after_leave",
-    json.object([#("body", json.string("ignored"))]),
-  )
+  let assert Ok(_) =
+    beryl.broadcast(
+      channels,
+      "room:lobby",
+      "after_leave",
+      json.object([#("body", json.string("ignored"))]),
+    )
   process.sleep(25)
   assert_no_text_message(client)
   close(client)

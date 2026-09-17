@@ -108,11 +108,11 @@ let names = group.list_groups(groups)  // ["team:engineering", "team:design"]
 `group.broadcast` asks the groups actor for the topic set. The calling process
 waits for that lookup, then sends the event to each topic with
 `beryl.broadcast`. The actor does not send the broadcasts itself. The function
-returns `Nil`, not `Result`. If the group does not exist, the function does
-nothing.
+returns an admission Result. A missing group returns
+`GroupLookupFailed(GroupNotFound(name))`.
 
 ```gleam
-group.broadcast(
+let assert Ok(Nil) = group.broadcast(
   groups,
   channels,
   "team:engineering",
@@ -123,11 +123,12 @@ group.broadcast(
 
 This has the same effect as one `beryl.broadcast` call for each group topic.
 
-:::note[Missing groups do nothing]
-`group.broadcast` does not return an error. It does nothing if the group is
-missing or empty. It panics if the groups actor is unavailable or does not
-reply within 5 seconds. To check a group first, call `group.topics` and handle
-`GroupNotFound`.
+:::note[Fan-out can be partial]
+`BroadcastRejected(admitted_topics, reason)` reports how many earlier topics
+entered the router before rejection. Those admissions remain valid. An empty
+group returns `Ok(Nil)`. The synchronous group lookup still panics if the
+groups actor is unavailable or exceeds its configured call timeout.
+See [overload handling](/guides/overload/).
 :::
 
 ## Group errors
@@ -156,7 +157,7 @@ let assert Ok(Nil) = group.add(groups, "team:eng", "room:frontend")
 let assert Ok(Nil) = group.add(groups, "team:eng", "room:backend")
 
 // Later: broadcast deployment notice to all engineering rooms
-group.broadcast(
+let assert Ok(Nil) = group.broadcast(
   groups,
   channels,
   "team:eng",

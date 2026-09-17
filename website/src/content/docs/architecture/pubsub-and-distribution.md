@@ -18,6 +18,11 @@ isolated namespaces. Different scopes can safely carry different payload types
 into one process mailbox; all handles for one scope must use the same payload
 type.
 
+Generic PubSub sends bypass local admission before receipt. They can grow a
+subscriber mailbox, including a beryl runtime or presence mailbox. Runtime
+fan-out from those messages still reserves each destination socket's capacity.
+See [overload boundaries](/guides/overload/#memory-boundaries).
+
 ## How Gleam calls Erlang `pg`
 
 The Gleam module `beryl/pubsub` calls

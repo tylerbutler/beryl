@@ -122,6 +122,7 @@ The channel composition surface: a channel is a topic pattern paired
 <li><a href="#api-function-broadcast_presence"><code>broadcast_presence</code></a></li>
 <li><a href="#api-function-child_spec"><code>child_spec</code></a></li>
 <li><a href="#api-function-close"><code>close</code></a></li>
+<li><a href="#api-function-discard_reply"><code>discard_reply</code></a></li>
 <li><a href="#api-function-handler"><code>handler</code></a></li>
 <li><a href="#api-function-next"><code>next</code></a></li>
 <li><a href="#api-function-notify"><code>notify</code></a></li>
@@ -132,6 +133,7 @@ The channel composition surface: a channel is a topic pattern paired
 <li><a href="#api-function-presence_untrack"><code>presence_untrack</code></a></li>
 <li><a href="#api-function-push"><code>push</code></a></li>
 <li><a href="#api-function-push_presence"><code>push_presence</code></a></li>
+<li><a href="#api-function-queue_snapshot"><code>queue_snapshot</code></a></li>
 <li><a href="#api-function-reject"><code>reject</code></a></li>
 <li><a href="#api-function-reply_error"><code>reply_error</code></a></li>
 <li><a href="#api-function-reply_ok"><code>reply_ok</code></a></li>
@@ -297,7 +299,8 @@ pub type Message {
 A client message delivered to a joined channel's `on_message` callback.
 
  `reply` is present only when the client asked for a reply; pass it to
- [`reply_ok`](#reply_ok) or [`reply_error`](#reply_error).
+ [`reply_ok`](#reply_ok), [`reply_error`](#reply_error), or
+ [`discard_reply`](#discard_reply).
 
 <div class="api-entry-anchor" id="api-type-next" aria-hidden="true"></div>
 
@@ -326,18 +329,16 @@ A typed handle for sending server-side messages to one joined channel.
  You can share it with any process. The channel's `on_info` callback
  receives each message with its type intact.
 
- A sender is scoped to the join that produced it. Sending is asynchronous
- and never fails. It cannot report that the channel is gone. The message
- goes to the worker process for that join. After the join ends, the worker
- no longer exists and the runtime drops the message. A later join of the
- same topic has a different worker. It cannot receive the message.
+ A sender is scoped to the join that produced it. Sending reserves worker
+ capacity and returns an admission Result. A closed or stale sender returns
+ an error; it cannot send to a later join of the same topic.
 
  #### Cost
 
  A sealed function carries each message to the worker. The worker opens
- the function and uses a selective receive in the same turn. One delivery
- can scan queued work for that topic. Work for other topics does not add
- to this cost.
+ the function and uses a selective receive in the same turn.
+ Function environments are not included in accounted bytes. Bound typed
+ message payloads in the application as well as configuring item limits.
 
 ## Functions
 
@@ -444,6 +445,20 @@ Leave this channel after applying `actions` in order.
  The socket stays connected. Its other channels do not change. This
  channel's [`on_terminate`](#on_terminate) callback still runs.
 
+<div class="api-entry-anchor" id="api-function-discard_reply" aria-hidden="true"></div>
+
+### `discard_reply`
+
+```gleam
+pub fn discard_reply(option.Option(socket.ReplyRef)) -> Action(Active)
+```
+
+Discard a client message reply handle without sending a wire reply.
+
+ Use this for messages the application intentionally will not answer.
+ [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+ produces no effect.
+
 <div class="api-entry-anchor" id="api-function-handler" aria-hidden="true"></div>
 
 ### `handler`
@@ -485,18 +500,18 @@ Stay joined with the given state, applying `actions` in order.
 pub fn notify(
   Sender(a),
   a
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Send a typed server-side message to the channel that owns `sender`.
 
- Each call enqueues one message. Each enqueued message produces one
- `on_info` call. The runtime does not combine sends. It delivers them in
- the order that the worker receives them.
+ Each accepted call queues one message. The runtime does not combine sends.
+ The worker processes accepted messages in queue order.
 
- This is a fire-and-forget send. It returns when the message is enqueued,
- whether or not the channel is still joined. The runtime discards a message
- for a channel that has ended. See [`Sender`](#sender) for delivery cost.
+ `Ok(Nil)` confirms admission, not callback completion. Queue saturation,
+ oversized input, and a closed or unavailable worker return an error.
+ Rejection alone does not close the channel. See [`Sender`](#sender) for
+ delivery cost and the limits of sealed-message byte accounting.
 
 <div class="api-entry-anchor" id="api-function-on_info" aria-hidden="true"></div>
 
@@ -605,6 +620,16 @@ Push a presence snapshot for this channel's topic to this socket.
  `encode` runs when the action is applied, so it already sees any
  earlier [`presence_track`](#presence_track) or
  [`presence_untrack`](#presence_untrack) in the same list.
+
+<div class="api-entry-anchor" id="api-function-queue_snapshot" aria-hidden="true"></div>
+
+### `queue_snapshot`
+
+```gleam
+pub fn queue_snapshot(Sender(a)) -> Result(overload.Occupancy, overload.AdmissionError)
+```
+
+Read this worker incarnation's queue accounting without waiting for it.
 
 <div class="api-entry-anchor" id="api-function-reject" aria-hidden="true"></div>
 

@@ -83,22 +83,24 @@ pub fn binary_codec_routes_join_message_and_reply_over_binary_test() -> Nil {
 
   let #(sent_text, sent_binary) = connect_binary(channels, "socket-1")
 
-  transport.route_binary(
-    channels,
-    "socket-1",
-    bit_array.from_string("J|join-ref|join-1|room:lobby|{\"user\":\"alice\"}"),
-  )
+  let assert Ok(_) =
+    transport.route_binary(
+      channels,
+      "socket-1",
+      bit_array.from_string("J|join-ref|join-1|room:lobby|{\"user\":\"alice\"}"),
+    )
 
   process.receive(seen_payload, 500) |> should.equal(Ok("alice"))
   let assert Ok(join_reply_bits) = process.receive(sent_binary, 500)
   bit_array.to_string(join_reply_bits)
   |> should.equal(Ok("R|join-1|room:lobby|ok|{\"joined\":true}"))
 
-  transport.route_binary(
-    channels,
-    "socket-1",
-    bit_array.from_string("E|event-1|room:lobby|ping|{\"body\":\"hi\"}"),
-  )
+  let assert Ok(_) =
+    transport.route_binary(
+      channels,
+      "socket-1",
+      bit_array.from_string("E|event-1|room:lobby|ping|{\"body\":\"hi\"}"),
+    )
 
   process.receive(seen_payload, 500) |> should.equal(Ok("ping:hi"))
   let assert Ok(event_reply_bits) = process.receive(sent_binary, 500)
@@ -132,27 +134,30 @@ pub fn binary_codec_event_consumes_one_message_rate_token_test() -> Nil {
 
   let #(_sent_text, sent_binary) = connect_binary(channels, "socket-1")
 
-  transport.route_binary(
-    channels,
-    "socket-1",
-    bit_array.from_string("J|join-ref|join-1|room:lobby|{}"),
-  )
+  let assert Ok(_) =
+    transport.route_binary(
+      channels,
+      "socket-1",
+      bit_array.from_string("J|join-ref|join-1|room:lobby|{}"),
+    )
   let assert Ok(_join_reply_bits) = process.receive(sent_binary, 500)
 
-  transport.route_binary(
-    channels,
-    "socket-1",
-    bit_array.from_string("E|event-1|room:lobby|ping|{}"),
-  )
+  let assert Ok(_) =
+    transport.route_binary(
+      channels,
+      "socket-1",
+      bit_array.from_string("E|event-1|room:lobby|ping|{}"),
+    )
   let assert Ok(first_reply_bits) = process.receive(sent_binary, 500)
   bit_array.to_string(first_reply_bits)
   |> should.equal(Ok("R|event-1|room:lobby|ok|{\"ok\":true}"))
 
-  transport.route_binary(
-    channels,
-    "socket-1",
-    bit_array.from_string("E|event-2|room:lobby|ping|{}"),
-  )
+  let assert Ok(_) =
+    transport.route_binary(
+      channels,
+      "socket-1",
+      bit_array.from_string("E|event-2|room:lobby|ping|{}"),
+    )
   let assert Ok(second_reply_bits) = process.receive(sent_binary, 500)
   bit_array.to_string(second_reply_bits)
   |> should.equal(Ok("R|event-2|room:lobby|ok|{\"ok\":true}"))
@@ -177,19 +182,21 @@ pub fn binary_codec_broadcast_uses_binary_send_test() -> Nil {
 
   let #(sent_text, sent_binary) = connect_binary(channels, "socket-1")
 
-  transport.route_binary(
-    channels,
-    "socket-1",
-    bit_array.from_string("J|join-ref|join-1|room:lobby|{}"),
-  )
+  let assert Ok(_) =
+    transport.route_binary(
+      channels,
+      "socket-1",
+      bit_array.from_string("J|join-ref|join-1|room:lobby|{}"),
+    )
   let assert Ok(_join_reply) = process.receive(sent_binary, 500)
 
-  beryl.broadcast(
-    channels,
-    "room:lobby",
-    "announcement",
-    json.object([#("body", json.string("hello"))]),
-  )
+  let assert Ok(_) =
+    beryl.broadcast(
+      channels,
+      "room:lobby",
+      "announcement",
+      json.object([#("body", json.string("hello"))]),
+    )
 
   let assert Ok(broadcast_bits) = process.receive(sent_binary, 500)
   bit_array.to_string(broadcast_bits)
@@ -234,10 +241,11 @@ pub fn codec_without_binary_decoder_delivers_raw_binary_events_test() -> Nil {
     codec.decode_text(transport.active_codec(channels))(
       "[null,\"join-ref\",\"room:lobby\",\"phx_join\",{}]",
     )
-  transport.route_decoded(channels, "socket-1", message)
+  let assert Ok(_) = transport.route_decoded(channels, "socket-1", message)
   let assert Ok(_join_reply) = process.receive(sent_text, 500)
 
-  transport.route_binary(channels, "socket-1", bit_array.from_string("raw"))
+  let assert Ok(_) =
+    transport.route_binary(channels, "socket-1", bit_array.from_string("raw"))
 
   let assert Ok(raw_bits) = process.receive(seen_binary, 500)
   bit_array.to_string(raw_bits) |> should.equal(Ok("raw"))

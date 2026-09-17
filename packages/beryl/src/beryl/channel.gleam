@@ -82,6 +82,7 @@
 //// then.
 
 import beryl
+import beryl/overload
 import beryl/presence
 import beryl/socket
 import beryl/topic
@@ -193,32 +194,43 @@ fn check_duplicates(
 /// You can share it with any process. The channel's `on_info` callback
 /// receives each message with its type intact.
 ///
-/// A sender is scoped to the join that produced it. Sending is asynchronous
-/// and never fails. It cannot report that the channel is gone. The message
-/// goes to the worker process for that join. After the join ends, the worker
-/// no longer exists and the runtime drops the message. A later join of the
-/// same topic has a different worker. It cannot receive the message.
+/// A sender is scoped to the join that produced it. Sending reserves worker
+/// capacity and returns an admission Result. A closed or stale sender returns
+/// an error; it cannot send to a later join of the same topic.
 ///
 /// ## Cost
 ///
 /// A sealed function carries each message to the worker. The worker opens
-/// the function and uses a selective receive in the same turn. One delivery
-/// can scan queued work for that topic. Work for other topics does not add
-/// to this cost.
+/// the function and uses a selective receive in the same turn.
+/// Function environments are not included in accounted bytes. Bound typed
+/// message payloads in the application as well as configuring item limits.
 pub opaque type Sender(info) {
-  Sender(send: fn(info) -> Nil)
+  Sender(
+    send: fn(info) -> Result(Nil, overload.AdmissionError),
+    snapshot: fn() -> Result(overload.Occupancy, overload.AdmissionError),
+  )
+}
+
+/// Read this worker incarnation's queue accounting without waiting for it.
+pub fn queue_snapshot(
+  sender: Sender(info),
+) -> Result(overload.Occupancy, overload.AdmissionError) {
+  sender.snapshot()
 }
 
 /// Send a typed server-side message to the channel that owns `sender`.
 ///
-/// Each call enqueues one message. Each enqueued message produces one
-/// `on_info` call. The runtime does not combine sends. It delivers them in
-/// the order that the worker receives them.
+/// Each accepted call queues one message. The runtime does not combine sends.
+/// The worker processes accepted messages in queue order.
 ///
-/// This is a fire-and-forget send. It returns when the message is enqueued,
-/// whether or not the channel is still joined. The runtime discards a message
-/// for a channel that has ended. See [`Sender`](#sender) for delivery cost.
-pub fn notify(sender: Sender(info), message: info) -> Nil {
+/// `Ok(Nil)` confirms admission, not callback completion. Queue saturation,
+/// oversized input, and a closed or unavailable worker return an error.
+/// Rejection alone does not close the channel. See [`Sender`](#sender) for
+/// delivery cost and the limits of sealed-message byte accounting.
+pub fn notify(
+  sender: Sender(info),
+  message: info,
+) -> Result(Nil, overload.AdmissionError) {
   sender.send(message)
 }
 
@@ -251,7 +263,8 @@ pub type JoinContext(info) {
 /// A client message delivered to a joined channel's `on_message` callback.
 ///
 /// `reply` is present only when the client asked for a reply; pass it to
-/// [`reply_ok`](#reply_ok) or [`reply_error`](#reply_error).
+/// [`reply_ok`](#reply_ok), [`reply_error`](#reply_error), or
+/// [`discard_reply`](#discard_reply).
 pub type Message {
   Message(
     /// The client-supplied event name.
@@ -295,6 +308,7 @@ pub opaque type Action(phase) {
     reply: option.Option(socket.ReplyRef),
     payload: json.Json,
   )
+  DiscardReplyAction(phase: phase, reply: option.Option(socket.ReplyRef))
   PresenceTrackAction(phase: phase, key: String, meta: json.Json)
   PresenceUntrackAction(key: String)
   PushPresenceAction(
@@ -345,6 +359,15 @@ pub fn reply_error(
   payload: json.Json,
 ) -> Action(Active) {
   ReplyErrorAction(Active, reply, payload)
+}
+
+/// Discard a client message reply handle without sending a wire reply.
+///
+/// Use this for messages the application intentionally will not answer.
+/// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+/// produces no effect.
+pub fn discard_reply(reply: option.Option(socket.ReplyRef)) -> Action(Active) {
+  DiscardReplyAction(Active, reply)
 }
 
 /// Track this socket's presence under `key` on this channel's topic and
@@ -666,9 +689,12 @@ pub fn handler(
     // worker no longer exists.
     let handoff = process.new_subject()
     let sender =
-      Sender(send: fn(message) {
-        context.deliver(fn() { process.send(handoff, message) })
-      })
+      Sender(
+        send: fn(message) {
+          context.deliver(fn() { process.send(handoff, message) })
+        },
+        snapshot: context.queue_snapshot,
+      )
     let join_context =
       JoinContext(
         socket_id: context.socket_id,
@@ -773,12 +799,16 @@ fn effect(topic: String, action: Action(phase)) -> List(socket.Effect) {
       socket.BroadcastFrom(topic: topic, event: event, payload: payload),
     ]
     ReplyOkAction(reply: option.None, ..)
-    | ReplyErrorAction(reply: option.None, ..) -> []
+    | ReplyErrorAction(reply: option.None, ..)
+    | DiscardReplyAction(reply: option.None, ..) -> []
     ReplyOkAction(reply: option.Some(reply), payload: payload, ..) -> [
       socket.ReplyOk(ref: reply, payload: payload),
     ]
     ReplyErrorAction(reply: option.Some(reply), payload: payload, ..) -> [
       socket.ReplyError(ref: reply, payload: payload),
+    ]
+    DiscardReplyAction(reply: option.Some(reply), ..) -> [
+      socket.DiscardReply(ref: reply),
     ]
     PresenceTrackAction(key: key, meta: meta, ..) -> [
       socket.PresenceTrack(topic: topic, key: key, meta: meta),

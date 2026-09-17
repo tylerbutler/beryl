@@ -50,6 +50,9 @@
 //// bridge.stop(model.bridge)
 //// ```
 
+import beryl/internal
+import beryl/log
+import beryl/overload
 import beryl/socket.{type Sender}
 import gleam/erlang/process.{type Pid, type Subject}
 
@@ -140,8 +143,17 @@ fn forward_loop(
 ) -> Nil {
   case process.selector_receive_forever(selector) {
     Forward(value) -> {
-      socket.notify(sender, transform(value))
-      forward_loop(selector, sender, transform)
+      case socket.notify(sender, transform(value)) {
+        Ok(Nil) -> forward_loop(selector, sender, transform)
+        Error(error) ->
+          log.warn(
+            internal.logger("beryl.bridge"),
+            "Bridge stopped: target rejected work",
+            [
+              #("reason", overload.describe(error)),
+            ],
+          )
+      }
     }
     // `stop` was called, or the owning process went down — exit normally so
     // the forwarder is cleaned up.

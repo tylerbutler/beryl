@@ -6,11 +6,22 @@
 
 import app_test_helper
 import beryl
+import beryl/channel
+import beryl/snapshot
 import beryl/socket.{Closed, Join}
+import beryl/transport
 import beryl/wire
+import channel_dispatch_helper
 import gleam/erlang/process
 import gleam/string
 import gleeunit/should
+import test_helper
+
+@external(erlang, "beryl_supervisor_test_ffi", "active_child_count")
+fn active_child_count(supervisor: process.Pid) -> Int
+
+@external(erlang, "beryl_supervisor_test_ffi", "only_active_child")
+fn only_active_child(supervisor: process.Pid) -> Result(process.Pid, Nil)
 
 fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
   app_test_helper.start_observed(
@@ -41,11 +52,49 @@ fn connect_with_closer(
   })
 }
 
+fn socket_factory(channels: beryl.Sockets) -> process.Pid {
+  let assert Ok(factory) = beryl.app_socket_factory_pid(channels)
+  factory
+}
+
+fn socket_actor(factory: process.Pid) -> process.Pid {
+  let assert Ok(socket_actor) = only_active_child(factory)
+  socket_actor
+}
+
+fn connected_socket_count(channels: beryl.Sockets) -> Int {
+  let assert Ok(current) = snapshot.get(channels)
+  snapshot.connected_sockets(current)
+}
+
+fn wait_for_socket_down(monitor: process.Monitor) -> Nil {
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+  let assert Ok(process.ProcessDown(..)) =
+    process.selector_receive(selector, 2000)
+  Nil
+}
+
+fn assert_socket_removed(channels: beryl.Sockets, factory: process.Pid) -> Nil {
+  test_helper.wait_until(
+    fn() {
+      active_child_count(factory) == 0 && connected_socket_count(channels) == 0
+    },
+    2000,
+    10,
+  )
+  active_child_count(factory) |> should.equal(0)
+  connected_socket_count(channels) |> should.equal(0)
+}
+
 pub fn heartbeat_timeout_evicts_stale_socket_and_runs_closer_test() -> Nil {
   let events = process.new_subject()
   let channels = start_system(events)
   let closed = process.new_subject()
   let frames = connect_with_closer(channels, "s1", closed)
+  let factory = socket_factory(channels)
+  let actor_monitor = process.monitor(socket_actor(factory))
   app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
   let _reply = app_test_helper.recv(frames)
   let assert Ok(Join(_, _, _)) = process.receive(events, 500)
@@ -59,6 +108,53 @@ pub fn heartbeat_timeout_evicts_stale_socket_and_runs_closer_test() -> Nil {
 
   // The transport connection is force-closed through its registered closer.
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
+  wait_for_socket_down(actor_monitor)
+  assert_socket_removed(channels, factory)
+
+  // A transport can report the forced close more than once after eviction.
+  transport.socket_disconnected(channels, "s1")
+  transport.socket_disconnected(channels, "s1")
+  process.receive(closed, 100) |> should.be_error
+  assert_socket_removed(channels, factory)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
+
+pub fn channel_heartbeat_timeout_stops_socket_actor_test() -> Nil {
+  let terminated = process.new_subject()
+  let handler =
+    channel.handler("room:*", fn(_context) {
+      channel.accept(Nil)
+      |> channel.on_terminate(fn(_state, reason) {
+        process.send(terminated, reason)
+        []
+      })
+    })
+  let channels =
+    channel_dispatch_helper.start(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_heartbeat(timeout_ms: 40),
+      handlers: [handler],
+    )
+  let closed = process.new_subject()
+  let frames = connect_with_closer(channels, "channel-s1", closed)
+  let factory = socket_factory(channels)
+  let actor_monitor = process.monitor(socket_actor(factory))
+
+  channel_dispatch_helper.join(channels, "channel-s1", "room:a", "jr-1", "r-1")
+  let _reply = channel_dispatch_helper.recv(frames)
+
+  let assert Ok(socket.HeartbeatTimeout) = process.receive(terminated, 2000)
+  let close_frame = channel_dispatch_helper.recv(frames)
+  close_frame |> string.contains("phx_close") |> should.be_true
+  process.receive(closed, 1000) |> should.equal(Ok(Nil))
+  wait_for_socket_down(actor_monitor)
+  assert_socket_removed(channels, factory)
+
+  transport.socket_disconnected(channels, "channel-s1")
+  transport.socket_disconnected(channels, "channel-s1")
+  process.receive(closed, 100) |> should.be_error
+  assert_socket_removed(channels, factory)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
 }
 
 pub fn evicted_socket_is_removed_and_ignores_further_input_test() -> Nil {

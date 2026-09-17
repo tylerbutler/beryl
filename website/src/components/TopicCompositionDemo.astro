@@ -1,0 +1,226 @@
+---
+import "../styles/tutorial-demos.css";
+---
+
+<topic-composition-demo class="tutorial-demo not-content">
+	<figure aria-label="One socket, two topics">
+		<figcaption>One socket, two topics</figcaption>
+		<p>Leave the poll, then send a guide tip. The same connection still serves guide.</p>
+		<form>
+			<fieldset disabled>
+				<legend>Explanatory view</legend>
+				<div class="demo-controls">
+					<label class="demo-view"><input type="radio" name="view" value="raw" checked /> Raw dispatch</label>
+					<label class="demo-view"><input type="radio" name="view" value="channels" /> Channels</label>
+				</div>
+				<p class="demo-caption">This control changes the explanation only. An actual endpoint uses one API.</p>
+				<p data-connection>One connection: connected. Topics: poll:demo, guide.</p>
+				<div class="demo-controls">
+					<button type="button" data-vote="gleam">Vote Gleam</button>
+					<button type="button" data-vote="erlang">Vote Erlang</button>
+					<button type="button" data-tip>Send guide tip</button>
+					<button type="button" data-leave>Leave poll</button>
+					<button type="button" data-rejoin disabled>Rejoin poll</button>
+					<button type="button" data-reset>Reset</button>
+				</div>
+			</fieldset>
+		</form>
+		<div class="demo-panels">
+			<section class="demo-panel" aria-label="Poll subscription">
+				<strong>poll:demo</strong>
+				<p data-poll-state>Joined. Room state: "demo".</p>
+				<p data-poll-receipt>Reply to get_state: Gleam 0 / Erlang 0</p>
+			</section>
+			<section class="demo-panel" aria-label="Guide subscription">
+				<strong>guide</strong>
+				<p data-guide-state>Joined. Deliveries: 1.</p>
+				<p data-tip-receipt>Initial tip: A second handler owns this private message type.</p>
+			</section>
+		</div>
+		<section class="demo-store" aria-label="Shared poll state">
+			<strong>Application-owned store actor: running</strong>
+			<p>Which BEAM language are you using today?</p>
+			<p data-room>poll:demo: open. Room members: 1.</p>
+			<p class="demo-totals" data-totals>Gleam 0 / Erlang 0</p>
+			<p class="demo-caption">Guide is not a poll member. Neither channel state nor the socket model holds these totals.</p>
+		</section>
+		<p class="demo-label" data-owner>Application-owned routing and private state (pseudocode)</p>
+		<pre class="demo-code" data-model>Model(sender, topics: {"{"}"poll:demo", "guide"{"}"}, guide_deliveries: 1)
+Message = ClosePollTopic(topic) | GuideReady(generation, text)</pre>
+		<p class="demo-route" data-route>Join poll and guide; route GuideReady through Info.</p>
+		<p class="demo-label">Last output (pseudocode)</p>
+		<pre class="demo-code" data-output>Push("guide", "tip", {"{"}delivery: 1, text{"}"})</pre>
+		<p class="demo-status" role="status" aria-atomic="true" data-status>
+			One socket joined two topics, fetched its poll, and received the initial guide tip.
+		</p>
+		<p class="demo-caption">Local simulation of the checked teaching fixture. Send guide tip represents
+			another typed server delivery, not a control in the runnable example. The routing comparison
+			omits automatic poll closing. Both APIs keep application types.</p>
+		<noscript><p>Raw dispatch routes client messages, typed Info, and Closed events in your update
+			function. Channels select a handler at join, then dispatch to that accepted instance.
+			Leaving poll:demo removes the sole poll member and its room, while guide and the connection
+			remain active. Rejoining starts a poll with zero votes.</p></noscript>
+	</figure>
+</topic-composition-demo>
+
+<script>
+	import { animate, cancelMotion, element } from "./tutorial-demo";
+
+	type Action = "initial" | "vote" | "tip" | "leave" | "rejoin";
+	class TopicCompositionDemo extends HTMLElement {
+		private resetDemo: (() => void) | undefined;
+
+		connectedCallback() {
+			if (this.resetDemo) return;
+			let channels = false;
+			let joined = true;
+			let gleam = 0;
+			let erlang = 0;
+			let deliveries = 1;
+			let action: Action = "initial";
+			let voteChoice = "gleam";
+			const status = element(this, "[data-status]", HTMLElement);
+			const route = element(this, "[data-route]", HTMLElement);
+			const initialTip = "A second handler owns this private message type.";
+			const render = () => {
+				const totals = `Gleam ${gleam} / Erlang ${erlang}`;
+				element(this, "[data-connection]", HTMLElement).textContent =
+					`One connection: connected. Topics: ${joined ? "poll:demo, guide" : "guide"}.`;
+				element(this, "[data-poll-state]", HTMLElement).textContent = joined
+					? channels ? 'Joined. Instance state String = "demo".' : "Joined. Topic stored in Model.topics."
+					: "Not joined; poll state removed.";
+				element(this, "[data-guide-state]", HTMLElement).textContent = `Joined. Deliveries: ${deliveries}.`;
+				element(this, "[data-room]", HTMLElement).textContent = joined
+					? "poll:demo: open. Room members: 1." : "Room removed. Room members: 0.";
+				element(this, "[data-totals]", HTMLElement).textContent = joined ? totals : "No poll stored";
+				for (const button of this.querySelectorAll<HTMLButtonElement>("[data-vote]")) button.disabled = !joined;
+				element(this, "[data-leave]", HTMLButtonElement).disabled = !joined;
+				element(this, "[data-rejoin]", HTMLButtonElement).disabled = joined;
+				element(this, "[data-owner]", HTMLElement).textContent = channels
+					? "Library-owned routing; separate typed instances (pseudocode)"
+					: "Application-owned routing and private state (pseudocode)";
+				element(this, "[data-model]", HTMLElement).textContent = channels
+					? `Join-time table (first matching handler wins):\n  poll:* -> poll:demo\n  guide -> guide\nAccepted instances:\n  ${joined ? 'poll:demo: state String = "demo"; info PollInfo = ClosePoll' : "poll:demo: no instance"}\n  guide: state Int = ${deliveries}; info GuideInfo = Ready(String)`
+					: `Model(sender, topics: {${joined ? '"poll:demo", ' : ""}"guide"}, guide_deliveries: ${deliveries})\nMessage = ClosePollTopic(topic) | GuideReady(generation, text)\nGuide join generation omitted from this model subset.`;
+
+				const routes = {
+					initial: channels
+						? "Join-time matching: poll:* accepts poll:demo; guide accepts guide. Ready then reaches guide.on_info."
+						: "Join branches register poll and guide. Info(GuideReady) selects the guide branch.",
+					vote: channels
+						? `vote ${voteChoice} -> accepted poll:demo instance -> on_message -> shared store. No handler rematch.`
+						: `Message("poll:demo", "vote", ${voteChoice}, reply) -> update's poll branch -> shared store.`,
+					tip: channels
+						? "Ready(text) -> accepted guide instance -> on_info. Poll state is unchanged; no handler rematch."
+						: 'Info(GuideReady(generation, text)) -> update checks the guide join -> increments guide_deliveries.',
+					leave: channels
+						? "poll:demo -> on_terminate -> store.leave -> remove poll instance. Guide instance and connection remain."
+						: 'Closed("poll:demo", Normal) -> store.leave -> delete topic from Model.topics. Guide and connection remain.',
+					rejoin: channels
+						? 'Join-time match poll:* -> new poll:demo instance, state "demo". get_state fetches a new zero-vote room.'
+						: 'Join("poll:demo") -> store.join -> add topic to Model.topics -> AcceptJoin. get_state fetches zero totals.',
+				};
+				route.textContent = routes[action];
+				let output: string;
+				switch (action) {
+					case "vote":
+						output = channels
+							? `next("demo", [reply_ok(request ref, ${totals}),\n  broadcast_from("poll_state", same totals)])`
+							: `Next(model, [ReplyOk(request ref, ${totals}),\n  BroadcastFrom("poll:demo", "poll_state", same totals)])`;
+						output += "\nReply: this client. Peer broadcast: 0 recipients.";
+						break;
+					case "leave":
+						output = channels ? "on_terminate -> []" : "Next(model with poll topic removed, [])";
+						output += "\nProtocol: leave acknowledgment, then poll:demo close frame.";
+						break;
+					case "rejoin":
+						output = channels ? 'accept("demo"); then reply_ok(get_state ref, zero totals)'
+							: "AcceptJoin(ref, None); then ReplyOk(get_state ref, zero totals)";
+						break;
+					case "initial":
+					case "tip":
+						output = channels ? `push("tip", {delivery: ${deliveries}, text})`
+							: `Push("guide", "tip", {delivery: ${deliveries}, text})`;
+				}
+				element(this, "[data-output]", HTMLElement).textContent = output;
+			};
+			const highlight = () => {
+				cancelMotion(route);
+				animate(route, [{ opacity: 0.5 }, { opacity: 1 }], 200);
+			};
+			const reset = () => {
+				cancelMotion(this);
+				joined = true;
+				gleam = 0;
+				erlang = 0;
+				deliveries = 1;
+				action = "initial";
+				element(this, "[data-poll-receipt]", HTMLElement).textContent = "Reply to get_state: Gleam 0 / Erlang 0";
+				element(this, "[data-tip-receipt]", HTMLElement).textContent = `Initial tip: ${initialTip}`;
+				status.textContent = "One socket joined two topics, fetched its poll, and received the initial guide tip.";
+				render();
+			};
+			for (const input of this.querySelectorAll<HTMLInputElement>('input[name="view"]')) {
+				input.addEventListener("change", () => {
+					channels = input.value === "channels";
+					render();
+					status.textContent = `${channels ? "Channels" : "Raw dispatch"} view. Scenario state and delivery counts did not change.`;
+				});
+			}
+			for (const button of this.querySelectorAll<HTMLButtonElement>("[data-vote]")) {
+				button.addEventListener("click", () => {
+					if (!joined) return;
+					const choice = button.dataset["vote"];
+					if (choice !== "gleam" && choice !== "erlang") throw new Error("Unknown poll choice.");
+					voteChoice = choice;
+					if (choice === "gleam") gleam += 1;
+					else erlang += 1;
+					action = "vote";
+					element(this, "[data-poll-receipt]", HTMLElement).textContent = `Reply to vote: Gleam ${gleam} / Erlang ${erlang}`;
+					status.textContent = `Vote counted. The client received its reply. No peer subscribes to this poll. Guide deliveries: ${deliveries}.`;
+					render();
+					highlight();
+				});
+			}
+			element(this, "[data-tip]", HTMLButtonElement).addEventListener("click", () => {
+				deliveries += 1;
+				action = "tip";
+				element(this, "[data-tip-receipt]", HTMLElement).textContent = `Tip ${deliveries}: Guide is still available.`;
+				status.textContent = `Guide delivered tip ${deliveries}. The poll state did not change.`;
+				render();
+				highlight();
+			});
+			element(this, "[data-leave]", HTMLButtonElement).addEventListener("click", () => {
+				joined = false;
+				gleam = 0;
+				erlang = 0;
+				action = "leave";
+				element(this, "[data-poll-receipt]", HTMLElement).textContent = "Poll subscription ended.";
+				status.textContent = "The sole poll member left, so the store deleted its room. Guide and the connection remain active.";
+				render();
+				highlight();
+			});
+			element(this, "[data-rejoin]", HTMLButtonElement).addEventListener("click", () => {
+				joined = true;
+				action = "rejoin";
+				element(this, "[data-poll-receipt]", HTMLElement).textContent = "Reply to get_state: Gleam 0 / Erlang 0";
+				status.textContent = `A new poll starts at zero. Guide still has ${deliveries} deliveries.`;
+				render();
+				highlight();
+			});
+			element(this, "[data-reset]", HTMLButtonElement).addEventListener("click", reset);
+			this.resetDemo = reset;
+			render();
+			element(this, "fieldset", HTMLFieldSetElement).disabled = false;
+			this.dataset["ready"] = "true";
+		}
+
+		disconnectedCallback() {
+			this.resetDemo?.();
+		}
+	}
+
+	if (!customElements.get("topic-composition-demo")) {
+		customElements.define("topic-composition-demo", TopicCompositionDemo);
+	}
+</script>

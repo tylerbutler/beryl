@@ -1,5 +1,7 @@
+import beryl/overload
 import beryl/socket
 import gleam/dynamic.{type Dynamic}
+import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -44,7 +46,14 @@ pub fn update(
             case stage {
               Timed ->
                 timer.after(clock, duration_ms, fn() {
-                  socket.notify(model.sender, ClosePoll(topic))
+                  case socket.notify(model.sender, ClosePoll(topic)) {
+                    Ok(Nil) -> Nil
+                    Error(error) ->
+                      io.println_error(
+                        "[live_poll] timer notification rejected: "
+                        <> overload.describe(error),
+                      )
+                  }
                 })
               ReadOnly | Voting -> Nil
             }

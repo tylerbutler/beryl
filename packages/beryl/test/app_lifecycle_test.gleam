@@ -6,9 +6,11 @@
 
 import app_test_helper
 import beryl
+import beryl/overload
 import beryl/topic
 import beryl/transport
 import beryl/wire
+import beryl/wire/codec
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
@@ -115,10 +117,14 @@ pub fn child_spec_handle_is_usable_before_and_after_start_test() -> Nil {
     )
 
   // Before the owning supervisor starts, the runtime is not running: the
-  // handle reports no runtime pid and pre-start dispatch is a quiet no-op
-  // (this call must not crash).
+  // handle reports unavailability instead of pretending work was admitted.
   beryl.app_runtime_pid(sockets) |> should.be_error
-  app_test_helper.route(sockets, "s0", "[null,\"r-0\",\"room:a\",\"noop\",{}]")
+  let assert Ok(message) =
+    codec.decode_text(wire.phoenix_codec())(
+      "[null,\"r-0\",\"room:a\",\"noop\",{}]",
+    )
+  transport.route_decoded(sockets, "s0", message)
+  |> should.equal(Error(overload.Unavailable))
 
   // Start the application's own supervisor with the returned child spec.
   let assert Ok(_root) =

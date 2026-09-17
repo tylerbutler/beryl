@@ -13,21 +13,25 @@ converts the handler table to a core `init` and `update` pair.
 
 ```text
 beryl internal supervisor (one-for-one, 3 restarts / 5 seconds)
-|- router actor (Transient)
+|- socket factory supervisor (Permanent)
+|  `- socket actor (one per connection, Temporary)
+|     `- topic worker supervisor (channel layer only, linked to the socket actor)
+|        `- topic worker (one per accepted socket/topic join, Temporary)
+|- router actor (Transient, significant)
 `- connection limiter (optional)
 
-transport connection
-`- socket actor (one per connection, monitored by the router)
-   `- topic worker supervisor (channel layer only, linked to the socket actor)
-      `- topic worker (one per joined topic, Temporary)
+transport connection process (outside the beryl subtree)
+`- owns the WebSocket and performs frame writes
 ```
 
 - The **router actor** maintains the socket actor table and topic subscriber
   index. If the router crashes, the supervisor restarts it. The child
   specification still contains the `init` and `update` functions.
 - Each **socket actor** holds one model and sends events to your `update`
-  function. Socket actors are not supervisor children. The transport starts
-  them, and the router monitors them.
+  function. The transport requests a `Temporary` child from the shared
+  **socket factory supervisor**. The router monitors and registers it before
+  `init` runs in the socket actor. A slow `init` does not hold the factory's
+  child-start operation or the router's admission turn.
 - With the channel layer, each socket actor starts a **topic worker
   supervisor** and one **topic worker** for each accepted join. Workers are
   `Temporary`. The supervisor does not restart a stopped worker. The client
@@ -35,11 +39,19 @@ transport connection
 - The router uses a stable registered name. The `Sockets` handle accepts new
   work after a restart. Existing connections close. Sends during the restart
   window do nothing.
-- The child is `Transient`: a graceful `beryl.stop` is final and is not
-  resurrected.
+- The factory is `Permanent`. If it crashes, its socket actors stop and their
+  connections close. The router removes their routing and presence state but
+  does not restart. The replacement factory accepts new connections.
+- The router is the significant `Transient` child: a graceful `beryl.stop`
+  shuts down the subtree and is not restarted.
 
 After **3 restarts in 5 seconds** the internal supervisor gives up and the
 failure propagates through your application's supervision tree.
+
+`Temporary` supervision owns process shutdown; it does not reconstruct a
+session. A stopped socket actor is not restarted. The client must reconnect
+and rejoin. A stopped topic worker is not restarted either; the client must
+rejoin that topic. Store durable application data outside these processes.
 
 ## Runtime restarts close connections
 
@@ -72,6 +84,22 @@ Channel callbacks run in the topic's worker. A `join`, `on_message`, or
 discards that callback's actions but does not stop cleanup for sibling
 channels. See
 [When callbacks panic](/guides/channels/#when-callbacks-panic).
+
+## Slow callbacks and transport writes
+
+Socket actors apply protocol effects in order. Their send functions enqueue
+frames for the transport connection process; they do not write to the network.
+A successful enqueue is not confirmation that the client received the frame.
+
+A slow raw callback delays its whole socket. Channel message and info
+callbacks run independently in topic workers, but joins and ordered closes
+can make the socket actor wait for a worker. Presence mutations pause that
+socket's ordered effect list. A slow shared presence actor can delay mutations
+from many sockets. Router ingress and fan-out are also shared work.
+
+Process isolation does not bound queues or guarantee latency for healthy
+clients. See [Queue limits and overload](/architecture/runtime/#queue-limits-and-overload)
+for the supported controls and the boundaries that remain unbounded.
 
 ## Supervise presence and groups
 

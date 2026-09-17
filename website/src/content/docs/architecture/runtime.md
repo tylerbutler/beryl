@@ -2,7 +2,8 @@
 title: Socket processes & restarts
 ---
 
-The runtime uses one router actor and one actor for each connected socket.
+The runtime uses one shared router actor and one supervised, temporary actor
+for each connected socket.
 Transports send admitted, decoded frames to the router. The router sends each
 frame to the actor that owns the socket. Your application's `init` and `update`
 functions run in that socket actor. With the channel layer, the socket actor
@@ -14,17 +15,26 @@ presence and groups. PubSub wraps Erlang `pg` and is not a runtime child.
 
 Each socket actor stores the app model, wire-send functions, joined topics, and
 heartbeat time for one socket. It processes mailbox messages in sequence. This
-serializes that socket's `update` calls and frame writes without locks. A slow
-callback for one socket does not stop other sockets.
+serializes that socket's `update` calls and protocol effects without locks.
+A slow raw callback delays that socket, not callbacks on other sockets.
 
 With the channel layer, each joined topic has a worker under a supervisor
 that the socket actor starts and links. The worker runs `join` during startup,
 and the socket actor waits for the result. The worker also runs `on_message`
 and `on_info`. It sends effects to the socket actor. The socket actor applies
-them in arrival order and writes each frame. Thus, effects for one topic keep
-their order. Effects for different topics can interleave. The socket actor
-sends a close to the worker before it drops the topic's reply refs. Thus, it
-can deliver a push or reply that the worker computed before a leave.
+them in arrival order and enqueues each frame for the transport. Thus, effects
+for one topic keep their order. Effects for different topics can interleave.
+Before it drops the topic's reply refs, the socket actor tells the worker to
+close. This lets the socket actor deliver a push or reply that the worker
+computed before the leave.
+
+Channel `on_message` and `on_info` callbacks on different topics can run
+concurrently. This is not complete latency isolation: worker startup during a
+join and ordered worker shutdown can make the socket actor wait. Worker join
+and termination each have a 5-second timeout. A slow raw callback blocks all
+topics on its socket. Presence suspension also delays
+ordered work for that socket, and a slow shared presence actor can delay
+mutations from multiple sockets.
 
 The router manages admission, the topic subscriber index, the PubSub
 subscription, and stats. It only matches and forwards messages. It does not run
@@ -77,11 +87,17 @@ Inbound WebSocket frames follow a two-step path:
 
 ## Order of replies, pushes, and broadcasts
 
-The runtime applies effects in list order. The same actor interprets the list
-and writes the frames. Thus, list order is wire order. An `AcceptJoin` reaches
-the wire before a later `Push`. A `Broadcast` goes through the router, which
-sends a copy to each recipient actor. The source socket writes its own copy
-first, so the broadcast keeps its effect-list position on that socket's wire.
+The socket actor applies effects in list order and calls its send functions in
+that order. For Mist and Ewe, these functions enqueue `SendText` or
+`SendBinary` requests to the transport connection process. That process calls
+the transport's frame-write functions. The socket actor owns protocol/effect
+ordering; the connection process owns the WebSocket and performs the writes.
+
+Thus, an `AcceptJoin` is queued before a later `Push`, preserving wire order.
+A successful send-function result means the request was enqueued, not that a
+network write completed or that the client received it. A `Broadcast` goes
+through the router, which sends a copy to each recipient actor. The source
+socket enqueues its own copy at the broadcast's effect-list position.
 
 The socket actor applies most lists in one turn. The presence actor applies
 `PresenceTrack` and `PresenceUntrack`. The runtime pauses the rest of that
@@ -126,35 +142,100 @@ below 2 because integer division would set the check interval to zero.
 
 ## Restart behavior
 
-`child_spec` has no unsupervised mode. The router always starts under an internal one-for-one supervisor with a **3 restarts / 5 seconds** tolerance. Socket actors are not supervisor children: each is started by the transport's connection process at admission, monitored by the router (a crashed actor's entries are swept, closing only that socket), and monitors the router in return, stopping on its `Down`:
+`child_spec` has no unsupervised mode. The router and shared socket factory
+start under an internal one-for-one supervisor with a **3 restarts / 5
+seconds** tolerance. Socket actors are `Temporary` children of the factory.
+The transport requests a child, then the router registers it before its
+application `init` runs. The router and socket actor monitor each other.
 
 ```mermaid
 flowchart TB
-  APP["process that called child_spec"]
-  APP --- SUP["beryl internal supervisor<br/>one-for-one, 3 restarts / 5s"]
+  APP["application supervisor"]
+  APP --> SUP["beryl internal supervisor<br/>one-for-one, 3 restarts / 5s"]
+  SUP --> FACTORY["socket factory supervisor (Permanent)"]
+  FACTORY --> SA1["socket actor (one per connection, Temporary)<br/>model, heartbeat, protocol effects"]
   SUP --> RT["router actor (significant Transient)<br/>init/update captured in child spec"]
   SUP -. optional .-> LIMITER["connection limiter"]
-  RT <-. "monitor ×2" .-> SA1["socket actor (one per connection)<br/>model, heartbeat, frame writes"]
+  RT <-. "mutual monitors" .-> SA1
   SA1 --> WS["topic worker supervisor<br/>(channel layer, linked)"]
-  WS --> W["topic workers (one per joined topic, Temporary)<br/>channel state and callbacks"]
+  WS --> W["topic workers (one per socket/topic join, Temporary)<br/>channel state and callbacks"]
+  SA1 -. "ordered send requests" .-> TRANSPORT["transport connection process<br/>WebSocket frame writes"]
+  TRANSPORT -. "monitors" .-> RT
 ```
 
 - The child specification contains the `init` and `update` closures. A restart
   resumes dispatch without a registration step.
 - The router uses a stable registered name. The `Sockets` handle works after a
-  restart. Sends during the restart window do nothing.
+  restart. Sends during the restart window return an admission error.
 - Router death stops all socket actors. The transports also monitor the router
   and close their connections. A restart starts with no sockets, so clients
-  must rejoin.
-- The child is `Transient`, so a graceful `beryl.stop` is final. A stop first
+  must reconnect and rejoin.
+- Factory death stops all socket actors it owns. The router sweeps their
+  routing and presence state and closes their transports. The router keeps
+  its generation; the `Permanent` factory restarts under its stable name and
+  accepts new connections.
+- A socket actor fault closes only its connection and topics. Socket actors
+  and topic workers are `Temporary`: supervision does not restart them or
+  reconstruct models, refs, or memberships. Recovery requires a new connection
+  and joins, or a topic rejoin if only its worker stopped.
+- The router is significant and `Transient`, so a graceful `beryl.stop` is
+  final. A stop first
   completes in-flight presence work, then stops the socket actors. It kills an
-  actor that remains blocked in an app callback.
+  actor that remains blocked in an app callback. The router drains before the
+  factory shuts down; the factory terminates any surviving children.
 
 PubSub is **not** part of this tree. Erlang `pg` starts and stops it.
 Presence and groups provide child specifications for the application
 supervision tree. See the [Supervision guide](/guides/supervision/).
 
+## Queue limits and overload
+
+beryl has finite local admission budgets. Reservations cover queued,
+executing, and deferred work until completion or cancellation. These limits
+do not establish an end-to-end or node-wide memory bound. See
+[overload handling](/guides/overload/) for configuration and Result APIs.
+
+| Boundary | Current control and overload behavior |
+|---|---|
+| Connection admission | Optional per-IP attempt-rate and concurrent connection limits, plus a node-wide concurrent connection limit. All default to disabled. The limiter owns accounting; a rejected upgrade receives HTTP `429`. |
+| Complete inbound frames | The connection process closes the connection for frames over 1 MiB by default, after assembly. Optional frame-rate limiting drops over-rate frames before decoding. Neither bounds pre-assembly buffers or router queues. |
+| Decoded socket input | Socket actors own optional message, join, and channel/topic rate buckets. Rates default to disabled. Over-rate messages are dropped; over-rate joins receive an error reply. These are not worker queue limits. |
+| Topic-worker input | 256 outstanding inputs and 8 MiB per worker. Client input rejection closes the topic; server notifications return errors. |
+| Worker reports and action batches | One normal report per worker, charged to the socket. Each callback result has a 256-effect / 8 MiB limit. Rejected batches apply no prefix. |
+| Socket work and deferred presence work | 1024 items / 8 MiB, including active effects, reports, and unanswered refs. Presence suspension retains capacity. |
+| Shared router ingress and fan-out | 4096 items / 32 MiB before local publication and connection-child startup. Fan-out reserves destination capacity and continues past saturated recipients. |
+| Presence mutations | 4096 items / 32 MiB, including reserved runtime-session cleanup. Pending timeouts cancel; running timeouts retain capacity. |
+| Generic PubSub and remote presence sync | No pre-receipt bound. Downstream local socket fan-out still needs admission. |
+| Outbound connection queue | Send requests have no configured count/byte budget or slow-reader eviction policy. A slow writer can accumulate requests independently of the socket actor. |
+
+Accounted bytes cover inspectable structure and binary backing allocations,
+not closure environments or arbitrary app state. Queue snapshots and
+`[beryl, queue, occupancy]` telemetry expose occupancy, rejections, and age.
+Owner death invalidates its reservations. Recovery reclaims unpublished work
+from dead producers; published work stays charged until consumption or
+cancellation.
+
+[#249](https://github.com/tylerbutler/beryl/issues/249) tracks outbound queues
+and slow-client eviction. Heartbeat checks still cannot interrupt a blocked
+callback. Use finite connection/topic populations and deployment-level limits,
+and measure your workload.
+
+## Performance evidence
+
+[#371](https://github.com/tylerbutler/beryl/pull/371) provides protocol-smoke
+evidence, not a comparative capacity result. The
+[ADR 0005 measurements](https://github.com/tylerbutler/beryl/blob/main/docs/adr/0005-socket-actor-supervision.md#results)
+compare direct and factory startup at a requested 2,000 connections per second
+with Mist on Erlang 27.2.1 and 12 schedulers, with three runs per design.
+They support that narrow start-rate comparison, not a general throughput,
+latency, memory, or recovery guarantee.
+
+[#400](https://github.com/tylerbutler/beryl/issues/400) tracks broader workload
+baselines, including slow readers, hot workers, presence delays, combined
+router load, and crash/reconnect recovery.
+
 ## Source files
 
 - `src/beryl/runtime.gleam` — socket and model tracking, event delivery, returned effects, heartbeat timers, crash handling, admission, and shutdown.
 - `src/beryl.gleam` — `child_spec`, the supervised child specification, and the typed functions used to start the runtime and socket actors.
+- `src/beryl/transport/server.gleam` — connection admission and ordered outbound send requests consumed by Mist and Ewe.

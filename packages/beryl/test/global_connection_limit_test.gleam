@@ -122,7 +122,7 @@ pub fn global_slot_reclaimed_when_holder_dies_without_release_test() -> Nil {
     process.spawn_unlinked(fn() {
       let assert Ok(permit) =
         transport.acquire_connection_slot(channels, "10.0.3.1")
-      transport.bind_connection_slot(permit)
+      let assert Ok(Nil) = transport.bind_connection_slot(permit)
       process.send(acquired, Nil)
       // Return immediately: the process exits without releasing, which must
       // still free the node-wide slot via the limiter's monitor.
@@ -187,7 +187,7 @@ pub fn concurrent_opens_do_not_exceed_global_ceiling_test() -> Nil {
       let ip = "10.9." <> int.to_string(i) <> ".1"
       let outcome = case transport.acquire_connection_slot(channels, ip) {
         Ok(permit) -> {
-          transport.bind_connection_slot(permit)
+          let assert Ok(Nil) = transport.bind_connection_slot(permit)
           True
         }
         Error(Nil) -> False

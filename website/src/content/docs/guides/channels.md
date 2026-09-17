@@ -257,7 +257,7 @@ pub type Note {
 }
 
 // Call from a timer, application actor, or HTTP handler:
-channel.notify(sender, Tick(1))
+let assert Ok(Nil) = channel.notify(sender, Tick(1))
 ```
 
 This mechanism does not use casts. `notify` keeps the value in a typed
@@ -265,21 +265,21 @@ function and sends it to the worker process of that join. Only that join can
 read the value during delivery. No mailbox stores the typed value between
 turns.
 
-Delivery uses a selective receive on the worker's mailbox. One delivery can
-scan queued work for that topic. Work for other topics does not add to this
-cost.
+Because `notify` admits work to the channel's worker queue, it reserves worker
+capacity before publication. Gleam does not guarantee how many bytes a sealed
+function retains, so limit application payload sizes as well as queue item
+counts.
 
 ### Senders from closed or rejoined channels
 
-A sender applies only to the join that produced it. Sending is asynchronous
-and does not report failure. If the channel has **closed** (client leave,
-`close([])`, or socket shutdown) or the same topic has since been **joined
-again** (a new worker), the layer drops the message rather than deliver it to
-the wrong instance. A live match delivers exactly one `on_info` call; sends
-are never coalesced and arrive in the order the worker receives them.
+A sender applies only to the join that produced it. `notify` returns an
+admission Result. Queue saturation and a closed or unavailable worker return
+an error. `Ok(Nil)` confirms admission, not callback completion. Accepted
+messages retain their queue order; the runtime does not combine them.
 
 A long-lived process can keep a sender but cannot use it to reach a different
-join. If the target join is gone, the message is dropped.
+join. Handle errors when the target is gone or full; do not build an unlimited
+retry queue. See [overload handling](/guides/overload/).
 
 Use `notify` to schedule a **later** turn, including from another process. Put
 work that must occur during the join in
@@ -298,6 +298,7 @@ observe them:
 | `broadcast_from(event, payload)` | To every subscriber except this socket |
 | `reply_ok(reply, payload)` | Success reply when `Message.reply` is `Some`; no effect for `None` |
 | `reply_error(reply, payload)` | Error reply with the same optional-ref behavior |
+| `discard_reply(reply)` | Release an intentionally unanswered reply handle without a wire reply |
 | `presence_track(key, meta)` | Track this socket under `key` and emit the `presence_diff` join |
 | `presence_untrack(key)` | Untrack and emit the `presence_diff` leave |
 | `push_presence(event, encode)` | Presence snapshot for this topic, to this socket |

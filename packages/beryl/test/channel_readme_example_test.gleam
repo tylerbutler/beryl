@@ -42,7 +42,8 @@ pub fn readme_quick_start_compiles_and_starts_test() -> Nil {
     |> static_supervisor.start()
     as "the README supervision tree starts"
 
-  beryl.broadcast(sockets, "room:lobby", "announce", json.string("hello"))
+  let assert Ok(_) =
+    beryl.broadcast(sockets, "room:lobby", "announce", json.string("hello"))
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }

@@ -224,7 +224,9 @@ its creator and stops if that process exits.
 See [GitHub Releases](https://github.com/tylerbutler/beryl/releases) for release
 notes. Releases use
 [Conventional Commits](https://www.conventionalcommits.org/). The project uses
-[trellis](https://trellis.tylerbutler.com) changelog fragments.
+[trellis](https://trellis.tylerbutler.com) changelog fragments. A fragment is
+required only for what a released package ships. See
+[DEV.md](DEV.md#when-a-fragment-is-required) for the rule.
 
 ## Security
 

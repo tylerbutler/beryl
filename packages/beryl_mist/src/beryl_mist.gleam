@@ -18,6 +18,8 @@ import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/option.{None, Some}
 import gleam/result
+import glisten/socket as glisten_socket
+import glisten/transport as glisten_transport
 import mist.{type Connection, type ResponseData, type WebsocketConnection}
 
 /// Upgrade a request to WebSocket if it matches the configured path.
@@ -55,7 +57,14 @@ pub fn upgrade(
     request_ip: request_ip,
     reject: reject,
     accept: fn(metadata, connection_permit) {
-      do_upgrade(request, channels, metadata, connection_permit, telemetry)
+      do_upgrade(
+        request,
+        channels,
+        config,
+        metadata,
+        connection_permit,
+        telemetry,
+      )
     },
     next: next,
   )
@@ -103,6 +112,7 @@ pub fn handler(
 fn do_upgrade(
   request: Request(Connection),
   channels: Sockets,
+  config: server.TransportConfig(Connection),
   connect_metadata: List(#(String, String)),
   connection_permit: transport.ConnectionPermit,
   telemetry: transport.Telemetry,
@@ -111,13 +121,15 @@ fn do_upgrade(
   mist.websocket(
     request: request,
     handler: on_message,
-    on_init: fn(_connection) {
+    on_init: fn(connection) {
       let #(state, selector) =
         server.init_connection(
           sockets: channels,
           seed: seed,
           connection_permit: connection_permit,
           base_selector: process.new_selector(),
+          config: config,
+          force_close: fn() { force_close(connection) },
           logger_name: "beryl_mist",
           telemetry: telemetry,
           codec: None,
@@ -126,6 +138,17 @@ fn do_upgrade(
     },
     on_close: server.close_connection,
   )
+}
+
+fn force_close(
+  connection: WebsocketConnection,
+) -> Result(Nil, server.ForceCloseError) {
+  case glisten_transport.close(connection.transport, connection.socket) {
+    Ok(Nil) | Error(glisten_socket.Closed) | Error(glisten_socket.Enotconn) ->
+      Ok(Nil)
+    Error(reason) ->
+      Error(server.ForceCloseFailed(glisten_socket.reason_to_string(reason)))
+  }
 }
 
 /// Handle incoming WebSocket messages.
@@ -142,14 +165,18 @@ fn on_message(
     mist.Binary(data) -> resume(server.handle_binary_frame(state, data))
     mist.Closed | mist.Shutdown -> mist.stop()
     mist.Custom(server.Close) -> mist.stop()
-    mist.Custom(server.SendText(text)) -> {
-      let _send_result = mist.send_text_frame(connection, text)
-      mist.continue(state)
-    }
-    mist.Custom(server.SendBinary(data)) -> {
-      let _send_result = mist.send_binary_frame(connection, data)
-      mist.continue(state)
-    }
+    mist.Custom(server.SendText(text, bytes)) ->
+      resume(server.finish_outbound_write(
+        state,
+        bytes,
+        mist.send_text_frame(connection, text) |> result.is_ok,
+      ))
+    mist.Custom(server.SendBinary(data, bytes)) ->
+      resume(server.finish_outbound_write(
+        state,
+        bytes,
+        mist.send_binary_frame(connection, data) |> result.is_ok,
+      ))
   }
 }
 

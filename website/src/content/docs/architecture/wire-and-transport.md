@@ -105,6 +105,12 @@ and peer-IP functions:
 
 **`server.with_allowed_origins(config, origins)`**: attaches an exact-match allow-list for browser `Origin` headers, such as `["https://app.example.com"]`. Use this when cookie-authenticated WebSockets need CSWSH protection.
 
+**`server.with_outbound_limits(config, max_frames:, max_bytes:)`**: sets the
+finite per-connection budget reserved before outbound frames enter the
+connection mailbox. The defaults are 256 frames and 1 MiB. Exceeding either
+limit closes the connection; frames are not silently dropped. An `Ok` send
+result means enqueued, not delivered.
+
 **`upgrade(request, channels, config, next)`**: checks whether the request path matches the configured socket path, runs the `on_connect` hook, and performs the WebSocket upgrade. Calls `next()` when the path does not match, enabling use as middleware.
 
 **`is_websocket_request(request)`**: checks the `Upgrade: websocket` header.

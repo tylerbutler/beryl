@@ -4,8 +4,7 @@
 
 Type-safe real-time channels and presence for Gleam, targeting the Erlang
 (BEAM) runtime. The repository is a [trellis](https://trellis.tylerbutler.com)-managed
-monorepo with three packages (two currently publishable — `beryl_ewe` is
-excluded from release via the `@release` key in the root `gleam.toml`):
+monorepo with three releasable packages:
 
 - **`packages/beryl`** — raw app dispatch plus `beryl/channel` (runtime,
   typed events/effects, presence, PubSub, wire protocol, abuse controls,
@@ -167,7 +166,11 @@ installed in CI via `.github/actions/mise`.
 
 ### Release Flow
 1. Push commits with conventional commit messages
-2. Add changelog fragments with `just change <package> <kind> "<body>"`
+2. Add changelog fragments with `just change <package> <kind> "<body>"`.
+   Fragments apply only to what a released package ships (`src/`,
+   `gleam.toml`, `manifest.toml`). Website, `docs/`, examples, and
+   dev-tooling changes get no fragment — see the "Changelog Fragments"
+   section in `AGENTS.md` for the full rule
 3. `trellis release pr` maintains a release PR (branch `release/pending`)
    with version bumps and CHANGELOGs
 4. Merge the release PR → per-package tags (`beryl-v1.2.3`) and GitHub
