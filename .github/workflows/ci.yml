@@ -340,6 +340,7 @@ jobs:
 
       - name: Test examples
         if: needs.changes.outputs.examples == 'true'
+        timeout-minutes: 2.5
         run: just examples-test
 
       - name: Skip example checks
