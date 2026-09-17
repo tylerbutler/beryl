@@ -371,6 +371,20 @@ type WorkerRef {
 // and heartbeats continue.
 
 /// A socket parked on one asynchronous operation.
+/// A parked socket's wait, reified so the actor keeps taking turns.
+///
+/// This cannot be a bounded synchronous receive inside the turn (evaluated
+/// in #344). Two constraints require the reified form:
+///
+/// - A parked socket actor must still answer `FinalizeForStop`, so
+///   `beryl.stop` can settle an in-flight mutation as `PresenceStopping`
+///   and finish inside its drain even when the presence actor is wedged
+///   (the `shutdown_while_*_pending` tests). A turn blocked for up to
+///   `presence_op_timeout_ms` overruns the stop drain instead.
+/// - A closing worker's in-flight `WorkerRan` reports arrive on the same
+///   subject as every other socket message. Completing the close in order
+///   requires deferring the unmatched messages — the `queued`/`drain`
+///   machinery — which a selective receive on one subject cannot express.
 type Suspension(message) {
   Suspension(
     waiting: Waiting,
@@ -3625,6 +3639,7 @@ fn effects_callback_result(effects: List(Effect)) -> telemetry.CallbackResult {
         | socket.BroadcastFrom(_, _, _) -> telemetry.Push
         socket.AcceptJoin(..)
         | socket.RejectJoin(..)
+        | socket.DiscardReply(..)
         | socket.PresenceTrack(..)
         | socket.PresenceUntrack(..)
         | socket.PushPresence(..)
@@ -4595,6 +4610,10 @@ fn apply_effect(
       let state = apply_reply(state, socket_id, ref, codec.StatusError, payload)
       #(state, pending, kicks)
     }
+    socket.DiscardReply(ref) -> {
+      let state = apply_discard_reply(state, socket_id, ref)
+      #(state, pending, kicks)
+    }
     socket.Push(topic_name, event_name, payload) -> {
       apply_push(state, socket_id, topic_name, event_name, payload)
       #(state, pending, kicks)
@@ -4839,6 +4858,42 @@ fn apply_reply(
             )
           let _send_result =
             send_frame_logged(state, socket, socket.reply_ref_topic(ref), frame)
+          work_queue.release(state.inbox, reservation)
+          store_socket(
+            state,
+            SocketState(
+              ..socket,
+              pending_reply_keys: set.delete(
+                socket.pending_reply_keys,
+                socket.reply_ref_wire_key(ref),
+              ),
+              reply_reservations: dict.delete(socket.reply_reservations, ref),
+            ),
+          )
+        }
+      }
+  }
+}
+
+/// Consume a stored `ReplyRef` without sending a wire reply.
+fn apply_discard_reply(
+  state: State(model, message),
+  socket_id: String,
+  ref: ReplyRef,
+) -> State(model, message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> state
+    Ok(socket) ->
+      case dict.get(socket.reply_reservations, ref) {
+        Error(Nil) -> {
+          state.logger
+          |> log.warn("Discard ignored: unknown or completed reply ref", [
+            #("socket_id", socket_id),
+            #("topic", socket.reply_ref_topic(ref)),
+          ])
+          state
+        }
+        Ok(reservation) -> {
           work_queue.release(state.inbox, reservation)
           store_socket(
             state,

@@ -10,7 +10,7 @@ not ready for production. See the
 :::
 
 The site generates the function-level API reference from Gleam docs metadata.
-Install beryl packages from GitHub. They are not on Hex:
+Start with the two core APIs:
 
 **[beryl](/reference/api/beryl/)** ·
 **[beryl/channel](/reference/api/beryl-channel/)**

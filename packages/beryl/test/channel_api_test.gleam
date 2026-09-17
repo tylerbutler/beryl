@@ -64,6 +64,7 @@ fn describe(effect: socket.Effect) -> String {
       "reply_ok/" <> json.to_string(payload)
     socket.ReplyError(payload: payload, ..) ->
       "reply_error/" <> json.to_string(payload)
+    socket.DiscardReply(..) -> "discard_reply"
     socket.PresenceTrack(key: key, meta: meta, ..) ->
       "presence_track/" <> key <> "/" <> json.to_string(meta)
     socket.PresenceUntrack(key: key, ..) -> "presence_untrack/" <> key
@@ -491,6 +492,7 @@ pub fn actions_cover_the_core_effect_capabilities_test() -> Nil {
     channel.broadcast_from("broadcast_from", json.int(3)),
     channel.reply_ok(option.Some(reply), json.int(4)),
     channel.reply_error(option.Some(reply), json.int(5)),
+    channel.discard_reply(option.Some(reply)),
     channel.presence_track("user:1", json.int(6)),
     channel.presence_untrack("user:1"),
     channel.push_presence("state", fn(entries) {
@@ -505,7 +507,7 @@ pub fn actions_cover_the_core_effect_capabilities_test() -> Nil {
   |> lowered
   |> should.equal(
     "push/push/1,broadcast/broadcast/2,broadcast_from/broadcast_from/3,"
-    <> "reply_ok/4,reply_error/5,presence_track/user:1/6,"
+    <> "reply_ok/4,reply_error/5,discard_reply,presence_track/user:1/6,"
     <> "presence_untrack/user:1,push_presence/state/0,"
     <> "broadcast_presence/state/10",
   )
@@ -515,6 +517,7 @@ pub fn optional_reply_without_a_ref_lowers_to_no_effect_test() -> Nil {
   channel.effects("room:lobby", [
     channel.reply_ok(option.None, json.int(1)),
     channel.reply_error(option.None, json.int(2)),
+    channel.discard_reply(option.None),
   ])
   |> should.equal([])
 }
@@ -530,9 +533,10 @@ pub fn optional_reply_with_a_ref_lowers_in_order_test() -> Nil {
   [
     channel.reply_ok(option.Some(reply), json.int(1)),
     channel.reply_error(option.Some(reply), json.int(2)),
+    channel.discard_reply(option.Some(reply)),
   ]
   |> lowered
-  |> should.equal("reply_ok/1,reply_error/2")
+  |> should.equal("reply_ok/1,reply_error/2,discard_reply")
 }
 
 pub fn repeated_join_action_lists_append_left_to_right_test() -> Nil {

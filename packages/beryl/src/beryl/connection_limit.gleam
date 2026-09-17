@@ -48,6 +48,21 @@ fn cancel_reservation_token(token: ReservationToken) -> Bool
 @external(erlang, "beryl_ffi", "reservation_token_pending")
 fn reservation_token_pending(token: ReservationToken) -> Bool
 
+type CallError {
+  CallTimedOut
+  CallOwnerUnavailable
+}
+
+@external(erlang, "beryl_ffi", "connection_limit_call")
+fn call(
+  subject: Subject(Message),
+  timeout_ms: Int,
+  request: fn(Subject(reply)) -> Message,
+) -> Result(reply, CallError)
+
+@external(erlang, "beryl_ffi", "connection_limit_send")
+fn send_if_alive(subject: Subject(Message), message: Message) -> Bool
+
 /// Opaque connection limiter registry.
 pub opaque type ConnectionLimiter {
   ConnectionLimiter(subject: Subject(Message))
@@ -362,33 +377,31 @@ fn request(
   ip: String,
   subject: Subject(Message),
 ) -> Result(Permit, Nil) {
-  case process.subject_owner(subject) {
-    Error(Nil) -> Error(Nil)
-    Ok(_) -> {
-      let reservation = reference.new()
-      let token = new_reservation_token()
-      let reply_subject = process.new_subject()
-      process.send(
-        subject,
-        Acquire(
-          reservation: reservation,
-          ip: ip,
-          limiter: limiter,
-          owner: process.self(),
-          token: token,
-          reply: reply_subject,
-        ),
+  let reservation = reference.new()
+  let token = new_reservation_token()
+  case
+    call(subject, registry_call_timeout_ms, fn(reply_subject) {
+      Acquire(
+        reservation: reservation,
+        ip: ip,
+        limiter: limiter,
+        owner: process.self(),
+        token: token,
+        reply: reply_subject,
       )
-      case process.receive(reply_subject, registry_call_timeout_ms) {
-        Ok(value) -> value
-        Error(Nil) -> {
-          let _cancelled = cancel_reservation_token(token)
-          // Signals from one process arrive in order. If Acquire is still
-          // queued, this cancellation follows it and reclaims any late slot.
-          process.send(subject, Cancel(reservation))
-          Error(Nil)
-        }
-      }
+    })
+  {
+    Ok(value) -> value
+    Error(CallTimedOut) -> {
+      let _cancelled = cancel_reservation_token(token)
+      // Signals from one process arrive in order. If Acquire is still queued,
+      // this cancellation follows it and reclaims any late slot.
+      let _sent = send_if_alive(subject, Cancel(reservation))
+      Error(Nil)
+    }
+    Error(CallOwnerUnavailable) -> {
+      let _cancelled = cancel_reservation_token(token)
+      Error(Nil)
     }
   }
 }
@@ -492,17 +505,13 @@ pub fn acquire_optional(
 /// Bind a permit to the calling process (the long-lived connection process),
 /// so its slot is reclaimed if that process dies without releasing.
 fn bind(permit: Permit) -> Result(Nil, Nil) {
-  case process.subject_owner(permit.limiter.subject) {
-    Error(Nil) -> Error(Nil)
-    Ok(_) -> {
-      let reply = process.new_subject()
-      process.send(
-        permit.limiter.subject,
-        Bind(permit.reservation, process.self(), reply),
-      )
-      process.receive(reply, registry_call_timeout_ms)
-      |> result.flatten
-    }
+  case
+    call(permit.limiter.subject, registry_call_timeout_ms, fn(reply) {
+      Bind(permit.reservation, process.self(), reply)
+    })
+  {
+    Ok(outcome) -> outcome
+    Error(CallTimedOut) | Error(CallOwnerUnavailable) -> Error(Nil)
   }
 }
 

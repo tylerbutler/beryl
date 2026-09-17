@@ -24,6 +24,8 @@
 //// merge, or prune. Synchronous mutations publish before replying, and
 //// runtime mutations acknowledge only after publishing, so a later read
 //// observes the completed mutation without waiting on the actor mailbox.
+//// A read-model deletion failure stops publication and enters the mutation or
+//// sync processing error path; it is never treated as a successful write.
 ////
 //// A read concurrent with a queued or in-progress mutation can observe the
 //// previous or new complete snapshot. Reads of separate topics do not form
@@ -447,6 +449,10 @@ type CountLookup {
 /// values are only created and consumed by `beryl_presence_read_ffi`.
 type ReadTable
 
+type ReadTableWriteError {
+  ReadTableUnavailable
+}
+
 @external(erlang, "beryl_presence_read_ffi", "new_table")
 fn ffi_new_read_table(name: process.Name(Message)) -> ReadTable
 
@@ -459,7 +465,10 @@ fn ffi_put_topic(
 ) -> Nil
 
 @external(erlang, "beryl_presence_read_ffi", "delete_topic")
-fn ffi_delete_topic(table: ReadTable, topic: String) -> Nil
+fn ffi_delete_topic(
+  table: ReadTable,
+  topic: String,
+) -> Result(Nil, ReadTableWriteError)
 
 @external(erlang, "beryl_presence_read_ffi", "get_topic")
 fn ffi_get_topic(name: process.Name(Message), topic: String) -> TopicLookup
@@ -471,7 +480,11 @@ fn ffi_get_count(name: process.Name(Message), topic: String) -> CountLookup
 /// the read model, or remove its snapshot entirely once it has no entries
 /// left, so a missing topic is only ever "no snapshot recorded", never a
 /// stale empty leftover.
-fn publish_topic(table: ReadTable, crdt: State, topic: String) -> Nil {
+fn publish_topic(
+  table: ReadTable,
+  crdt: State,
+  topic: String,
+) -> Result(Nil, ReadTableWriteError) {
   let entries =
     state.get_by_topic(crdt, topic)
     |> list.map(fn(entry) {
@@ -480,15 +493,30 @@ fn publish_topic(table: ReadTable, crdt: State, topic: String) -> Nil {
     })
   case entries {
     [] -> ffi_delete_topic(table, topic)
-    _ -> ffi_put_topic(table, topic, list.length(entries), entries)
+    _ -> {
+      ffi_put_topic(table, topic, list.length(entries), entries)
+      Ok(Nil)
+    }
   }
 }
 
 /// Republish every topic named in `topics` from `crdt`. Used after
 /// operations (remote merges, replica pruning) that can touch several
 /// topics at once.
-fn publish_topics(table: ReadTable, crdt: State, topics: List(String)) -> Nil {
-  list.each(topics, fn(topic) { publish_topic(table, crdt, topic) })
+fn publish_topics(
+  table: ReadTable,
+  crdt: State,
+  topics: List(String),
+) -> Result(Nil, ReadTableWriteError) {
+  list.try_each(topics, fn(topic) { publish_topic(table, crdt, topic) })
+}
+
+fn require_publication(result: Result(Nil, ReadTableWriteError)) -> Nil {
+  case result {
+    Ok(Nil) -> Nil
+    Error(ReadTableUnavailable) ->
+      panic as "presence read model is unavailable for publication"
+  }
 }
 
 /// Read a topic's materialized entries directly from the read model.
@@ -1174,7 +1202,11 @@ pub fn untrack(
   call(presence, fn(reply) { Untrack(ref, reply) })
 }
 
-/// Untrack all presences for a session, such as when a socket disconnects.
+/// Untrack all presences locally tracked for a session, such as when a socket
+/// disconnects.
+///
+/// Replicated entries owned by another presence actor are not removed, even
+/// when they use the same session ID.
 ///
 /// Returns a typed call error on admission failure, owner exit, or timeout.
 /// A timeout cancels pending work, but a running mutation may still complete.
@@ -1847,6 +1879,7 @@ fn do_track(
     new_crdt,
     unique_strings([topic, ..removed.topics], set.new(), []),
   )
+  |> require_publication
   Ok(#(
     ActorState(..actor_state, crdt: new_crdt, refs: new_refs),
     ref,
@@ -1877,23 +1910,15 @@ fn do_untrack_refs(actor_state: ActorState, refs: List(String)) -> ActorState {
     removed.crdt,
     unique_strings(removed.topics, set.new(), []),
   )
+  |> require_publication
   ActorState(..actor_state, crdt: removed.crdt, refs: removed.refs)
 }
 
 fn do_untrack_all(actor_state: ActorState, session_id: String) -> ActorState {
-  let diff = leave_all_diff(actor_state.crdt, session_id)
-  let new_crdt = state.leave_by_pid(actor_state.crdt, session_id)
-  maybe_invoke_on_diff(actor_state.config, diff)
-  // Drop any refs that pointed at the removed session so they cannot leak
-  // or later leave presences they no longer own.
-  let new_refs =
-    dict.filter(actor_state.refs, fn(_ref, tracked) {
-      tracked.session_id != session_id
-    })
-  // A single session can hold presences in several topics; republish
-  // every topic the leave touched (from the pre-mutation diff).
-  publish_topics(actor_state.read_table, new_crdt, dict.keys(diff.leaves))
-  ActorState(..actor_state, crdt: new_crdt, refs: new_refs)
+  actor_state.refs
+  |> dict.filter(fn(_ref, tracked) { tracked.session_id == session_id })
+  |> dict.keys
+  |> do_untrack_refs(actor_state, _)
 }
 
 fn do_untrack_runtime_owner(
@@ -1904,24 +1929,6 @@ fn do_untrack_runtime_owner(
   |> dict.filter(fn(_ref, tracked) { tracked.owner == RuntimeOwner(owner) })
   |> dict.keys
   |> do_untrack_refs(actor_state, _)
-}
-
-fn leave_all_diff(crdt: State, session_id: String) -> Diff {
-  let leaves =
-    state.online_list(crdt)
-    |> list.filter(fn(entry) { entry.0 == session_id })
-    |> list.fold(dict.new(), fn(grouped, entry) {
-      let #(_, topic, key, meta) = entry
-      let existing =
-        dict.get(grouped, topic)
-        |> result.unwrap([])
-      dict.insert(grouped, topic, [
-        PresenceEntry(session_id: session_id, key: key, meta: meta),
-        ..existing
-      ])
-    })
-
-  Diff(joins: dict.new(), leaves: leaves, scope: Cluster)
 }
 
 /// Invoke the on_diff callback if configured and the diff is non-empty
@@ -2135,5 +2142,6 @@ fn commit_replication(actor_state: ActorState, crdt: State) -> ActorState {
   let diff = visible_diff(actor_state.crdt, crdt)
   maybe_invoke_on_diff(actor_state.config, diff)
   publish_topics(actor_state.read_table, crdt, diff_topics(diff))
+  |> require_publication
   ActorState(..actor_state, crdt: crdt)
 }

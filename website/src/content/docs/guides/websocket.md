@@ -1,12 +1,16 @@
 ---
-title: Use the Mist WebSocket transport
-description: Upgrade Mist requests to WebSockets, authenticate connections, and use the Phoenix wire protocol.
+title: Use a WebSocket transport
+description: Connect Mist or Ewe to beryl, authenticate connections, and use the Phoenix wire protocol.
 ---
 
-beryl provides a WebSocket transport for
-[Mist](https://hexdocs.pm/mist/) browser connections.
+beryl provides WebSocket transports for [Mist](https://hexdocs.pm/mist/) and
+[Ewe](https://hexdocs.pm/ewe/). Both transports use the same beryl runtime,
+configuration, authentication, origin checks, connection limits, and wire
+codecs.
 
 ## Add WebSocket upgrades
+
+### Mist
 
 Use `mist_transport.upgrade` to add WebSocket support:
 
@@ -42,7 +46,51 @@ fn handle_request(
 The `upgrade` function checks the request path. It upgrades a matching request
 and connects it to the beryl runtime.
 
-The transport works with both beryl APIs. A handle from
+### Ewe
+
+Use `ewe_transport.handler` to combine WebSocket upgrades and regular HTTP
+routing in one Ewe listener:
+
+```gleam
+import beryl
+import beryl/transport/server
+import beryl_ewe as ewe_transport
+import ewe
+import gleam/http/request.{type Request}
+import gleam/http/response.{type Response}
+
+pub fn start_ewe(sockets: beryl.Sockets) -> Nil {
+  let assert Ok(_) =
+    ewe_transport.handler(
+      sockets,
+      server.default_config("/socket/websocket"),
+      fn(
+        http_request: Request(ewe.Connection),
+      ) -> Response(ewe.ResponseBody) {
+        case request.path_segments(http_request) {
+          [] ->
+            response.new(200)
+            |> response.set_body(ewe.TextData("Hello!"))
+          _ ->
+            response.new(404)
+            |> response.set_body(ewe.Empty)
+        }
+      },
+    )
+    |> ewe.new
+    |> ewe.listening(port: 8000)
+    |> ewe.start
+
+  Nil
+}
+```
+
+`handler` sends matching WebSocket requests through the beryl admission
+pipeline and sends every other request to the fallback function. Use
+`ewe_transport.upgrade` instead when an existing Ewe handler already controls
+the fallback.
+
+Both transports work with both beryl APIs. A handle from
 `channel.child_spec` is the same `beryl.Sockets` type as one from
 `beryl.child_spec`, so the setup is identical for both.
 
@@ -63,6 +111,11 @@ Raw WebSocket clients connect directly to the configured path with no suffix app
 Use `with_on_connect` to authenticate a connection before the upgrade. It is
 similar to Phoenix `UserSocket.connect/3`. The hook runs once for each socket
 before any channel join. It can reject the connection.
+
+The example below uses Mist request types. With Ewe, use
+`Request(ewe.Connection)` in the callback and pass the resulting configuration
+to `ewe_transport.handler` or `ewe_transport.upgrade`. The configuration
+builders and rejection behavior are the same.
 
 ```gleam
 let websocket_config =
@@ -285,15 +338,16 @@ let config =
   |> beryl.with_max_connections_per_ip(max_connections: 5)
 ```
 
-When a peer reaches either limit, Mist rejects the upgrade with
+When a peer reaches either limit, the transport rejects the upgrade with
 `429 Too Many Requests` before the handshake. A closed connection releases its
 concurrent capacity. The per-IP rate bucket remains after reconnects and app
 runtime restarts. Thus, a reconnect does not provide a new rate allowance.
 
 ### Reverse proxies and `X-Forwarded-For`
 
-Both controls use the **socket peer IP**, which is the TCP address that Mist
-accepts. beryl does not trust forwarded headers such as `X-Forwarded-For`.
+Both controls use the **socket peer IP**, which is the TCP address that Mist or
+Ewe accepts. beryl does not trust forwarded headers such as
+`X-Forwarded-For`.
 Clients can forge these headers and bypass the limit.
 
 This affects beryl when it runs **behind a reverse proxy or
