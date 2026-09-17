@@ -80,6 +80,7 @@ jobs:
     name: Dependencies
     outputs:
       cache-key: ${{ steps.cache.outputs.cache-primary-key }}
+      prepared-cache-key: ${{ steps.prepared-cache-key.outputs.key }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
         if: needs.changes.outputs.relevant == 'true'
@@ -129,6 +130,23 @@ jobs:
             examples/*/client/build/packages
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
+      - name: Set prepared dependency cache key
+        if: needs.changes.outputs.relevant == 'true'
+        id: prepared-cache-key
+        run: |
+          echo "key=${{ steps.cache.outputs.cache-primary-key }}-run-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: Save prepared Gleam dependencies for this workflow run
+        if: needs.changes.outputs.relevant == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/gleam/hex/hexpm/packages
+            packages/*/build/packages
+            examples/*/build/packages
+            examples/*/client/build/packages
+          key: ${{ steps.prepared-cache-key.outputs.key }}
+
       - name: Skip dependency setup
         if: needs.changes.outputs.relevant != 'true'
         run: echo "No CI-relevant paths changed."
@@ -161,7 +179,7 @@ jobs:
         if: needs.changes.outputs.source == 'true'
         uses: ./.github/actions/mise
 
-      - name: Restore Gleam dependencies
+      - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.source == 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
@@ -170,7 +188,7 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: ${{ needs.dependencies.outputs.cache-key }}
+          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
       - name: Check formatting
@@ -207,7 +225,7 @@ jobs:
         if: needs.changes.outputs.docs == 'true'
         uses: ./.github/actions/mise
 
-      - name: Restore Gleam dependencies
+      - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.docs == 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
@@ -216,7 +234,7 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: ${{ needs.dependencies.outputs.cache-key }}
+          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
       - name: Setup Node.js
@@ -296,7 +314,7 @@ jobs:
         if: needs.changes.outputs.examples == 'true'
         uses: ./.github/actions/mise
 
-      - name: Restore Gleam dependencies
+      - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.examples == 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
@@ -305,7 +323,7 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: ${{ needs.dependencies.outputs.cache-key }}
+          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
       - name: Install example dependencies
@@ -366,7 +384,7 @@ jobs:
         if: needs.changes.outputs.load == 'true'
         uses: ./.github/actions/mise
 
-      - name: Restore Gleam dependencies
+      - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.load == 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
@@ -375,7 +393,7 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: ${{ needs.dependencies.outputs.cache-key }}
+          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
       - name: Validate pinned k6 workload
