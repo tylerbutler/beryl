@@ -31,6 +31,12 @@ fn kill_registry(scope: atom.Atom) -> Nil
 @external(erlang, "beryl_pubsub_test_ffi", "scope_pid")
 fn scope_pid(scope: atom.Atom) -> process.Pid
 
+@external(erlang, "beryl_pubsub_test_ffi", "healthy_ready_reductions")
+fn healthy_ready_reductions(scope: atom.Atom, owner_count: Int) -> Int
+
+@external(erlang, "beryl_pubsub_test_ffi", "timeout_call_cleans_up")
+fn timeout_call_cleans_up(scope: atom.Atom) -> Bool
+
 @external(erlang, "beryl_pubsub_test_ffi", "is_scoped_wire_message")
 fn is_scoped_wire_message(
   scope: atom.Atom,
@@ -48,6 +54,20 @@ fn drain_messages(
   payload: String,
   from: pubsub.PubSubFrom,
 ) -> Int
+
+pub fn pubsub_membership_ready_cost_is_bounded_test() -> Nil {
+  let reductions =
+    healthy_ready_reductions(
+      atom.create("test_pubsub_membership_ready_cost"),
+      4096,
+    )
+  { reductions < 2000 } |> should.be_true
+}
+
+pub fn pubsub_membership_timeout_cleans_up_call_state_test() -> Nil {
+  timeout_call_cleans_up(atom.create("test_pubsub_membership_timeout"))
+  |> should.be_true
+}
 
 pub fn pubsub_scope_recovery_restores_live_memberships_test() -> Nil {
   let scope = atom.create("test_pubsub_scope_recovery")
@@ -461,10 +481,11 @@ pub fn pubsub_broadcast_delivers_message_test() -> Nil {
     |> pubsub.selecting(subscriber, fn(message) { message })
 
   let assert Ok(message) = process.selector_receive(from: selector, within: 100)
-  message.topic |> should.equal("room:lobby")
-  message.event |> should.equal("new_msg")
-  message.payload |> should.equal("hello")
-  message.from |> should.equal(pubsub.System)
+  let pubsub.Message(topic, event, payload, from) = message
+  topic |> should.equal("room:lobby")
+  event |> should.equal("new_msg")
+  payload |> should.equal("hello")
+  from |> should.equal(pubsub.System)
 
   // Cleanup
   pubsub.leave(subscriber, "room:lobby")
