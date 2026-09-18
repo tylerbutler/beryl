@@ -1,10 +1,10 @@
 {
   "name": "lustre_presence",
   "private": true,
-  "description": "Minimal Phoenix JavaScript wrapper for a future beryl Lustre example.",
+  "description": "Lustre presence client for the beryl integration example.",
   "type": "module",
   "scripts": {
-    "build:client": "cd client && gleam build",
+    "build:client": "cd client && gleam run -m lustre/dev build",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {

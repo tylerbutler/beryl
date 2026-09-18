@@ -90,3 +90,7 @@ pub fn receive_timeout(push: Push, callback: fn() -> Nil) -> Nil
 /// Remove one registered callback.
 @external(javascript, "./phoenix_ffi.mjs", "unsubscribe")
 pub fn unsubscribe(subscription: Subscription) -> Nil
+
+/// Run a callback before the browser discards the page.
+@external(javascript, "./phoenix_ffi.mjs", "onPageHide")
+pub fn on_page_hide(callback: fn() -> Nil) -> Subscription
