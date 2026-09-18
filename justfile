@@ -158,11 +158,12 @@ examples-list:
 
 # Build all examples
 examples-build: examples-client-build
-    trellis run build chatroom collab_document cursor example_helper showcase load_test live_poll collab_docs_client
+    trellis run build chatroom collab_document cursor example_helper showcase load_test live_poll collab_docs_client lustre_presence_client
 
 # Build JavaScript clients used by examples
 examples-client-build:
     pnpm -C examples/collab_docs build:client
+    pnpm -C examples/lustre_presence build:client
 
 # Install example test dependencies (Playwright)
 examples-deps:
@@ -173,6 +174,7 @@ examples-test: examples-build
     pnpm -C examples/cursors test
     pnpm -C examples/chatrooms test
     pnpm -C examples/collab_docs test
+    pnpm -C examples/lustre_presence test
     pnpm -C examples/showcase test
 
 # Build the cursors example Docker image (must run from repo root for path-based beryl dep)

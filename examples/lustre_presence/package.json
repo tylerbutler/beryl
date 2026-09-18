@@ -1,0 +1,13 @@
+{
+  "name": "lustre_presence",
+  "private": true,
+  "description": "Minimal Phoenix JavaScript wrapper for a future beryl Lustre example.",
+  "type": "module",
+  "scripts": {
+    "build:client": "cd client && gleam build",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "phoenix": "^1.8.13"
+  }
+}

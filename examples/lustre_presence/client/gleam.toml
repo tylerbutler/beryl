@@ -1,0 +1,9 @@
+name = "lustre_presence_client"
+version = "0.1.0"
+description = "Minimal Phoenix JavaScript client wrapper for a future beryl Lustre example"
+gleam = ">= 1.16.0"
+target = "javascript"
+
+[dependencies]
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+gleam_json = ">= 3.0.0 and < 4.0.0"
