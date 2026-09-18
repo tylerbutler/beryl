@@ -6,9 +6,9 @@ import gleam/list
 import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/string
-import gleeunit
 import gleeunit/should
 import test_helper
+import unitest
 
 type ReadTableWriteError {
   ReadTableUnavailable
@@ -24,7 +24,7 @@ fn delete_gone_table() -> Result(Nil, ReadTableWriteError)
 fn delete_unowned_table() -> Result(Nil, ReadTableWriteError)
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 fn test_config(replica: String) -> presence.Config {

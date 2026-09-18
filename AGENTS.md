@@ -25,8 +25,9 @@ just doctor            # validate workspace invariants
 ```
 
 Scope tests to one package with `just test beryl_mist`, or run a package
-directly with `cd packages/beryl && gleam test`. Stock gleeunit does not
-support a single-test `--filter` option.
+directly with `cd packages/beryl && gleam test`. unitest supports filters after
+`--`, such as `gleam test -- --test module_name.test_name` or
+`gleam test -- --tag slow`.
 
 Do not run `just check` before a same-scope build or test; both already
 type-check. Use `just build-strict` when Gleam warnings must fail the check.
@@ -134,7 +135,7 @@ delivery, etc.).
 
 ### Test Scope and Framework
 
-- Tests use `gleeunit` (Gleam's test framework)
+- Tests use unitest as the runner and `gleeunit/should` for assertions
 - Public socket/event behavior changes need integration coverage through the
   runtime and transport paths, not only pure helper tests
 - When replacing WebSocket transports, preserve existing Phoenix/WebSocket

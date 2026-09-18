@@ -20,4 +20,5 @@ lattice_maps = ">= 1.0.0 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
+unitest = { git = "https://github.com/tylerbutler/unitest.git", ref = "f23aaa8bde683971326db7473fbcd9789a84c02f" }
 lattice_registers = ">= 1.0.0 and < 2.0.0"

@@ -16,12 +16,12 @@ import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
-import gleeunit
 import gleeunit/should
 import test_helper
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 /// Encode presence entries as `{session_id: meta}` — the examples'
