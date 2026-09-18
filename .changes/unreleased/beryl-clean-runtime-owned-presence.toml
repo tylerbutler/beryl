@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Clean runtime-owned presence entries when sockets disconnect or their router exits."

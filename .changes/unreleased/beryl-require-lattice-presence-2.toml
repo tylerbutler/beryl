@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Dependencies"
-body = "Require lattice_presence 2.0, which adds youid as a transitive dependency."

@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Restore live PubSub subscriptions after supervised pg scope restarts, preserve idempotent membership, and report startup or invalid-handle failures instead of silently losing delivery."
