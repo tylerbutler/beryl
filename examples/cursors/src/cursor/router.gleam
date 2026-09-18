@@ -22,7 +22,6 @@ pub fn handle_request(
 ) -> Response(ResponseData) {
   case request.path_segments(http_request) {
     ["healthz"] -> healthz()
-    ["api", "users"] -> user_count(context)
     _ -> {
       use <- static.serve_static(
         http_request,
@@ -32,6 +31,7 @@ pub fn handle_request(
 
       case static.match_prefix(http_request, context.base_path) {
         Ok([]) -> index_page(context)
+        Ok(["api", "users"]) -> user_count(context)
         Error(_) | Ok(_) -> static.not_found()
       }
     }
