@@ -50,6 +50,8 @@
 ////   |> pubsub.selecting(subscriber, RemoteBroadcast)
 //// ```
 
+import beryl/pubsub_memberships
+import beryl/pubsub_native
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/atom
 import gleam/erlang/process.{type Pid, type Selector}
@@ -108,18 +110,18 @@ pub opaque type PubSubConfig {
 /// sent through this instance. The scope identifies the runtime instance.
 /// All handles for one scope must use the same payload type.
 pub opaque type PubSub(payload) {
-  PubSub(scope: atom.Atom, registry: Pid)
+  PubSub(scope: atom.Atom, registry: pubsub_memberships.Registry)
 }
 
 // ── FFI declarations ────────────────────────────────────────────────────────
 
 @external(erlang, "beryl_pubsub_ffi", "start_pg_scope")
-fn ffi_start_pg_scope(scope: atom.Atom) -> Pid
+fn ffi_start_pg_scope(scope: atom.Atom) -> pubsub_memberships.Registry
 
 @external(erlang, "beryl_pubsub_ffi", "join_group")
 fn ffi_join_group(
   scope: atom.Atom,
-  registry: Pid,
+  registry: pubsub_memberships.Registry,
   group: String,
   pid: Pid,
 ) -> Nil
@@ -127,30 +129,32 @@ fn ffi_join_group(
 @external(erlang, "beryl_pubsub_ffi", "leave_group")
 fn ffi_leave_group(
   scope: atom.Atom,
-  registry: Pid,
+  registry: pubsub_memberships.Registry,
   group: String,
   pid: Pid,
 ) -> Nil
 
 @external(erlang, "beryl_pubsub_ffi", "get_members")
-fn ffi_get_members(scope: atom.Atom, registry: Pid, group: String) -> List(Pid)
+fn ffi_get_members(
+  scope: atom.Atom,
+  registry: pubsub_memberships.Registry,
+  group: String,
+) -> List(Pid)
 
 @external(erlang, "beryl_pubsub_ffi", "get_local_members")
 fn ffi_get_local_members(
   scope: atom.Atom,
-  registry: Pid,
+  registry: pubsub_memberships.Registry,
   group: String,
 ) -> List(Pid)
-
-@external(erlang, "beryl_pubsub_ffi", "send_to_pid")
-fn ffi_send_to_pid(pid: Pid, scope: atom.Atom, message: Message(payload)) -> Nil
 
 /// Recover a `Message(payload)` from the raw process message `selecting`
 /// matched on. Safe only because `selecting` first confirms the message has the
 /// subscriber's scope tag and exactly four fields, matching the frozen shape
 /// all broadcast functions construct.
-@external(erlang, "beryl_pubsub_ffi", "scoped_to_message")
-fn unsafe_coerce_to_message(value: Dynamic) -> Message(payload)
+fn unsafe_coerce_to_message(value: Dynamic) -> Message(payload) {
+  pubsub_native.coerce_scoped_message(value)
+}
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -222,7 +226,11 @@ pub fn start(config: PubSubConfig) -> PubSub(payload) {
 /// Create it in the receiving process, such as an actor's initializer.
 /// A `Subject` delivers messages only to its owner.
 pub opaque type Subscriber(payload) {
-  Subscriber(scope: atom.Atom, registry: Pid, owner: Pid)
+  Subscriber(
+    scope: atom.Atom,
+    registry: pubsub_memberships.Registry,
+    owner: Pid,
+  )
 }
 
 /// Create a subscription handle owned by the current process.
@@ -318,7 +326,7 @@ pub fn broadcast(
   let members =
     ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
   list.each(members, fn(pid) {
-    ffi_send_to_pid(pid, pubsub_instance.scope, message)
+    send_to_pid(pid, pubsub_instance.scope, message)
   })
 }
 
@@ -334,7 +342,7 @@ pub fn broadcast_from(
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
   ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
   |> list.filter(fn(pid) { pid != from })
-  |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
+  |> list.each(send_to_pid(_, pubsub_instance.scope, message))
 }
 
 /// Send an internal message to one member obtained from `subscribers`.
@@ -348,7 +356,7 @@ pub fn send_to(
   event: String,
   payload: payload,
 ) -> Nil {
-  ffi_send_to_pid(
+  send_to_pid(
     member,
     pubsub_instance.scope,
     Message(topic:, event:, payload:, from: FromPid(process.self())),
@@ -375,7 +383,7 @@ pub fn broadcast_from_socket(
     )
   ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
   |> list.filter(fn(pid) { pid != from })
-  |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
+  |> list.each(send_to_pid(_, pubsub_instance.scope, message))
 }
 
 /// Broadcast a message only to subscribers on the current node.
@@ -394,7 +402,7 @@ pub fn local_broadcast(
       topic,
     )
   list.each(members, fn(pid) {
-    ffi_send_to_pid(pid, pubsub_instance.scope, message)
+    send_to_pid(pid, pubsub_instance.scope, message)
   })
 }
 
@@ -411,7 +419,7 @@ pub fn local_broadcast_from(
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
   ffi_get_local_members(pubsub_instance.scope, pubsub_instance.registry, topic)
   |> list.filter(fn(pid) { pid != from })
-  |> list.each(ffi_send_to_pid(_, pubsub_instance.scope, message))
+  |> list.each(send_to_pid(_, pubsub_instance.scope, message))
 }
 
 /// Return all topic subscribers on all nodes.
@@ -432,4 +440,15 @@ pub fn subscriber_count(
     pubsub_instance.registry,
     topic,
   ))
+}
+
+fn send_to_pid(pid: Pid, scope: atom.Atom, message: Message(payload)) -> Nil {
+  pubsub_native.send(
+    pid,
+    scope,
+    message.topic,
+    message.event,
+    message.payload,
+    message.from,
+  )
 }

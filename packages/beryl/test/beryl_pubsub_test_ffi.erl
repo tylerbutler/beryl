@@ -26,7 +26,8 @@ unavailable(Operation) ->
     end.
 
 kill_registry(Scope) ->
-    Pid = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Pid = 'beryl@pubsub_memberships':pid(Registry),
     Ref = monitor(process, Pid),
     exit(Pid, kill),
     receive {'DOWN', Ref, process, Pid, killed} -> nil
@@ -57,7 +58,9 @@ unmanaged_scope_rejected(Scope) ->
     after
         gen_server:stop(Pid)
     end,
-    Rejected andalso is_pid(beryl_pubsub_ffi:start_pg_scope(Scope)).
+    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Rejected andalso
+        is_pid('beryl@pubsub_memberships':pid(Registry)).
 
 drain_messages(Scope, Topic, Event, Payload, From) ->
     drain_messages(Scope, Topic, Event, Payload, From, 0).

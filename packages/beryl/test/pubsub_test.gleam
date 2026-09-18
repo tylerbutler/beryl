@@ -461,10 +461,11 @@ pub fn pubsub_broadcast_delivers_message_test() -> Nil {
     |> pubsub.selecting(subscriber, fn(message) { message })
 
   let assert Ok(message) = process.selector_receive(from: selector, within: 100)
-  message.topic |> should.equal("room:lobby")
-  message.event |> should.equal("new_msg")
-  message.payload |> should.equal("hello")
-  message.from |> should.equal(pubsub.System)
+  let pubsub.Message(topic, event, payload, from) = message
+  topic |> should.equal("room:lobby")
+  event |> should.equal("new_msg")
+  payload |> should.equal("hello")
+  from |> should.equal(pubsub.System)
 
   // Cleanup
   pubsub.leave(subscriber, "room:lobby")

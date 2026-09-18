@@ -10,6 +10,8 @@ internal_modules = [
   "beryl/connection_limit",
   "beryl/internal",
   "beryl/log",
+  "beryl/pubsub_memberships",
+  "beryl/pubsub_native",
   "beryl/rate_limit",
   "beryl/telemetry",
   "beryl/runtime",

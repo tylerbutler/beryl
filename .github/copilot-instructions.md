@@ -6,7 +6,7 @@ beryl is a Gleam library for type-safe realtime channels and presence on the Erl
 
 - `packages/beryl/src/beryl.gleam` is the main public API for configuring a supervised app-dispatch system with `child_spec`, stopping it, and broadcasting.
 - `packages/beryl/src/beryl/event.gleam` defines typed app events/effects; `packages/beryl/src/beryl/runtime.gleam` owns socket/topic lifecycle and dispatches every event through the app's `update`.
-- `packages/beryl/src/beryl/pubsub.gleam` wraps Erlang `pg` via `packages/beryl/src/beryl_pubsub_ffi.erl` for distributed broadcasts.
+- `packages/beryl/src/beryl/pubsub.gleam` uses the typed actor in `beryl/pubsub_memberships.gleam`; `beryl/pubsub_native.gleam` and a small Erlang FFI boundary wrap `pg` and supervision.
 - Presence is the OTP actor in `packages/beryl/src/beryl/presence.gleam`, backed directly by `lattice_presence/presence_state`.
 - Core WebSocket transport is Mist-based in `packages/beryl_mist/src/beryl_mist.gleam` (its own package, built on the `beryl/transport` SPI); examples also use Mist directly for HTTP routing/static assets.
 
