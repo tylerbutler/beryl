@@ -1,3 +1,14 @@
+//// Local PubSub membership recovery
+////
+//// This internal actor records each local subscriber owner's topics and
+//// restores live memberships after the scope's `pg` process restarts.
+//// Owner monitors remove normal stale state. Full owner liveness checks run
+//// only during recovery, so healthy membership operations stay independent
+//// of the total subscriber count.
+////
+//// Calls use a timeout-safe Erlang boundary. A timed-out caller does not keep
+//// a monitor or receive a late reply.
+
 import beryl/pubsub_native
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
@@ -12,16 +23,22 @@ const call_timeout_ms = 5000
 
 const recovery_delay_ms = 10
 
+/// A handle to one scope's local membership actor.
 pub opaque type Registry {
   Registry(subject: process.Subject(Message))
 }
 
+/// A membership operation failure.
 pub type RegistryError {
+  /// The scope has no stable `pg` generation yet.
   ScopeRecovering
+  /// The underlying `pg` operation failed.
   PgUnavailable(reason: pubsub_native.PgError)
+  /// The requested owner belongs to another BEAM node.
   OwnerNotLocal
 }
 
+/// Messages accepted by the membership actor.
 pub opaque type Message {
   Ready(reply: process.Subject(Result(Nil, RegistryError)))
   Join(
@@ -64,6 +81,7 @@ fn call(
 ) -> reply
 
 // nolint: unused_exports -- OTP supervisor callback invoked from Erlang
+/// Start a membership actor for one `pg` scope.
 pub fn start(
   scope: atom.Atom,
 ) -> Result(actor.Started(Registry), actor.StartError) {
@@ -86,6 +104,7 @@ pub fn start(
 }
 
 // nolint: unused_exports -- startup adapter invoked from Erlang
+/// Build a registry handle for an actor process started by OTP.
 pub fn from_pid(pid: process.Pid) -> Registry {
   Registry(subject: pubsub_native.subject_for_pid(
     pid,
@@ -94,22 +113,26 @@ pub fn from_pid(pid: process.Pid) -> Registry {
 }
 
 // nolint: unused_exports -- Erlang recovery tests inspect the actor owner
+/// Return the process that owns a registry.
 pub fn pid(registry: Registry) -> process.Pid {
   let assert Ok(pid) = process.subject_owner(registry.subject)
   pid
 }
 
 // nolint: unused_exports -- query compatibility adapter invoked from Erlang
+/// Check whether the registry process is alive.
 pub fn is_alive(registry: Registry) -> Bool {
   process.is_alive(pid(registry))
 }
 
 // nolint: unused_exports -- startup compatibility adapter invoked from Erlang
+/// Wait until the registry has synchronised with a stable `pg` generation.
 pub fn ready(registry: Registry) -> Result(Nil, RegistryError) {
   call(registry.subject, call_timeout_ms, Ready)
 }
 
 // nolint: unused_exports -- mutation compatibility adapter invoked from Erlang
+/// Record and apply one local owner's topic membership.
 pub fn join(
   registry: Registry,
   topic: String,
@@ -121,6 +144,7 @@ pub fn join(
 }
 
 // nolint: unused_exports -- mutation compatibility adapter invoked from Erlang
+/// Remove one local owner's topic membership.
 pub fn leave(
   registry: Registry,
   topic: String,
