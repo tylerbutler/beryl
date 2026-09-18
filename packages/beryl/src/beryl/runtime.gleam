@@ -16,6 +16,7 @@
 //// order.
 
 import beryl/app_supervisor
+import beryl/atomic_token
 import beryl/error as beryl_error
 import beryl/internal
 import beryl/log.{type Logger}
@@ -81,22 +82,28 @@ pub type Config {
   )
 }
 
-pub type AdmissionToken
+pub type AdmissionToken =
+  atomic_token.Token
 
-@external(erlang, "beryl_ffi", "admission_token_new")
-pub fn new_admission_token() -> AdmissionToken
+pub fn new_admission_token() -> AdmissionToken {
+  atomic_token.new()
+}
 
-@external(erlang, "beryl_ffi", "admission_token_cancel")
-pub fn cancel_admission(token: AdmissionToken) -> Bool
+pub fn cancel_admission(token: AdmissionToken) -> Bool {
+  atomic_token.cancel(token)
+}
 
-@external(erlang, "beryl_ffi", "admission_token_pending")
-fn admission_pending(token: AdmissionToken) -> Bool
+fn admission_pending(token: AdmissionToken) -> Bool {
+  atomic_token.pending_if_owner_alive(token)
+}
 
-@external(erlang, "beryl_ffi", "admission_token_claim")
-fn claim_admission(token: AdmissionToken) -> Bool
+fn claim_admission(token: AdmissionToken) -> Bool {
+  atomic_token.claim_if_owner_alive(token)
+}
 
-@external(erlang, "beryl_ffi", "admission_token_owner")
-fn admission_owner(token: AdmissionToken) -> Pid
+fn admission_owner(token: AdmissionToken) -> Pid {
+  atomic_token.owner(token)
+}
 
 fn admission_is_pending(admission: Option(AdmissionToken)) -> Bool {
   case admission {
