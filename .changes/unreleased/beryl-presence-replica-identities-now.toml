@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Presence replica identities now use the dependency's incarnation format, a retired incarnation keeps a high-water clock, and a snapshot that claims the local replica identity is dropped with an error log and a telemetry event."
