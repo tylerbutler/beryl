@@ -1,6 +1,5 @@
 import beryl/pubsub_native
 import gleam/bool
-import gleam/dynamic.{type Dynamic}
 import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/list
@@ -19,7 +18,7 @@ pub opaque type Registry {
 
 pub type RegistryError {
   ScopeRecovering
-  PgUnavailable(reason: Dynamic)
+  PgUnavailable(reason: pubsub_native.PgError)
   OwnerNotLocal
 }
 

@@ -9,9 +9,9 @@
 start_pg_scope(Scope) ->
     case beryl_pubsub_supervisor:start_scope(Scope) of
         {ok, RegistryPid} ->
-            Registry = 'beryl@pubsub_memberships':from_pid(RegistryPid),
+            Registry = 'beryl@pubsub_membership':from_pid(RegistryPid),
             case membership_call(fun() ->
-                'beryl@pubsub_memberships':ready(Registry)
+                'beryl@pubsub_membership':ready(Registry)
             end) of
                 ok -> Registry;
                 {error, Reason} -> exit({pubsub_start_failed, Scope, Reason})
@@ -20,19 +20,19 @@ start_pg_scope(Scope) ->
     end.
 
 start_memberships(Scope) ->
-    case 'beryl@pubsub_memberships':start(Scope) of
+    case 'beryl@pubsub_membership':start(Scope) of
         {ok, {started, Pid, _Registry}} -> {ok, Pid};
         {error, Reason} -> {error, Reason}
     end.
 
 join_group(Scope, Registry, Group, Pid) ->
     membership_call(Scope, fun() ->
-        'beryl@pubsub_memberships':join(Registry, Group, Pid)
+        'beryl@pubsub_membership':join(Registry, Group, Pid)
     end).
 
 leave_group(Scope, Registry, Group, Pid) ->
     membership_call(Scope, fun() ->
-        'beryl@pubsub_memberships':leave(Registry, Group, Pid)
+        'beryl@pubsub_membership':leave(Registry, Group, Pid)
     end).
 
 membership_call(Scope, Operation) ->
@@ -57,7 +57,7 @@ get_local_members(Scope, Registry, Group) ->
     'beryl@pubsub_native':get_local_members(Scope, Group).
 
 ensure_owner(Scope, Registry) ->
-    case 'beryl@pubsub_memberships':is_alive(Registry) of
+    case 'beryl@pubsub_membership':is_alive(Registry) of
         true -> ok;
         false -> exit({pubsub_unavailable, Scope, owner_down})
     end.

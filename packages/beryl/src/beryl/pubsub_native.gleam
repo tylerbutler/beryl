@@ -2,6 +2,8 @@ import gleam/dynamic.{type Dynamic}
 import gleam/erlang/atom
 import gleam/erlang/process.{type Pid, type Subject}
 
+pub type PgError
+
 // nolint: unused_exports -- public query adapter invoked from Erlang
 @external(erlang, "pg", "get_members")
 pub fn get_members(scope: atom.Atom, topic: String) -> List(Pid)
@@ -18,20 +20,20 @@ pub fn try_join(
   scope: atom.Atom,
   topic: String,
   owner: Pid,
-) -> Result(Nil, Dynamic)
+) -> Result(Nil, PgError)
 
 @external(erlang, "beryl_pubsub_ffi", "try_pg_leave")
 pub fn try_leave(
   scope: atom.Atom,
   topic: String,
   owner: Pid,
-) -> Result(Nil, Dynamic)
+) -> Result(Nil, PgError)
 
 @external(erlang, "beryl_pubsub_ffi", "try_pg_local_members")
 pub fn try_local_members(
   scope: atom.Atom,
   topic: String,
-) -> Result(List(Pid), Dynamic)
+) -> Result(List(Pid), PgError)
 
 @external(erlang, "gleam@erlang@process", "unsafely_create_subject")
 pub fn subject_for_pid(pid: Pid, tag: atom.Atom) -> Subject(message)

@@ -50,7 +50,7 @@
 ////   |> pubsub.selecting(subscriber, RemoteBroadcast)
 //// ```
 
-import beryl/pubsub_memberships
+import beryl/pubsub_membership
 import beryl/pubsub_native
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/atom
@@ -110,18 +110,18 @@ pub opaque type PubSubConfig {
 /// sent through this instance. The scope identifies the runtime instance.
 /// All handles for one scope must use the same payload type.
 pub opaque type PubSub(payload) {
-  PubSub(scope: atom.Atom, registry: pubsub_memberships.Registry)
+  PubSub(scope: atom.Atom, registry: pubsub_membership.Registry)
 }
 
 // ── FFI declarations ────────────────────────────────────────────────────────
 
 @external(erlang, "beryl_pubsub_ffi", "start_pg_scope")
-fn ffi_start_pg_scope(scope: atom.Atom) -> pubsub_memberships.Registry
+fn ffi_start_pg_scope(scope: atom.Atom) -> pubsub_membership.Registry
 
 @external(erlang, "beryl_pubsub_ffi", "join_group")
 fn ffi_join_group(
   scope: atom.Atom,
-  registry: pubsub_memberships.Registry,
+  registry: pubsub_membership.Registry,
   group: String,
   pid: Pid,
 ) -> Nil
@@ -129,7 +129,7 @@ fn ffi_join_group(
 @external(erlang, "beryl_pubsub_ffi", "leave_group")
 fn ffi_leave_group(
   scope: atom.Atom,
-  registry: pubsub_memberships.Registry,
+  registry: pubsub_membership.Registry,
   group: String,
   pid: Pid,
 ) -> Nil
@@ -137,14 +137,14 @@ fn ffi_leave_group(
 @external(erlang, "beryl_pubsub_ffi", "get_members")
 fn ffi_get_members(
   scope: atom.Atom,
-  registry: pubsub_memberships.Registry,
+  registry: pubsub_membership.Registry,
   group: String,
 ) -> List(Pid)
 
 @external(erlang, "beryl_pubsub_ffi", "get_local_members")
 fn ffi_get_local_members(
   scope: atom.Atom,
-  registry: pubsub_memberships.Registry,
+  registry: pubsub_membership.Registry,
   group: String,
 ) -> List(Pid)
 
@@ -226,11 +226,7 @@ pub fn start(config: PubSubConfig) -> PubSub(payload) {
 /// Create it in the receiving process, such as an actor's initializer.
 /// A `Subject` delivers messages only to its owner.
 pub opaque type Subscriber(payload) {
-  Subscriber(
-    scope: atom.Atom,
-    registry: pubsub_memberships.Registry,
-    owner: Pid,
-  )
+  Subscriber(scope: atom.Atom, registry: pubsub_membership.Registry, owner: Pid)
 }
 
 /// Create a subscription handle owned by the current process.
