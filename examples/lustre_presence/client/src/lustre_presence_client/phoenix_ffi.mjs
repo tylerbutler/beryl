@@ -74,3 +74,8 @@ export function receiveTimeout(push, callback) {
 export function unsubscribe(subscription) {
   subscription();
 }
+
+export function onPageHide(callback) {
+  globalThis.addEventListener("pagehide", callback, { once: true });
+  return () => globalThis.removeEventListener("pagehide", callback);
+}
