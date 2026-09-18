@@ -2,8 +2,9 @@
 
 ## Status
 
-In progress. The clock migration in phase 1 and the PubSub actor migration in
-phase 7 are complete. Phases 2 through 6 remain.
+In progress. The clock migration in phase 1, atomic token migration in phase
+2, and PubSub actor migration in phase 7 are complete. Phases 3 through 6
+remain.
 
 ## Objective
 
@@ -534,11 +535,13 @@ state.
 
 ### Phase 2: convert atomic tokens
 
-1. Add `beryl/atomic_token.gleam`.
-2. Add focused state-transition tests.
-3. Migrate runtime admission tokens.
-4. Migrate connection reservation tokens.
-5. Delete the six token functions from `beryl_ffi.erl`.
+Completed.
+
+- Added the internal `beryl/atomic_token` module with typed pending, claimed,
+  and cancelled states backed by `rasa/atomic`.
+- Added focused state-transition, concurrent claim, and owner-liveness tests.
+- Migrated runtime admission and connection reservation tokens.
+- Deleted the six token functions from `beryl_ffi.erl`.
 
 ### Phase 3: convert the outbound budget
 
