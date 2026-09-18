@@ -2,8 +2,8 @@
 
 ## Status
 
-In progress. The PubSub actor migration in phase 7 is complete. Phases 1
-through 6 remain.
+In progress. The clock migration in phase 1 and the PubSub actor migration in
+phase 7 are complete. Phases 2 through 6 remain.
 
 ## Objective
 
@@ -520,12 +520,16 @@ utility FFI file.
 
 ### Phase 1: add `rasa` and convert clocks
 
-1. Add `rasa` with Gleam tooling.
-2. Replace all monotonic clock declarations.
-3. Remove the three clock functions from beryl FFI modules.
-4. Run timing, heartbeat, rate-limit, presence, and telemetry tests.
+Completed.
 
-This phase validates the dependency and time-unit mapping before moving CAS
+- Added `rasa` with Gleam tooling.
+- Replaced the millisecond, nanosecond, and native monotonic clock
+  declarations with `rasa/monotonic`.
+- Removed the three obsolete clock functions from beryl FFI modules.
+- Preserved the existing timing, heartbeat, rate-limit, presence, and
+  telemetry behavior.
+
+This phase validated the dependency and time-unit mapping before moving CAS
 state.
 
 ### Phase 2: convert atomic tokens

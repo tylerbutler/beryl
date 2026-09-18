@@ -80,6 +80,7 @@ import gleam/result
 import gleam/set.{type Set}
 import gleam/string
 import lattice_presence/presence_state as state
+import rasa/monotonic
 
 /// Well-known PubSub topic for presence state replication
 const sync_topic = "beryl:presence:sync"
@@ -91,8 +92,9 @@ const replica_retention_ms = 60_000
 
 const retirement_check_interval_ms = 1000
 
-@external(erlang, "beryl_ffi", "monotonic_time_ms")
-fn monotonic_time_ms() -> Int
+fn monotonic_time_ms() -> Int {
+  monotonic.time(monotonic.Millisecond)
+}
 
 /// A running Presence instance.
 ///
