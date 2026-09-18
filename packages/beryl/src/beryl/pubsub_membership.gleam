@@ -1,5 +1,5 @@
 import beryl/pubsub_native
-import gleam/bool
+import gleam/dict.{type Dict}
 import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/list
@@ -50,11 +50,18 @@ type State {
   State(
     scope: atom.Atom,
     registry: Registry,
-    owners: List(Owner),
+    owners: Dict(process.Pid, Owner),
     pg: Option(PgGeneration),
     retry: Option(process.Timer),
   )
 }
+
+@external(erlang, "beryl_pubsub_ffi", "membership_actor_call")
+fn call(
+  subject: process.Subject(Message),
+  timeout_ms: Int,
+  request: fn(process.Subject(reply)) -> Message,
+) -> reply
 
 // nolint: unused_exports -- OTP supervisor callback invoked from Erlang
 pub fn start(
@@ -65,7 +72,7 @@ pub fn start(
     schedule_recovery(State(
       scope: scope,
       registry: registry,
-      owners: [],
+      owners: dict.new(),
       pg: None,
       retry: None,
     ))
@@ -99,7 +106,7 @@ pub fn is_alive(registry: Registry) -> Bool {
 
 // nolint: unused_exports -- startup compatibility adapter invoked from Erlang
 pub fn ready(registry: Registry) -> Result(Nil, RegistryError) {
-  process.call(registry.subject, call_timeout_ms, Ready)
+  call(registry.subject, call_timeout_ms, Ready)
 }
 
 // nolint: unused_exports -- mutation compatibility adapter invoked from Erlang
@@ -108,7 +115,7 @@ pub fn join(
   topic: String,
   owner: process.Pid,
 ) -> Result(Nil, RegistryError) {
-  process.call(registry.subject, call_timeout_ms, fn(reply) {
+  call(registry.subject, call_timeout_ms, fn(reply) {
     Join(topic:, owner:, reply:)
   })
 }
@@ -119,7 +126,7 @@ pub fn leave(
   topic: String,
   owner: process.Pid,
 ) -> Result(Nil, RegistryError) {
-  process.call(registry.subject, call_timeout_ms, fn(reply) {
+  call(registry.subject, call_timeout_ms, fn(reply) {
     Leave(topic:, owner:, reply:)
   })
 }
@@ -208,10 +215,10 @@ fn handle_process_down(
 }
 
 fn add_owner(state: State, topic: String, pid: process.Pid) -> State {
-  case list.find(state.owners, fn(owner) { owner.pid == pid }) {
+  case dict.get(state.owners, pid) {
     Ok(owner) -> {
       let updated = Owner(..owner, topics: set.insert(owner.topics, topic))
-      State(..state, owners: replace_owner(state.owners, updated))
+      State(..state, owners: dict.insert(state.owners, pid, updated))
     }
     Error(Nil) -> {
       let owner =
@@ -220,61 +227,51 @@ fn add_owner(state: State, topic: String, pid: process.Pid) -> State {
           monitor: process.monitor(pid),
           topics: set.from_list([topic]),
         )
-      State(..state, owners: [owner, ..state.owners])
+      State(..state, owners: dict.insert(state.owners, pid, owner))
     }
   }
 }
 
-fn replace_owner(owners: List(Owner), updated: Owner) -> List(Owner) {
-  list.map(owners, fn(owner) {
-    case owner.pid == updated.pid {
-      True -> updated
-      False -> owner
-    }
-  })
-}
-
 fn remove_topic(state: State, topic: String, pid: process.Pid) -> State {
-  let owners =
-    state.owners
-    |> list.filter_map(remove_owner_topic(_, topic, pid))
-  State(..state, owners: owners)
-}
-
-fn remove_owner_topic(
-  owner: Owner,
-  topic: String,
-  pid: process.Pid,
-) -> Result(Owner, Nil) {
-  use <- bool.guard(when: owner.pid != pid, return: Ok(owner))
-  keep_remaining_topics(owner, set.delete(owner.topics, topic))
-}
-
-fn keep_remaining_topics(
-  owner: Owner,
-  topics: Set(String),
-) -> Result(Owner, Nil) {
-  use <- bool.guard(
-    when: !set.is_empty(topics),
-    return: Ok(Owner(..owner, topics: topics)),
-  )
-  process.demonitor_process(owner.monitor)
-  Error(Nil)
+  case dict.get(state.owners, pid) {
+    Error(Nil) -> state
+    Ok(owner) -> {
+      let topics = set.delete(owner.topics, topic)
+      case set.is_empty(topics) {
+        False ->
+          State(
+            ..state,
+            owners: dict.insert(
+              state.owners,
+              pid,
+              Owner(..owner, topics: topics),
+            ),
+          )
+        True -> {
+          process.demonitor_process(owner.monitor)
+          State(..state, owners: dict.delete(state.owners, pid))
+        }
+      }
+    }
+  }
 }
 
 fn remove_down_owner(
-  owners: List(Owner),
+  owners: Dict(process.Pid, Owner),
   monitor: process.Monitor,
   pid: process.Pid,
-) -> List(Owner) {
-  list.filter(owners, fn(owner) { owner.pid != pid || owner.monitor != monitor })
+) -> Dict(process.Pid, Owner) {
+  case dict.get(owners, pid) {
+    Ok(Owner(monitor: current, ..)) if current == monitor ->
+      dict.delete(owners, pid)
+    Ok(_) | Error(Nil) -> owners
+  }
 }
 
 fn synchronise(
   state: State,
   operation: fn(State) -> Result(Nil, RegistryError),
 ) -> #(Result(Nil, RegistryError), State) {
-  let state = prune_dead_owners(state)
   case pubsub_native.registered_scope(state.scope) {
     Error(Nil) -> unavailable(state, ScopeRecovering)
     Ok(pg_pid) -> synchronise_registered(state, pg_pid, operation)
@@ -299,7 +296,7 @@ fn recover_generation(
   case state.pg {
     Some(PgGeneration(pid: current_pid, ..)) if current_pid == pg_pid ->
       Ok(state)
-    Some(_) | None -> replay(state, pg_pid)
+    Some(_) | None -> state |> prune_dead_owners |> replay(pg_pid)
   }
 }
 
@@ -342,9 +339,9 @@ fn replay(state: State, pg_pid: process.Pid) -> Result(State, RegistryError) {
 
 fn replay_owners(
   scope: atom.Atom,
-  owners: List(Owner),
+  owners: Dict(process.Pid, Owner),
 ) -> Result(Nil, RegistryError) {
-  list.fold(owners, Ok(Nil), fn(result, owner) {
+  dict.fold(owners, Ok(Nil), fn(result, _, owner) {
     use _ <- result.try(result)
     list.fold(set.to_list(owner.topics), Ok(Nil), fn(result, topic) {
       use _ <- result.try(result)
@@ -379,12 +376,12 @@ fn stable_scope(scope: atom.Atom, expected: process.Pid) -> Bool {
 
 fn prune_dead_owners(state: State) -> State {
   let owners =
-    list.filter(state.owners, fn(owner) {
+    dict.fold(state.owners, dict.new(), fn(owners, pid, owner) {
       case process.is_alive(owner.pid) {
-        True -> True
+        True -> dict.insert(owners, pid, owner)
         False -> {
           process.demonitor_process(owner.monitor)
-          False
+          owners
         }
       }
     })

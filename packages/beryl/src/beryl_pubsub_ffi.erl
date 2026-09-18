@@ -4,7 +4,7 @@
          get_members/3, get_local_members/3,
          registered_scope/1, is_local_pid/1,
          try_pg_join/3, try_pg_leave/3, try_pg_local_members/2,
-         scoped_to_message/1]).
+         scoped_to_message/1, membership_actor_call/3]).
 
 start_pg_scope(Scope) ->
     case beryl_pubsub_supervisor:start_scope(Scope) of
@@ -48,6 +48,46 @@ membership_call(Operation) ->
     catch
         Class:Reason -> {error, {actor_call_failed, Class, Reason}}
     end.
+
+%% A process alias drops late responses. The after block always removes the
+%% callee monitor, including timeout and process-down paths.
+membership_actor_call(Subject, Timeout, Request) ->
+    case subject_owner(Subject) of
+        undefined ->
+            erlang:error(membership_actor_unavailable);
+        Owner ->
+            Alias = erlang:alias(),
+            Tag = make_ref(),
+            Reply = {subject, Alias, Tag},
+            Monitor = erlang:monitor(process, Owner),
+            try
+                Owner ! subject_message(Subject, Request(Reply)),
+                receive
+                    {Tag, Value} -> Value;
+                    {'DOWN', Monitor, process, Owner, Reason} ->
+                        erlang:error({membership_actor_down, Reason})
+                after max(0, Timeout) ->
+                    erlang:error(membership_actor_timeout)
+                end
+            after
+                erlang:demonitor(Monitor, [flush]),
+                erlang:unalias(Alias),
+                receive {Tag, _} -> ok after 0 -> ok end
+            end
+    end.
+
+subject_owner({subject, Owner, _Tag}) ->
+    case is_process_alive(Owner) of
+        true -> Owner;
+        false -> undefined
+    end;
+subject_owner({named_subject, Name}) ->
+    whereis(Name).
+
+subject_message({subject, _Owner, Tag}, Message) ->
+    {Tag, Message};
+subject_message({named_subject, Name}, Message) ->
+    {Name, Message}.
 
 get_members(Scope, Registry, Group) ->
     ensure_owner(Scope, Registry),

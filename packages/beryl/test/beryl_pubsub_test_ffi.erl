@@ -1,9 +1,65 @@
 -module(beryl_pubsub_test_ffi).
 -export([is_scoped_wire_message/5, drain_messages/5,
          kill_scope/1, recovered/4, unmanaged_scope_rejected/1,
-         during_outage/2, unavailable/1, kill_registry/1, scope_pid/1]).
+         during_outage/2, unavailable/1, kill_registry/1, scope_pid/1,
+         healthy_ready_reductions/2, timeout_call_cleans_up/1]).
 
 scope_pid(Scope) -> whereis(Scope).
+
+healthy_ready_reductions(Scope, OwnerCount) ->
+    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Owners = [spawn(fun owner_loop/0) || _ <- lists:seq(1, OwnerCount)],
+    lists:foreach(fun({Owner, Index}) ->
+        {ok, nil} = 'beryl@pubsub_membership':join(
+            Registry, integer_to_binary(Index), Owner)
+    end, lists:zip(Owners, lists:seq(1, OwnerCount))),
+    RegistryPid = 'beryl@pubsub_membership':pid(Registry),
+    {reductions, Before} = process_info(RegistryPid, reductions),
+    {ok, nil} = 'beryl@pubsub_membership':ready(Registry),
+    {reductions, After} = process_info(RegistryPid, reductions),
+    OwnerMonitors = [{Owner, monitor(process, Owner)} || Owner <- Owners],
+    lists:foreach(fun(Owner) -> Owner ! stop end, Owners),
+    lists:foreach(fun({Owner, Monitor}) ->
+        receive {'DOWN', Monitor, process, Owner, normal} -> ok end
+    end, OwnerMonitors),
+    wait_until_idle(RegistryPid),
+    After - Before.
+
+timeout_call_cleans_up(Scope) ->
+    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    RegistryPid = 'beryl@pubsub_membership':pid(Registry),
+    Parent = self(),
+    Worker = spawn(fun() ->
+        {monitors, BeforeMonitors} = process_info(self(), monitors),
+        true = erlang:suspend_process(RegistryPid),
+        try
+            try 'beryl@pubsub_membership':ready(Registry)
+            catch _:_ -> ok
+            end
+        after
+            erlang:resume_process(RegistryPid)
+        end,
+        {ok, nil} = 'beryl@pubsub_membership':ready(Registry),
+        {monitors, AfterMonitors} = process_info(self(), monitors),
+        {messages, Messages} = process_info(self(), messages),
+        Parent ! {self(), BeforeMonitors =:= AfterMonitors andalso Messages =:= []}
+    end),
+    receive
+        {Worker, Clean} -> Clean
+    after 6000 ->
+        false
+    end.
+
+owner_loop() ->
+    receive stop -> ok end.
+
+wait_until_idle(Pid) ->
+    case process_info(Pid, message_queue_len) of
+        {message_queue_len, 0} -> ok;
+        {message_queue_len, _} ->
+            timer:sleep(1),
+            wait_until_idle(Pid)
+    end.
 
 during_outage(Scope, Operation) ->
     {dictionary, Dictionary} = process_info(whereis(Scope), dictionary),
