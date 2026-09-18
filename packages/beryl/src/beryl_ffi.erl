@@ -1,5 +1,5 @@
 -module(beryl_ffi).
--export([identity/1, monotonic_time_ms/0, monotonic_time_ns/0,
+-export([identity/1,
          string_starts_with/2, stop_supervisor/1, rescue/1,
          admission_token_new/0, admission_token_cancel/1,
          admission_token_pending/1, admission_token_claim/1, admission_token_owner/1,
@@ -25,12 +25,6 @@ rescue(Fun) ->
                     "~p:~P", [Class, Reason, 10], [{chars_limit, 512}])),
             {error, binary:copy(string:slice(Formatted, 0, 512))}
     end.
-
-%% Return Erlang monotonic time in milliseconds
-monotonic_time_ms() -> erlang:monotonic_time(millisecond).
-
-%% Return Erlang monotonic time in nanoseconds
-monotonic_time_ns() -> erlang:monotonic_time(nanosecond).
 
 admission_token_new() ->
     Token = atomics:new(1, [{signed, false}]),
