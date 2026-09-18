@@ -26,6 +26,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
+import rasa/monotonic
 
 const registry_call_timeout_ms = 100
 
@@ -33,9 +34,9 @@ const bucket_sweep_interval_ms = 60_000
 
 const one_second_ns = 1_000_000_000
 
-/// Erlang monotonic time in nanoseconds.
-@external(erlang, "beryl_ffi", "monotonic_time_ns")
-fn monotonic_time_ns() -> Int
+fn monotonic_time_ns() -> Int {
+  monotonic.time(monotonic.Nanosecond)
+}
 
 type ReservationToken
 

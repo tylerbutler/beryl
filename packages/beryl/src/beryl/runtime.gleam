@@ -47,6 +47,7 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/set.{type Set}
 import gleam/string
+import rasa/monotonic
 
 /// Configuration for the runtime actor. Built by `beryl.child_spec` from a
 /// `beryl.Config`; the fields cover per-topic-pattern rate limits.
@@ -241,9 +242,9 @@ pub type StatsSnapshot {
   )
 }
 
-/// Erlang monotonic time in milliseconds
-@external(erlang, "beryl_ffi", "monotonic_time_ms")
-fn monotonic_time_ms() -> Int
+fn monotonic_time_ms() -> Int {
+  monotonic.time(monotonic.Millisecond)
+}
 
 type State(model, message) {
   State(
