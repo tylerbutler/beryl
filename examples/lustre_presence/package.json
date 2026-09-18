@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build:client": "cd client && gleam build && node ../scripts/bundle-client.mjs",
-    "test": "node --test test/*.test.mjs"
+    "start": "pnpm build:client && gleam run",
+    "test": "node --test test/*.test.mjs && gleam test"
   },
   "devDependencies": {
     "esbuild": "^0.28.1"
