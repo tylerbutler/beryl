@@ -3,8 +3,8 @@
 ## Status
 
 In progress. The clock migration in phase 1, atomic token migration in phase
-2, and PubSub actor migration in phase 7 are complete. Phases 3 through 6
-remain.
+2, outbound budget migration in phase 3, and PubSub actor migration in phase
+7 are complete. Phases 4 through 6 remain.
 
 ## Objective
 
@@ -545,12 +545,15 @@ Completed.
 
 ### Phase 3: convert the outbound budget
 
-1. Confirm or add packed-range configuration validation.
-2. Add `beryl/outbound_budget.gleam`.
-3. Add focused concurrent reservation, release, close-once, and cancellation
-   tests.
-4. Migrate `beryl/transport/server.gleam`.
-5. Delete `beryl_outbound_ffi.erl`.
+Completed.
+
+- Confirmed that outbound configuration keeps the packed counter within the
+  signed 64-bit range.
+- Added the internal `beryl/outbound_budget` module backed by `rasa/atomic`.
+- Added focused limit, concurrent reservation, release, close-once, and
+  cancellation tests.
+- Migrated `beryl/transport/server.gleam`.
+- Deleted `beryl_outbound_ffi.erl`.
 
 ### Phase 4: convert process helpers
 
