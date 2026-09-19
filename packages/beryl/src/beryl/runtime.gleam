@@ -2270,9 +2270,10 @@ fn finalize_suspension(
         }
         // The worker is already running `on_terminate`. The socket sent the
         // request when it started to wait. Give the worker the remaining
-        // time. Then apply its earlier results, answer the leave, and close
-        // the topic. Do not handle other queued socket work because shutdown
-        // stops the actor next.
+        // time, capped so the wait sits inside the stop drain. Then apply
+        // its earlier results, answer the leave, and close the topic. Do
+        // not handle other queued socket work because shutdown stops the
+        // actor next.
         WorkerWait(worker:, ..) ->
           finalize_worker_wait(state, socket_id, suspension, worker, cancelled)
       }
@@ -2294,7 +2295,8 @@ fn finalize_worker_wait(
   cancelled: process.Cancelled,
 ) -> State(model, message) {
   let budget = case cancelled {
-    process.Cancelled(time_remaining:) -> time_remaining
+    process.Cancelled(time_remaining:) ->
+      int.min(time_remaining, stop_worker_terminate_timeout_ms)
     process.TimerNotFound -> 0
   }
   let #(state, message) =
@@ -6442,6 +6444,21 @@ const worker_join_timeout_ms = 5000
 /// `worker_join_timeout_ms`.
 const worker_terminate_timeout_ms = 5000
 
+/// Maximum time a stop-driven close waits for one worker's queued work and
+/// `on_terminate`.
+///
+/// `beryl.stop` kills socket actors that have not drained at
+/// `stop_drain_timeout_ms`, so this bound sits inside the drain: the
+/// runtime kills a worker that exceeds it and completes the close without
+/// its termination actions, instead of the drain killing the whole socket
+/// actor mid-teardown. Closes outside `beryl.stop` keep
+/// `worker_terminate_timeout_ms`.
+///
+/// ponytail: A per-worker bound. A socket whose topics have several stuck
+/// workers can still exceed the drain in aggregate; track a per-socket
+/// deadline across the teardown if that ever bites.
+const stop_worker_terminate_timeout_ms = 1000
+
 /// The worker contract that `beryl.worker_child_spec` hands to the runtime.
 ///
 /// The socket actor calls `accepts` with the topic name before it starts a
@@ -7320,7 +7337,7 @@ fn close_worker_topic(
           state,
           socket_id,
           worker,
-          monotonic_time_ms() + worker_terminate_timeout_ms,
+          monotonic_time_ms() + stop_worker_terminate_timeout_ms,
         )
       let effects =
         worker_termination_effects(
@@ -7498,7 +7515,11 @@ fn worker_termination_effects(
       Some([])
     }
     WorkerTerminateTimedOut(worker: pid, ..) if pid == awaited -> {
-      kill_stuck_worker(state, socket_id, topic_name, worker)
+      let timeout_ms = case state.stopping {
+        True -> stop_worker_terminate_timeout_ms
+        False -> worker_terminate_timeout_ms
+      }
+      kill_stuck_worker(state, socket_id, topic_name, worker, timeout_ms)
       Some([])
     }
     WorkerReport(..)
@@ -7556,6 +7577,7 @@ fn kill_stuck_worker(
   socket_id: String,
   topic_name: String,
   worker: WorkerRef,
+  timeout_ms: Int,
 ) -> Nil {
   state.logger
   |> log.error(
@@ -7563,7 +7585,7 @@ fn kill_stuck_worker(
     [
       #("socket_id", socket_id),
       #("topic", topic_name),
-      #("timeout_ms", int.to_string(worker_terminate_timeout_ms)),
+      #("timeout_ms", int.to_string(timeout_ms)),
     ],
   )
   process.kill(worker.pid)
