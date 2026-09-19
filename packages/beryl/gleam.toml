@@ -11,6 +11,7 @@ internal_modules = [
   "beryl/connection_limit",
   "beryl/internal",
   "beryl/log",
+  "beryl/outbound_budget",
   "beryl/pubsub_membership",
   "beryl/pubsub_native",
   "beryl/rate_limit",
