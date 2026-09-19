@@ -130,7 +130,8 @@ pub opaque type Config {
     heartbeat_timeout_ms: Int,
     /// Max connections per IP (0 = unlimited)
     max_connections_per_ip: Int,
-    /// Max concurrent connections node-wide across all IPs (0 = unlimited)
+    /// Max concurrent connections for this beryl system on this node
+    /// (0 = unlimited)
     max_connections: Int,
     /// Per-IP connection attempt rate limit (connections/sec, 0 = unlimited)
     connection_rate_per_ip: Int,
@@ -390,35 +391,38 @@ pub fn with_connection_rate_per_ip(
   Config(..config, connection_rate_per_ip: rate, connection_burst_per_ip: burst)
 }
 
-/// Configure the maximum number of concurrent connections allowed across the
-/// whole node, regardless of source IP.
+/// Configure the maximum number of concurrent connections for this beryl
+/// system on one BEAM node, regardless of source IP.
 ///
 /// A value of 0, the default, means unlimited. When a limit is set, a
-/// transport admits a connection only while the node is below the limit. It
-/// rejects other connections before it allocates long-lived per-socket state.
-/// The transport frees the slot when the connection closes, its process dies,
-/// or its handshake or setup fails. The limiter actor performs the check and
-/// increment atomically. Concurrent opens cannot materially exceed the
+/// transport admits a connection only while this system is below the limit.
+/// It rejects other connections before it allocates long-lived per-socket
+/// state. The transport frees the slot when the connection closes, its process
+/// dies, or its handshake or setup fails. The limiter actor performs the check
+/// and increment atomically. Concurrent opens cannot materially exceed the
 /// ceiling.
+///
+/// Each independently constructed `Sockets` system owns a separate limiter.
+/// Two systems on the same node therefore each have their own configured
+/// capacity; this is not one shared ceiling for every beryl system on the node.
 ///
 /// ## Composition with per-IP limits
 ///
-/// This node-wide ceiling works with `with_max_connections_per_ip`. When both
+/// This per-system ceiling works with `with_max_connections_per_ip`. When both
 /// are set, a connection must be under *both* limits. The per-IP limit
-/// throttles any single abusive peer, while this global ceiling
-/// bounds the node's total resource use so that many distinct source addresses
-/// (for example, a botnet or IPv6 address rotation) cannot exhaust the node's
-/// process, socket, and runtime budget. A per-IP limit alone cannot stop this
-/// case.
+/// throttles any single abusive peer, while this total ceiling bounds the
+/// system's resource use so that many distinct source addresses (for example,
+/// a botnet or IPv6 address rotation) cannot exhaust its process, socket, and
+/// runtime budget. A per-IP limit alone cannot stop this case.
 ///
 /// ## Composition with external load balancers
 ///
-/// This ceiling is enforced per BEAM node. If you run several nodes behind a
-/// load balancer, each node enforces its own limit independently, so the
-/// cluster's effective ceiling is roughly `max_connections × node_count`
-/// (subject to how the balancer distributes connections). Size the per-node
-/// value against a single node's capacity. Use the load balancer's
-/// global connection/rate controls when you need a cluster-wide cap.
+/// Each beryl system enforces this ceiling independently on its BEAM node. With
+/// one system per node, a load-balanced cluster's effective ceiling is roughly
+/// `max_connections × node_count` (subject to how the balancer distributes
+/// connections). Multiple systems on one node contribute separate allowances.
+/// Size their combined limits against that node's capacity. Use the load
+/// balancer's global connection/rate controls when you need a cluster-wide cap.
 pub fn with_max_connections(
   config: Config,
   max_connections max_connections: Int,
