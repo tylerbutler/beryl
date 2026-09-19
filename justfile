@@ -35,8 +35,9 @@ build-strict:
 # === TESTING ===
 
 # Run all tests (optionally scope to packages: `just test beryl_mist`)
-test *ARGS:
-    trellis run test {{ ARGS }}
+test *PACKAGES:
+    BERYL_PARALLEL_TESTS=1 trellis run test {{ PACKAGES }}
+    @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) cd packages/beryl && gleam test -- --tag serial ;; esac
 
 # === CODE QUALITY ===
 

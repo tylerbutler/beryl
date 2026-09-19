@@ -179,9 +179,18 @@ pub fn parse(input: String) -> Result(Value, ParseError)
 # Run all tests
 just test
 
+# Run the core package sequentially
+cd packages/beryl && gleam test
+
 # Run with verbose output
 gleam test -- --verbose
 ```
+
+The root `just test` command runs the parallel-safe `beryl` tests with
+unitest's automatic worker count, capped at four BEAM schedulers to avoid
+nested oversubscription, then runs its `serial` tag in a separate sequential
+lane. Package-scoped commands keep the same behavior: `just test beryl` runs
+both core lanes, while `just test beryl_mist` does not run core tests.
 
 ### Tutorial browser demos
 
@@ -213,6 +222,24 @@ pub fn error_case_test() {
   |> should.be_error()
 }
 ```
+
+Tests that observe or change process-wide state must use the `serial` tag:
+
+```gleam
+import unitest
+
+pub fn captures_global_telemetry_test() {
+  use <- unitest.tag("serial")
+  // Test code
+}
+```
+
+This includes tests that attach `:telemetry` handlers, install the Palabres
+capture handler, change Palabres's global logging level, or deliberately
+exercise VM-sensitive restart exhaustion, PubSub scope recovery, or tightly
+controlled actor restart and delayed-ack scheduling. Do not tag tests that can
+use unique subjects, scopes, socket IDs, or exact mailbox selectors for
+isolation.
 
 Filter tests by name, file, line, or tag by passing unitest arguments after
 `--`:

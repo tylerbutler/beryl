@@ -1,8 +1,14 @@
 -module(beryl_test_process_ffi).
--export([mailbox_length/1, queue_memory_evidence/0, with_suspended/2,
+-export([limit_schedulers/1, mailbox_length/1, queue_memory_evidence/0,
+         with_suspended/2,
          queue_call_lifecycle/0, publication_cleanup_races/0,
          stale_lifecycle_signals/3, monitored_by_count/1,
          suspend_process/1, resume_process/1, socket_queue/2]).
+
+limit_schedulers(Maximum) ->
+    Online = erlang:system_info(schedulers_online),
+    _ = erlang:system_flag(schedulers_online, min(Online, Maximum)),
+    nil.
 
 socket_queue(Router, SocketId) ->
     {registered_name, Name} = process_info(Router, registered_name),
