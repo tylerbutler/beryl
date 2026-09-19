@@ -513,11 +513,19 @@ fn publish_topics(
   list.try_each(topics, fn(topic) { publish_topic(table, crdt, topic) })
 }
 
-fn require_publication(result: Result(Nil, ReadTableWriteError)) -> Nil {
+fn publication_result(
+  result: Result(Nil, ReadTableWriteError),
+) -> Result(Nil, ReadTableWriteError) {
   case result {
-    Ok(Nil) -> Nil
-    Error(ReadTableUnavailable) ->
-      panic as "presence read model is unavailable for publication"
+    Ok(Nil) -> Ok(Nil)
+    Error(error) -> {
+      log.error(
+        internal.logger("beryl.presence"),
+        "Presence read model is unavailable for publication",
+        [],
+      )
+      Error(error)
+    }
   }
 }
 
@@ -909,33 +917,51 @@ fn hide_replica(actor_state: ActorState, base: String) -> ActorState {
     Some(sync) ->
       case dict.get(sync.owners, base) {
         Error(Nil) | Ok(ReplicaOwner(_, _, Unavailable(_), _)) -> actor_state
-        Ok(ReplicaOwner(replica, pid, Available(monitor), round)) -> {
-          process.demonitor_process(monitor)
-          let #(crdt, _diff) = state.replica_down(actor_state.crdt, replica)
-          commit_replication(
-            ActorState(
-              ..actor_state,
-              sync: Some(
-                SyncState(
-                  ..sync,
-                  requests: dict.delete(sync.requests, pid),
-                  owners: dict.insert(
-                    sync.owners,
-                    base,
-                    ReplicaOwner(
-                      replica,
-                      pid,
-                      Unavailable(monotonic_time_ms()),
-                      round,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            crdt,
+        Ok(ReplicaOwner(replica, pid, Available(monitor), round)) ->
+          hide_available_replica(
+            actor_state,
+            sync,
+            base,
+            replica,
+            pid,
+            monitor,
+            round,
           )
-        }
       }
+  }
+}
+
+fn hide_available_replica(
+  actor_state: ActorState,
+  sync: SyncState,
+  base: String,
+  replica: String,
+  pid: process.Pid,
+  monitor: process.Monitor,
+  round: Int,
+) -> ActorState {
+  let #(crdt, _diff) = state.replica_down(actor_state.crdt, replica)
+  let hidden =
+    ActorState(
+      ..actor_state,
+      sync: Some(
+        SyncState(
+          ..sync,
+          requests: dict.delete(sync.requests, pid),
+          owners: dict.insert(
+            sync.owners,
+            base,
+            ReplicaOwner(replica, pid, Unavailable(monotonic_time_ms()), round),
+          ),
+        ),
+      ),
+    )
+  case commit_replication(hidden, crdt) {
+    Ok(state) -> {
+      process.demonitor_process(monitor)
+      state
+    }
+    Error(ReadTableUnavailable) -> actor_state
   }
 }
 
@@ -1519,33 +1545,46 @@ fn handle_message(
       }
 
     Untrack(ref, reply) -> {
-      let new_state = do_untrack_refs(actor_state, [ref])
-      reply(Nil)
-      actor.continue(new_state)
+      case do_untrack_refs(actor_state, [ref]) {
+        Ok(new_state) -> {
+          reply(Nil)
+          actor.continue(new_state)
+        }
+        Error(ReadTableUnavailable) -> actor.stop()
+      }
     }
 
     UntrackAsync(refs, tag, operation_id, reply) -> {
-      let new_state = do_untrack_refs(actor_state, refs)
-      process.send(reply, MutationAck(tag, operation_id, Untracked))
-      actor.continue(new_state)
+      case do_untrack_refs(actor_state, refs) {
+        Ok(new_state) -> {
+          process.send(reply, MutationAck(tag, operation_id, Untracked))
+          actor.continue(new_state)
+        }
+        Error(ReadTableUnavailable) -> actor.stop()
+      }
     }
 
     UntrackAll(session_id, reply) -> {
-      let new_state = do_untrack_all(actor_state, session_id)
-      reply(Nil)
-      actor.continue(new_state)
+      case do_untrack_all(actor_state, session_id) {
+        Ok(new_state) -> {
+          reply(Nil)
+          actor.continue(new_state)
+        }
+        Error(ReadTableUnavailable) -> actor.stop()
+      }
     }
 
     UntrackRuntimeOwner(owner) ->
-      actor.continue(
-        do_untrack_runtime_owner(actor_state, owner)
-        |> fn(state) {
-          ActorState(
-            ..state,
-            runtime_owners: set.delete(state.runtime_owners, owner),
+      case do_untrack_runtime_owner(actor_state, owner) {
+        Ok(state) ->
+          actor.continue(
+            ActorState(
+              ..state,
+              runtime_owners: set.delete(state.runtime_owners, owner),
+            ),
           )
-        },
-      )
+        Error(ReadTableUnavailable) -> actor.stop()
+      }
 
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
@@ -1593,8 +1632,8 @@ fn handle_dead_track_owner(
   reply: Subject(MutationAck),
   logger: log.Logger,
 ) -> actor.Next(ActorState, Message) {
-  let actor_state = case work_queue.activate_cleanup(actor_state.inbox, owner) {
-    Ok(Nil) -> actor_state
+  let cleanup = case work_queue.activate_cleanup(actor_state.inbox, owner) {
+    Ok(Nil) -> Ok(actor_state)
     Error(error) -> {
       log.warn(logger, "Presence cleanup activation failed", [
         #("reason", overload.describe(error)),
@@ -1604,18 +1643,29 @@ fn handle_dead_track_owner(
       do_untrack_runtime_owner(actor_state, owner)
     }
   }
-  process.send(reply, MutationAck(tag, operation_id, Untracked))
-  actor.continue(actor_state)
+  case cleanup {
+    Ok(actor_state) -> {
+      process.send(reply, MutationAck(tag, operation_id, Untracked))
+      actor.continue(actor_state)
+    }
+    Error(ReadTableUnavailable) -> actor.stop()
+  }
+}
+
+type TrackMutationError {
+  InvalidCrdtState(Nil)
+  PublicationFailed(ReadTableWriteError)
 }
 
 fn continue_with_track(
   actor_state: ActorState,
-  tracked: Result(value, Nil),
+  tracked: Result(value, TrackMutationError),
   next: fn(value) -> actor.Next(ActorState, Message),
 ) -> actor.Next(ActorState, Message) {
   case tracked {
     Ok(value) -> next(value)
-    Error(Nil) -> actor.continue(actor_state)
+    Error(InvalidCrdtState(_)) -> actor.continue(actor_state)
+    Error(PublicationFailed(_)) -> actor.stop()
   }
 }
 
@@ -1820,7 +1870,7 @@ fn do_track(
   session_id: String,
   meta: json.Json,
   supersede: Supersede,
-) -> Result(#(ActorState, String, json.Json), Nil) {
+) -> Result(#(ActorState, String, json.Json), TrackMutationError) {
   let ref = generate_ref()
   let stored_meta = meta_with_phx_ref(meta, ref)
   // Superseding removes the old entries and adds the new one before
@@ -1848,7 +1898,7 @@ fn do_track(
       log.error(internal.logger("beryl.presence"), "Local CRDT clock missing", [
         #("replica", replica),
       ])
-      error
+      InvalidCrdtState(error)
     }),
   )
   maybe_invoke_on_diff(
@@ -1876,12 +1926,15 @@ fn do_track(
         owner: owner,
       ),
     )
-  publish_topics(
-    actor_state.read_table,
-    new_crdt,
-    unique_strings([topic, ..removed.topics], set.new(), []),
+  use _ <- result.try(
+    publish_topics(
+      actor_state.read_table,
+      new_crdt,
+      unique_strings([topic, ..removed.topics], set.new(), []),
+    )
+    |> publication_result
+    |> result.map_error(fn(error) { PublicationFailed(error) }),
   )
-  |> require_publication
   Ok(#(
     ActorState(..actor_state, crdt: new_crdt, refs: new_refs),
     ref,
@@ -1892,11 +1945,14 @@ fn do_track(
 /// Remove every named ref in one turn. Unknown or already-removed refs are
 /// skipped; a batch that removes no live CRDT entry invokes no callback, but
 /// still prunes any dangling refs it named.
-fn do_untrack_refs(actor_state: ActorState, refs: List(String)) -> ActorState {
+fn do_untrack_refs(
+  actor_state: ActorState,
+  refs: List(String),
+) -> Result(ActorState, ReadTableWriteError) {
   let removed = remove_refs(actor_state.crdt, actor_state.refs, refs)
   use <- bool.guard(
     when: removed.topics == [],
-    return: ActorState(..actor_state, refs: removed.refs),
+    return: Ok(ActorState(..actor_state, refs: removed.refs)),
   )
   maybe_invoke_on_diff(
     actor_state.config,
@@ -1907,16 +1963,21 @@ fn do_untrack_refs(actor_state: ActorState, refs: List(String)) -> ActorState {
     #("ref_count", int.to_string(list.length(refs))),
     #("topics", string.join(dict.keys(removed.leaves), ",")),
   ])
-  publish_topics(
-    actor_state.read_table,
-    removed.crdt,
-    unique_strings(removed.topics, set.new(), []),
+  use _ <- result.try(
+    publish_topics(
+      actor_state.read_table,
+      removed.crdt,
+      unique_strings(removed.topics, set.new(), []),
+    )
+    |> publication_result,
   )
-  |> require_publication
-  ActorState(..actor_state, crdt: removed.crdt, refs: removed.refs)
+  Ok(ActorState(..actor_state, crdt: removed.crdt, refs: removed.refs))
 }
 
-fn do_untrack_all(actor_state: ActorState, session_id: String) -> ActorState {
+fn do_untrack_all(
+  actor_state: ActorState,
+  session_id: String,
+) -> Result(ActorState, ReadTableWriteError) {
   actor_state.refs
   |> dict.filter(fn(_ref, tracked) { tracked.session_id == session_id })
   |> dict.keys
@@ -1926,7 +1987,7 @@ fn do_untrack_all(actor_state: ActorState, session_id: String) -> ActorState {
 fn do_untrack_runtime_owner(
   actor_state: ActorState,
   owner: process.Pid,
-) -> ActorState {
+) -> Result(ActorState, ReadTableWriteError) {
   actor_state.refs
   |> dict.filter(fn(_ref, tracked) { tracked.owner == RuntimeOwner(owner) })
   |> dict.keys
@@ -2056,7 +2117,7 @@ fn merge_remote_sync(
               #("replica", sender),
             ],
           )
-          Error(Nil)
+          Error(SyncRejected)
         }
         True -> merged_snapshot(actor_state, sender, remote_state)
       }
@@ -2064,7 +2125,7 @@ fn merge_remote_sync(
   case processed {
     Ok(Ok(#(next_state, sender))) ->
       actor.continue(watch_replica(next_state, sender, owner, round))
-    Ok(Error(Nil)) -> actor.continue(actor_state)
+    Ok(Error(_)) -> actor.continue(actor_state)
     Error(crash) -> {
       let logger = internal.logger("beryl.presence")
       logger
@@ -2100,11 +2161,16 @@ fn accepts_snapshot(
 ///
 /// Returns an error when the sender conflicts with this replica's identity.
 /// Dropping the round keeps local state authoritative.
+type SyncProcessingError {
+  SyncRejected
+  SyncPublicationFailed(ReadTableWriteError)
+}
+
 fn merged_snapshot(
   actor_state: ActorState,
   sender: String,
   remote_state: State,
-) -> Result(#(ActorState, String), Nil) {
+) -> Result(#(ActorState, String), SyncProcessingError) {
   // accepts_snapshot rejects local-base senders first. Match the dependency
   // error too, so this library remains total if either contract changes.
   use #(crdt, _diff) <- result.try(
@@ -2117,12 +2183,17 @@ fn merged_snapshot(
         #("local_replica", local_replica),
         #("remote_replica", remote_replica),
       ])
+      SyncRejected
     }),
   )
   case state.merge(crdt, owner_snapshot(remote_state)) {
     Ok(crdt) -> {
       let #(crdt, _diff) = state.replica_up(crdt, sender)
-      Ok(#(commit_replication(actor_state, crdt), sender))
+      use actor_state <- result.try(
+        commit_replication(actor_state, crdt)
+        |> result.map_error(fn(error) { SyncPublicationFailed(error) }),
+      )
+      Ok(#(actor_state, sender))
     }
     Error(state.SameReplica(replica)) -> {
       telemetry.emit(
@@ -2135,15 +2206,20 @@ fn merged_snapshot(
         #("remote_replica", sender),
         #("conflicting_replica", replica),
       ])
-      Error(Nil)
+      Error(SyncRejected)
     }
   }
 }
 
-fn commit_replication(actor_state: ActorState, crdt: State) -> ActorState {
+fn commit_replication(
+  actor_state: ActorState,
+  crdt: State,
+) -> Result(ActorState, ReadTableWriteError) {
   let diff = visible_diff(actor_state.crdt, crdt)
   maybe_invoke_on_diff(actor_state.config, diff)
-  publish_topics(actor_state.read_table, crdt, diff_topics(diff))
-  |> require_publication
-  ActorState(..actor_state, crdt: crdt)
+  use _ <- result.try(
+    publish_topics(actor_state.read_table, crdt, diff_topics(diff))
+    |> publication_result,
+  )
+  Ok(ActorState(..actor_state, crdt: crdt))
 }
