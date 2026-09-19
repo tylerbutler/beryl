@@ -11,7 +11,6 @@ import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/otp/static_supervisor
 import gleam/string
-import gleeunit
 import gleeunit/should
 import load_test/app as load_app
 import load_test/bench
@@ -19,6 +18,7 @@ import load_test/channel
 import load_test/ewe as ewe_http
 import load_test/http
 import load_test/mist as mist_http
+import unitest
 
 @external(erlang, "load_test_test_ffi", "run_after")
 fn run_after(run: fn() -> value, cleanup: fn() -> Nil) -> value
@@ -27,7 +27,7 @@ fn run_after(run: fn() -> value, cleanup: fn() -> Nil) -> value
 fn elapsed_wait_advances_while_suspended() -> Bool
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 fn start_system() -> beryl.Sockets {

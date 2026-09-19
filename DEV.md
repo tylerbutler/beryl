@@ -197,7 +197,7 @@ a missing browser. Test reports and traces stay in ignored website directories.
 
 ### Writing Tests
 
-Tests use the `gleeunit` framework:
+Tests use unitest as the runner and `gleeunit/should` for assertions:
 
 ```gleam
 import gleeunit/should
@@ -212,6 +212,15 @@ pub fn error_case_test() {
   beryl.parse("invalid")
   |> should.be_error()
 }
+```
+
+Filter tests by name, file, line, or tag by passing unitest arguments after
+`--`:
+
+```bash
+gleam test -- --test my_module.my_feature_test
+gleam test -- test/my_module_test.gleam:12
+gleam test -- --tag slow
 ```
 
 ## Commit Messages
