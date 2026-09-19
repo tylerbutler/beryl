@@ -16,6 +16,7 @@
 //// table with a supervisor-scoped heir, so they survive reconnects and worker
 //// restarts, then expire once idle long enough to have fully refilled.
 
+import beryl/atomic_token
 import beryl/log
 import beryl/rate_limit
 import gleam/bool
@@ -29,6 +30,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import heirloom
+import rasa/monotonic
 
 const registry_call_timeout_ms = 100
 
@@ -36,20 +38,24 @@ const bucket_sweep_interval_ms = 60_000
 
 const one_second_ns = 1_000_000_000
 
-/// Erlang monotonic time in nanoseconds.
-@external(erlang, "beryl_ffi", "monotonic_time_ns")
-fn monotonic_time_ns() -> Int
+fn monotonic_time_ns() -> Int {
+  monotonic.time(monotonic.Nanosecond)
+}
 
-type ReservationToken
+type ReservationToken =
+  atomic_token.Token
 
-@external(erlang, "beryl_ffi", "admission_token_new")
-fn new_reservation_token() -> ReservationToken
+fn new_reservation_token() -> ReservationToken {
+  atomic_token.new()
+}
 
-@external(erlang, "beryl_ffi", "admission_token_cancel")
-fn cancel_reservation_token(token: ReservationToken) -> Bool
+fn cancel_reservation_token(token: ReservationToken) -> Bool {
+  atomic_token.cancel(token)
+}
 
-@external(erlang, "beryl_ffi", "reservation_token_pending")
-fn reservation_token_pending(token: ReservationToken) -> Bool
+fn reservation_token_pending(token: ReservationToken) -> Bool {
+  atomic_token.pending(token)
+}
 
 type CallError {
   CallTimedOut

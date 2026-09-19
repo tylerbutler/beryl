@@ -627,11 +627,12 @@ legacy_snapshot(#{pid := Pid}) ->
     State = 'lattice_presence@presence_state':new_incarnation(<<"source">>),
     Snapshot = 'lattice_presence@presence_state':join(
         State, <<"legacy">>, ?TOPIC, <<"legacy">>, 'gleam@json':null()),
-    nil = beryl_pubsub_ffi:send_to_pid(
-        Pid, binary_to_existing_atom(?SCOPE, utf8),
-        {message, ?SYNC_TOPIC, <<"presence_sync">>,
-         {sync_payload, 1, 'lattice_presence@presence_state':replica(State),
-          Snapshot}, system}),
+    nil = 'beryl@pubsub_native':send(
+        Pid, binary_to_existing_atom(?SCOPE, utf8), ?SYNC_TOPIC,
+        <<"presence_sync">>,
+        {sync_payload, 1, 'lattice_presence@presence_state':replica(State),
+         Snapshot},
+        system),
     _ = sys:get_state(Pid),
     nil.
 

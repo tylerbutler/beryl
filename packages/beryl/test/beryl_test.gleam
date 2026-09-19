@@ -13,8 +13,8 @@ import gleam/json
 import gleam/option
 import gleam/otp/actor
 import gleam/string
-import gleeunit
 import gleeunit/should
+import unitest
 
 @external(erlang, "beryl_diagnostic_test_ffi", "rescue_description")
 fn rescue_description(class: String, shape: String) -> String
@@ -31,7 +31,7 @@ fn text_frame(frame: codec.Frame) -> String {
 }
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 // Topic pattern tests

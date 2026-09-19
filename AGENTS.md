@@ -12,17 +12,25 @@ packages, plus runnable examples and an Astro/Starlight documentation website.
 just deps              # install all deps (gleam + pnpm workspaces)
 just check             # type check all packages
 just test              # run all tests (scope: `just test beryl_mist`)
+just build-strict      # build with Gleam warnings as errors
 just format            # format all packages
 just format-check      # check formatting (CI uses this)
 just lint              # glinter with warnings_as_errors
 just beam-check        # Dialyzer and Xref checks for Erlang FFI
 just ci                # full CI: format-check, BEAM analysis, tests, docs, examples
 just pr                # alias for ci — run before creating/updating PRs
+just main              # just ci plus documentation checks
 just change P K "B"    # create changelog fragment (trellis changelog new)
 just doctor            # validate workspace invariants
 ```
 
-Run a single test: `cd packages/beryl && gleam test -- --filter "test_name"`
+Scope tests to one package with `just test beryl_mist`, or run a package
+directly with `cd packages/beryl && gleam test`. unitest supports filters after
+`--`, such as `gleam test -- --test module_name.test_name` or
+`gleam test -- --tag slow`.
+
+Do not run `just check` before a same-scope build or test; both already
+type-check. Use `just build-strict` when Gleam warnings must fail the check.
 
 ## Workspace Layout and Package Boundaries
 
@@ -127,7 +135,7 @@ delivery, etc.).
 
 ### Test Scope and Framework
 
-- Tests use `gleeunit` (Gleam's test framework)
+- Tests use unitest as the runner and `gleeunit/should` for assertions
 - Public socket/event behavior changes need integration coverage through the
   runtime and transport paths, not only pure helper tests
 - When replacing WebSocket transports, preserve existing Phoenix/WebSocket
@@ -140,9 +148,20 @@ Test directories contain `.erl` files for test-only FFI helpers (e.g.,
 `beryl_mist_transport_test_ffi.erl`). These provide BEAM-level capabilities
 not available in pure Gleam.
 
+Treat Erlang FFI declarations as representation boundaries. Do not
+identity-coerce an external tuple into a Gleam custom type unless it already
+has the exact Gleam constructor tag and field layout. Return a tuple and
+construct the value in Gleam, or use a small Erlang converter. Run
+`just beam-check` after changes to Erlang FFI or the Gleam code that declares
+it.
+
 ## Code Conventions
 
 - **Result types over exceptions** — all fallible APIs return `Result`
+- **No recoverable-path assertions** — released library code must not use
+  `let assert`, panic, or check-then-assert for recoverable or fallible paths;
+  match and propagate the error or use the established logging and recovery
+  path
 - **Exhaustive pattern matching** — Gleam enforces this; handle all cases
 - **Sentence-case website headings** — use sentence case for page titles,
   section headings, callout titles, and sidebar labels
@@ -152,12 +171,22 @@ not available in pure Gleam.
 - **`///` doc comments** on all public functions
 - **`@internal` annotation** — hides functions from public docs while keeping
   them accessible to sibling modules within the same package
+- **App dispatch changes** — follow the existing event and effect handling
+  patterns in `beryl/event` and `beryl/runtime`
 - **glinter** is enforced with `warnings_as_errors = true`. Key rules:
   `thrown_away_error`, `discarded_result`, `unused_exports`, `deep_nesting`,
   `prefer_guard_clause`, `error_context_lost`, `unqualified_import`,
   `stringly_typed_error`, `short_variable_name`, `string_inspect`
 
 ## Commit and Release Workflow
+
+Required GitHub Actions jobs must always start and report success. When
+path-filtering, skip only expensive steps and run a successful no-op step; do
+not skip the whole required job.
+
+Before creating or updating a PR, fetch the current default branch and validate
+the branch against it. PR CI tests the merge result, so local checks on an
+outdated branch can miss failures.
 
 ### Conventional Commits
 

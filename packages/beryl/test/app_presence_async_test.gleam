@@ -32,12 +32,12 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
-import gleeunit
 import gleeunit/should
 import test_helper
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 type LoopMessage {

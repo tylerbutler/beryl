@@ -19,6 +19,7 @@ test = [
   "examples/chatrooms",
   "examples/cursors",
   "examples/example_helpers",
+  "examples/lustre_presence/client",
 ]
 
 # Tag individual package versions in addition to repository series tags,

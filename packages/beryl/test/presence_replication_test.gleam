@@ -4,12 +4,12 @@ import gleam/erlang/process
 import gleam/erlang/reference
 import gleam/json
 import gleam/list
-import gleeunit
 import gleeunit/should
 import test_helper
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 // ── Helper ──────────────────────────────────────────────────────────
@@ -28,6 +28,11 @@ fn test_config(
   presence.default_config(replica)
   |> presence.with_pubsub(pubsub_instance)
   |> presence.with_broadcast_interval(interval_ms)
+}
+
+fn stop_presence(tracker: presence.Presence) -> Nil {
+  let assert Ok(owner) = process.subject_owner(presence.subject(tracker))
+  process.kill(owner)
 }
 
 // ── BroadcastTick sends state via PubSub ────────────────────────────
@@ -460,6 +465,8 @@ pub fn survives_exception_in_processing_path_test() -> Nil {
   // State was not partially mutated: the poisoned sync never merged, so
   // "room:poison" remains empty on node1.
   presence_entries(tracker1, "room:poison") |> should.equal([])
+  stop_presence(tracker1)
+  stop_presence(tracker2)
 }
 
 pub fn merge_failure_leaves_read_model_unchanged_test() -> Nil {
@@ -510,6 +517,8 @@ pub fn merge_failure_leaves_read_model_unchanged_test() -> Nil {
   // ETS write happened, not because of a later prune or partial write.
   presence_entries(tracker1, "room:poison") |> should.equal([])
   presence_count(tracker1, "room:poison") |> should.equal(0)
+  stop_presence(tracker1)
+  stop_presence(tracker2)
 }
 
 // ── Helper to drain stray messages ──────────────────────────────────
