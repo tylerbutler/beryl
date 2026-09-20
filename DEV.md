@@ -44,6 +44,14 @@ just deps
 just ci
 ```
 
+`just deps-gleam` uses Node.js 22.12+ to prepare workspace and documentation
+snippet dependencies in sequence. Gleam 1.18.1 updates only one changed path
+dependency fingerprint per call. Preparation repeats until the manifest and
+fingerprints stop changing, then CI caches that state for all jobs. This
+workaround can be removed when the pinned Gleam release includes
+[gleam-lang/gleam#6246](https://github.com/gleam-lang/gleam/pull/6246).
+Run `just deps-test` to check cold preparation, changed dependencies, and cache reuse.
+
 ## Development Workflow
 
 ### Daily Development

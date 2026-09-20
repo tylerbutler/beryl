@@ -20,7 +20,12 @@ deps: deps-gleam
 
 # Download gleam dependencies for every workspace member
 deps-gleam:
-    trellis run deps --serial
+    node scripts/prepare-gleam-deps.mjs
+    node website/scripts/check-snippets.mjs --deps-only
+
+# Check dependency preparation and cache reuse
+deps-test:
+    node --test scripts/prepare-gleam-deps.test.mjs
 
 # === BUILD ===
 
