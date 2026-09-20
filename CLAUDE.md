@@ -62,7 +62,7 @@ packages/
 │   ├── src/
 │   │   ├── beryl.gleam            # Main public API (config, child_spec, stop, broadcast)
 │   │   ├── beryl_ffi.erl          # Erlang FFI (timing, admission atomics, validated PubSub coercion)
-│   │   ├── beryl_pubsub_ffi.erl   # Erlang FFI for pg-based PubSub
+│   │   ├── beryl_pubsub_ffi.erl   # Small PubSub startup and OTP compatibility FFI
 │   │   └── beryl/
 │   │       ├── bridge.gleam       # Forward external actor streams to typed socket Senders
 │   │       ├── connection_limit.gleam  # Connection limit enforcement (internal)
@@ -72,7 +72,9 @@ packages/
 │   │       ├── internal.gleam     # Internal helpers (internal)
 │   │       ├── log.gleam          # Logging helpers (internal)
 │   │       ├── presence.gleam     # Presence tracking (CRDT-backed actor)
-│   │       ├── pubsub.gleam       # PubSub abstraction (pg-based)
+│   │       ├── pubsub.gleam       # Public PubSub abstraction (pg-based)
+│   │       ├── pubsub_memberships.gleam # Typed membership and recovery actor
+│   │       ├── pubsub_native.gleam # Internal pg and raw-send wrappers
 │   │       ├── rate_limit.gleam   # Rate limiting helpers (internal)
 │   │       ├── runtime.gleam      # App-dispatch socket/topic runtime (internal)
 │   │       ├── snapshot.gleam     # Runtime snapshot API

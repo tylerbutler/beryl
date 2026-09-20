@@ -13,6 +13,7 @@ import beryl/wire
 import gleam/erlang/process
 import gleeunit/should
 import test_helper
+import unitest
 
 fn start_with_limit(max_connections: Int) -> beryl.Sockets {
   let assert Ok(channels) =
@@ -245,6 +246,7 @@ pub fn timed_out_bind_suppresses_late_reply_test() -> Nil {
 }
 
 pub fn acquire_returns_error_when_limiter_dies_while_waiting_test() -> Nil {
+  use <- unitest.tag("serial")
   let channels = start_with_limit(1)
   let assert Ok(limiter) = beryl.app_limiter_pid(channels)
   test_helper.suspend_process(limiter)
@@ -344,6 +346,7 @@ pub fn transfer_fails_after_request_owner_dies_test() -> Nil {
 }
 
 pub fn transferred_slot_survives_requester_exit_and_restart_test() -> Nil {
+  use <- unitest.tag("serial")
   let channels = start_with_limit(1)
   let acquired = process.new_subject()
   let requester =
@@ -382,6 +385,7 @@ pub fn transferred_slot_survives_requester_exit_and_restart_test() -> Nil {
 }
 
 pub fn cancellation_survives_limiter_restart_test() -> Nil {
+  use <- unitest.tag("serial")
   let channels = start_with_limit(1)
   let assert Ok(permit) =
     transport.acquire_connection_slot(channels, "10.0.0.12")

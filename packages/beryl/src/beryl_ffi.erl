@@ -1,12 +1,12 @@
 -module(beryl_ffi).
--export([identity/1, monotonic_time_ms/0, monotonic_time_ns/0,
+-export([identity/1,
          string_starts_with/2, stop_supervisor/1, rescue/1,
-         admission_token_new/0, admission_token_cancel/1,
-         admission_token_pending/1, admission_token_claim/1, admission_token_owner/1,
-         reservation_token_pending/1,
          connection_limit_call/3, connection_limit_send/2,
-         connection_limit_state_open/2, connection_limit_state_put/2,
-         connection_limit_state_heir_start/2]).
+         connection_limit_checkpoint_supervisor/0,
+         connection_limit_checkpoint_registry_key/2,
+         connection_limit_checkpoint_registry_get/1,
+         connection_limit_checkpoint_registry_put/2,
+         connection_limit_checkpoint_registry_compare_erase/2]).
 
 %% Used only after a selector validates the frozen raw PubSub record shape.
 identity(X) -> X.
@@ -25,32 +25,6 @@ rescue(Fun) ->
                     "~p:~P", [Class, Reason, 10], [{chars_limit, 512}])),
             {error, binary:copy(string:slice(Formatted, 0, 512))}
     end.
-
-%% Return Erlang monotonic time in milliseconds
-monotonic_time_ms() -> erlang:monotonic_time(millisecond).
-
-%% Return Erlang monotonic time in nanoseconds
-monotonic_time_ns() -> erlang:monotonic_time(nanosecond).
-
-admission_token_new() ->
-    Token = atomics:new(1, [{signed, false}]),
-    atomics:put(Token, 1, 0),
-    {Token, self()}.
-
-admission_token_cancel({Token, _Owner}) ->
-    atomics:compare_exchange(Token, 1, 0, 2) =:= ok.
-
-admission_token_owner({_Token, Owner}) -> Owner.
-
-admission_token_pending({Token, Owner}) ->
-    is_process_alive(Owner) andalso atomics:get(Token, 1) =:= 0.
-
-%% Reservation ownership transfers independently of the token's creator.
-reservation_token_pending({Token, _Owner}) ->
-    atomics:get(Token, 1) =:= 0.
-
-admission_token_claim({Token, Owner}) ->
-    is_process_alive(Owner) andalso atomics:compare_exchange(Token, 1, 0, 1) =:= ok.
 
 %% Deactivating the reply alias drops responses that arrive after this call
 %% returns, while the monitor reports limiter death without waiting for timeout.
@@ -101,78 +75,30 @@ connection_limit_subject_message({subject, _Owner, Tag}, Message) ->
 connection_limit_subject_message({named_subject, Name}, Message) ->
     {Name, Message}.
 
-%% Keep admission state in ETS across limiter worker replacement. The
-%% supervisor pid scopes the checkpoint to one subtree incarnation, and the
-%% heir owns an inherited table only until that supervisor exits.
-connection_limit_state_open(Key, InitialState) ->
-    Supervisor = connection_limit_supervisor(),
-    PersistentKey = {?MODULE, connection_limit_state, Supervisor, Key},
-    case persistent_term:get(PersistentKey, undefined) of
-        undefined ->
-            connection_limit_state_new(
-                Supervisor, PersistentKey, Key, InitialState);
-        Table ->
-            case ets:info(Table) of
-                undefined ->
-                    connection_limit_state_new(
-                        Supervisor, PersistentKey, Key, InitialState);
-                _ ->
-                    [{state, State}] = ets:lookup(Table, state),
-                    State
-            end
-    end.
-
-connection_limit_supervisor() ->
+connection_limit_checkpoint_supervisor() ->
     case erlang:get('$ancestors') of
         [Pid | _] when is_pid(Pid) -> Pid;
         _ -> erlang:error(connection_limit_supervisor_missing)
     end.
 
-connection_limit_state_new(Supervisor, PersistentKey, Key, InitialState) ->
-    Heir = connection_limit_state_heir_start(Supervisor, PersistentKey),
-    Table = ets:new(beryl_connection_limit_state,
-                    [set, public, {heir, Heir, Key}]),
-    true = ets:insert(Table, {state, InitialState}),
+connection_limit_checkpoint_registry_key(Supervisor, Key) ->
+    {?MODULE, connection_limit_state, Supervisor, Key}.
+
+connection_limit_checkpoint_registry_get(PersistentKey) ->
+    case persistent_term:get(PersistentKey, undefined) of
+        undefined -> none;
+        Table -> {some, Table}
+    end.
+
+connection_limit_checkpoint_registry_put(PersistentKey, Table) ->
     persistent_term:put(PersistentKey, Table),
-    Heir ! {connection_limit_table, Table},
-    InitialState.
+    nil.
 
-connection_limit_state_heir_start(Supervisor, PersistentKey) ->
-    spawn(fun() ->
-        connection_limit_state_heir(Supervisor, PersistentKey)
-    end).
-
-connection_limit_state_heir(Supervisor, PersistentKey) ->
-    Monitor = erlang:monitor(process, Supervisor),
-    receive
-        {connection_limit_table, Table} ->
-            connection_limit_state_heir_wait(
-                Supervisor, Monitor, PersistentKey, Table);
-        {'ETS-TRANSFER', Table, _From, _HeirData} ->
-            connection_limit_state_heir_wait(
-                Supervisor, Monitor, PersistentKey, Table);
-        {'DOWN', Monitor, process, Supervisor, _Reason} ->
-            _ = persistent_term:erase(PersistentKey),
-            ok
-    end.
-
-connection_limit_state_heir_wait(Supervisor, Monitor, PersistentKey, Table) ->
-    receive
-        {'ETS-TRANSFER', Table, _From, _HeirData} ->
-            connection_limit_state_heir_wait(
-                Supervisor, Monitor, PersistentKey, Table);
-        {'DOWN', Monitor, process, Supervisor, _Reason} ->
-            case persistent_term:get(PersistentKey, undefined) of
-                Table -> persistent_term:erase(PersistentKey);
-                _ -> ok
-            end
-    end.
-
-connection_limit_state_put(Key, State) ->
-    Supervisor = connection_limit_supervisor(),
-    PersistentKey = {?MODULE, connection_limit_state, Supervisor, Key},
-    Table = persistent_term:get(PersistentKey),
-    true = ets:insert(Table, {state, State}),
+connection_limit_checkpoint_registry_compare_erase(PersistentKey, Table) ->
+    case persistent_term:get(PersistentKey, undefined) of
+        Table -> persistent_term:erase(PersistentKey);
+        _ -> ok
+    end,
     nil.
 
 %% Check if a string starts with a prefix

@@ -51,7 +51,7 @@ init({scope, Scope}) ->
     %% A pg-only restart preserves the authoritative membership set. A registry
     %% restart also replaces pg; old handles retain the dead registry pid.
     Children = [
-        #{id => memberships, start => {beryl_pubsub_memberships, start_link, [Scope]}},
+        #{id => memberships, start => {beryl_pubsub_ffi, start_memberships, [Scope]}},
         #{id => pg, start => {pg, start_link, [Scope]}}
     ],
     {ok, {#{strategy => rest_for_one, intensity => 5, period => 10}, Children}}.

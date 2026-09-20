@@ -140,6 +140,7 @@ pub fn main() -> Nil {
   let cursor_context =
     cursor_router.Context(
       channels:,
+      presence: presence_tracker,
       base_path: "/cursors",
       static_directory: cursor_static_directory,
     )

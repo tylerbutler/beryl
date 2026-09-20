@@ -20,7 +20,12 @@ deps: deps-gleam
 
 # Download gleam dependencies for every workspace member
 deps-gleam:
-    trellis run deps --serial
+    node scripts/prepare-gleam-deps.mjs
+    node website/scripts/check-snippets.mjs --deps-only
+
+# Check dependency preparation and cache reuse
+deps-test:
+    node --test scripts/prepare-gleam-deps.test.mjs
 
 # === BUILD ===
 
@@ -35,8 +40,9 @@ build-strict:
 # === TESTING ===
 
 # Run all tests (optionally scope to packages: `just test beryl_mist`)
-test *ARGS:
-    trellis run test {{ ARGS }}
+test *PACKAGES:
+    BERYL_PARALLEL_TESTS=1 trellis run test {{ PACKAGES }}
+    @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) cd packages/beryl && gleam test -- --tag serial ;; esac
 
 # === CODE QUALITY ===
 
@@ -158,11 +164,12 @@ examples-list:
 
 # Build all examples
 examples-build: examples-client-build
-    trellis run build chatroom collab_document cursor example_helper showcase load_test live_poll collab_docs_client
+    trellis run build chatroom collab_document cursor example_helper showcase load_test live_poll collab_docs_client lustre_presence_client
 
 # Build JavaScript clients used by examples
 examples-client-build:
     pnpm -C examples/collab_docs build:client
+    pnpm -C examples/lustre_presence build:client
 
 # Install example test dependencies (Playwright)
 examples-deps:
@@ -173,6 +180,7 @@ examples-test: examples-build
     pnpm -C examples/cursors test
     pnpm -C examples/chatrooms test
     pnpm -C examples/collab_docs test
+    pnpm -C examples/lustre_presence test
     pnpm -C examples/showcase test
 
 # Build the cursors example Docker image (must run from repo root for path-based beryl dep)

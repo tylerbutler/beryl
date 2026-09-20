@@ -9,6 +9,7 @@
 
 import app_test_helper
 import beryl
+import beryl/connection_limit
 import beryl/snapshot
 import beryl/socket.{AcceptJoin, Broadcast, Join, Next}
 import beryl/transport
@@ -23,7 +24,9 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import gleeunit/should
+import heirloom
 import test_helper
+import unitest
 
 type Gate
 
@@ -43,12 +46,6 @@ fn active_child_count(supervisor: process.Pid) -> Int
 fn connection_limit_checkpoint_heir(
   limiter: process.Pid,
 ) -> Result(process.Pid, Nil)
-
-@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_heir_stops_before_table")
-fn connection_limit_heir_stops_before_table() -> Nil
-
-@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_heir_stops_before_announcement")
-fn connection_limit_heir_stops_before_announcement() -> Nil
 
 // ── A trivial named sibling worker used to prove parent/sibling survival ────
 
@@ -300,11 +297,58 @@ pub fn replacement_subtree_owns_a_fresh_checkpoint_test() -> Nil {
 }
 
 pub fn checkpoint_heir_stops_before_table_creation_test() -> Nil {
-  connection_limit_heir_stops_before_table()
+  let supervisor = process.spawn_unlinked(fn() { process.sleep(30_000) })
+  let store_key = process.new_name("checkpoint_before_table")
+  let assert Ok(heir) =
+    connection_limit.start_checkpoint_heir_for_test(supervisor, store_key)
+  let heir_pid = connection_limit.checkpoint_heir_pid(heir)
+  let monitor = process.monitor(heir_pid)
+
+  process.kill(supervisor)
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(1000)
+  process.is_alive(heir_pid) |> should.be_false
 }
 
 pub fn checkpoint_heir_stops_before_table_announcement_test() -> Nil {
-  connection_limit_heir_stops_before_announcement()
+  let supervisor = process.spawn_unlinked(fn() { process.sleep(30_000) })
+  let store_key = process.new_name("checkpoint_before_announcement")
+  let assert Ok(heir) =
+    connection_limit.start_checkpoint_heir_for_test(supervisor, store_key)
+  let heir_pid = connection_limit.checkpoint_heir_pid(heir)
+  let table_ready = process.new_subject()
+  let owner =
+    process.spawn_unlinked(fn() {
+      let specification =
+        heirloom.spec("checkpoint_before_announcement", heirloom.Set)
+        |> heirloom.with_access(heirloom.Public)
+        |> heirloom.with_heir(heir_pid, "test")
+      let assert Ok(table): Result(heirloom.Table(String, String), _) =
+        heirloom.create(specification)
+      let assert Ok(Nil) = heirloom.insert(table, "state", "test")
+      connection_limit.checkpoint_registry_put_for_test(heir, table)
+      process.send(table_ready, table)
+      process.sleep(30_000)
+    })
+  let assert Ok(table) = process.receive(table_ready, 1000)
+  let heir_monitor = process.monitor(heir_pid)
+  let owner_monitor = process.monitor(owner)
+
+  process.kill(supervisor)
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(heir_monitor, fn(down) { down })
+    |> process.selector_receive(1000)
+  connection_limit.checkpoint_registry_exists_for_test(heir)
+  |> should.be_false
+  process.kill(owner)
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(owner_monitor, fn(down) { down })
+    |> process.selector_receive(1000)
+  heirloom.exists(table) |> should.be_false
 }
 
 // ── a runtime crash while stopping does not poison later lifecycle events ──
@@ -352,6 +396,7 @@ pub fn unresponsive_socket_stop_returns_timeout_test() -> Nil {
 }
 
 pub fn runtime_crash_during_stop_does_not_hide_later_exhaustion_test() -> Nil {
+  use <- unitest.tag("serial")
   let assert Ok(#(sockets, beryl_spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
@@ -428,6 +473,7 @@ fn crash_runtime_during_stop(sockets: beryl.Sockets) -> process.Pid {
 // ── restart-intensity exhaustion is escalated to the application root ──────
 
 pub fn restart_intensity_exhaustion_restarts_outer_subtree_test() -> Nil {
+  use <- unitest.tag("serial")
   let assert Ok(#(sockets, beryl_spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())

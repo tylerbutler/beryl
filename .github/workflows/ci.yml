@@ -47,6 +47,7 @@ jobs:
               - '.mise.toml'
               - '.tool-versions'
               - 'justfile'
+              - 'scripts/prepare-gleam-deps*.mjs'
               - 'scripts/check-ffi-*.sh'
             docs:
               - 'packages/**'
@@ -56,6 +57,7 @@ jobs:
               - '.mise.toml'
               - '.tool-versions'
               - 'justfile'
+              - 'scripts/prepare-gleam-deps*.mjs'
             examples:
               - 'examples/**'
               - 'packages/**'
@@ -64,6 +66,7 @@ jobs:
               - '.mise.toml'
               - '.tool-versions'
               - 'justfile'
+              - 'scripts/prepare-gleam-deps*.mjs'
             load:
               - 'load/**'
               - 'examples/load_test/**'
@@ -73,6 +76,7 @@ jobs:
               - '.mise.toml'
               - '.tool-versions'
               - 'justfile'
+              - 'scripts/prepare-gleam-deps*.mjs'
 
   dependencies:
     needs: changes
@@ -90,10 +94,17 @@ jobs:
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           run-deps: false
+          cache: false
 
       - name: Setup mise tools
         if: needs.changes.outputs.relevant == 'true'
         uses: ./.github/actions/mise
+
+      - name: Setup Node.js
+        if: needs.changes.outputs.relevant == 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
+        with:
+          node-version: 22
 
       # Cache source dependencies and resolution fingerprints, not compiled
       # output, so both Erlang versions can use the same cache.
@@ -107,13 +118,19 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: gleam-deps-${{ runner.os }}-${{ hashFiles('.tool-versions', '.mise.toml', '**/gleam.toml', '**/manifest.toml') }}
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
+          key: gleam-deps-v2-${{ runner.os }}-${{ hashFiles('.tool-versions', '.mise.toml', '**/gleam.toml', '**/manifest.toml', 'scripts/prepare-gleam-deps.mjs', 'website/scripts/check-snippets.mjs', '!**/build/**', '!**/node_modules/**') }}
           restore-keys: |
-            gleam-deps-${{ runner.os }}-
+            gleam-deps-v2-${{ runner.os }}-
 
       - name: Install Gleam dependencies
         if: needs.changes.outputs.relevant == 'true'
         run: just deps-gleam
+
+      - name: Test dependency preparation
+        if: needs.changes.outputs.relevant == 'true'
+        run: just deps-test
 
       - name: Save Gleam dependencies
         if: >-
@@ -128,6 +145,8 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Set prepared dependency cache key
@@ -145,6 +164,8 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
           key: ${{ steps.prepared-cache-key.outputs.key }}
 
       - name: Skip dependency setup
@@ -174,6 +195,7 @@ jobs:
           # version, matching local dev, regardless of the Erlang matrix leg.
           erlang-version: ${{ matrix.erlang }}
           run-deps: false
+          cache: false
 
       - name: Setup mise tools
         if: needs.changes.outputs.source == 'true'
@@ -188,6 +210,8 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
           key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
@@ -220,6 +244,7 @@ jobs:
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           run-deps: false
+          cache: false
 
       - name: Setup mise tools
         if: needs.changes.outputs.docs == 'true'
@@ -234,6 +259,8 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
           key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
@@ -309,6 +336,7 @@ jobs:
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           run-deps: false
+          cache: false
 
       - name: Setup mise tools
         if: needs.changes.outputs.examples == 'true'
@@ -323,6 +351,8 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
           key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
@@ -340,7 +370,7 @@ jobs:
 
       - name: Test examples
         if: needs.changes.outputs.examples == 'true'
-        timeout-minutes: 2.5
+        timeout-minutes: 3
         run: just examples-test
 
       - name: Skip example checks
@@ -374,6 +404,7 @@ jobs:
           # ends up on PATH. See the Test job for the full rationale.
           erlang-version: ${{ matrix.erlang }}
           run-deps: false
+          cache: false
 
       - name: Setup Node.js
         if: needs.changes.outputs.load == 'true'
@@ -394,6 +425,8 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
           key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
