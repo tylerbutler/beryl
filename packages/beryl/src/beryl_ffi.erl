@@ -2,8 +2,11 @@
 -export([identity/1,
          string_starts_with/2, stop_supervisor/1, rescue/1,
          connection_limit_call/3, connection_limit_send/2,
-         connection_limit_state_open/2, connection_limit_state_put/2,
-         connection_limit_state_heir_start/2]).
+         connection_limit_checkpoint_supervisor/0,
+         connection_limit_checkpoint_registry_key/2,
+         connection_limit_checkpoint_registry_get/1,
+         connection_limit_checkpoint_registry_put/2,
+         connection_limit_checkpoint_registry_compare_erase/2]).
 
 %% Used only after a selector validates the frozen raw PubSub record shape.
 identity(X) -> X.
@@ -72,78 +75,30 @@ connection_limit_subject_message({subject, _Owner, Tag}, Message) ->
 connection_limit_subject_message({named_subject, Name}, Message) ->
     {Name, Message}.
 
-%% Keep admission state in ETS across limiter worker replacement. The
-%% supervisor pid scopes the checkpoint to one subtree incarnation, and the
-%% heir owns an inherited table only until that supervisor exits.
-connection_limit_state_open(Key, InitialState) ->
-    Supervisor = connection_limit_supervisor(),
-    PersistentKey = {?MODULE, connection_limit_state, Supervisor, Key},
-    case persistent_term:get(PersistentKey, undefined) of
-        undefined ->
-            connection_limit_state_new(
-                Supervisor, PersistentKey, Key, InitialState);
-        Table ->
-            case ets:info(Table) of
-                undefined ->
-                    connection_limit_state_new(
-                        Supervisor, PersistentKey, Key, InitialState);
-                _ ->
-                    [{state, State}] = ets:lookup(Table, state),
-                    State
-            end
-    end.
-
-connection_limit_supervisor() ->
+connection_limit_checkpoint_supervisor() ->
     case erlang:get('$ancestors') of
         [Pid | _] when is_pid(Pid) -> Pid;
         _ -> erlang:error(connection_limit_supervisor_missing)
     end.
 
-connection_limit_state_new(Supervisor, PersistentKey, Key, InitialState) ->
-    Heir = connection_limit_state_heir_start(Supervisor, PersistentKey),
-    Table = ets:new(beryl_connection_limit_state,
-                    [set, public, {heir, Heir, Key}]),
-    true = ets:insert(Table, {state, InitialState}),
+connection_limit_checkpoint_registry_key(Supervisor, Key) ->
+    {?MODULE, connection_limit_state, Supervisor, Key}.
+
+connection_limit_checkpoint_registry_get(PersistentKey) ->
+    case persistent_term:get(PersistentKey, undefined) of
+        undefined -> none;
+        Table -> {some, Table}
+    end.
+
+connection_limit_checkpoint_registry_put(PersistentKey, Table) ->
     persistent_term:put(PersistentKey, Table),
-    Heir ! {connection_limit_table, Table},
-    InitialState.
+    nil.
 
-connection_limit_state_heir_start(Supervisor, PersistentKey) ->
-    spawn(fun() ->
-        connection_limit_state_heir(Supervisor, PersistentKey)
-    end).
-
-connection_limit_state_heir(Supervisor, PersistentKey) ->
-    Monitor = erlang:monitor(process, Supervisor),
-    receive
-        {connection_limit_table, Table} ->
-            connection_limit_state_heir_wait(
-                Supervisor, Monitor, PersistentKey, Table);
-        {'ETS-TRANSFER', Table, _From, _HeirData} ->
-            connection_limit_state_heir_wait(
-                Supervisor, Monitor, PersistentKey, Table);
-        {'DOWN', Monitor, process, Supervisor, _Reason} ->
-            _ = persistent_term:erase(PersistentKey),
-            ok
-    end.
-
-connection_limit_state_heir_wait(Supervisor, Monitor, PersistentKey, Table) ->
-    receive
-        {'ETS-TRANSFER', Table, _From, _HeirData} ->
-            connection_limit_state_heir_wait(
-                Supervisor, Monitor, PersistentKey, Table);
-        {'DOWN', Monitor, process, Supervisor, _Reason} ->
-            case persistent_term:get(PersistentKey, undefined) of
-                Table -> persistent_term:erase(PersistentKey);
-                _ -> ok
-            end
-    end.
-
-connection_limit_state_put(Key, State) ->
-    Supervisor = connection_limit_supervisor(),
-    PersistentKey = {?MODULE, connection_limit_state, Supervisor, Key},
-    Table = persistent_term:get(PersistentKey),
-    true = ets:insert(Table, {state, State}),
+connection_limit_checkpoint_registry_compare_erase(PersistentKey, Table) ->
+    case persistent_term:get(PersistentKey, undefined) of
+        Table -> persistent_term:erase(PersistentKey);
+        _ -> ok
+    end,
     nil.
 
 %% Check if a string starts with a prefix
