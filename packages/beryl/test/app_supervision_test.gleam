@@ -26,6 +26,7 @@ import gleam/string
 import gleeunit/should
 import heirloom
 import test_helper
+import unitest
 
 type Gate
 
@@ -395,6 +396,7 @@ pub fn unresponsive_socket_stop_returns_timeout_test() -> Nil {
 }
 
 pub fn runtime_crash_during_stop_does_not_hide_later_exhaustion_test() -> Nil {
+  use <- unitest.tag("serial")
   let assert Ok(#(sockets, beryl_spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
@@ -471,6 +473,7 @@ fn crash_runtime_during_stop(sockets: beryl.Sockets) -> process.Pid {
 // ── restart-intensity exhaustion is escalated to the application root ──────
 
 pub fn restart_intensity_exhaustion_restarts_outer_subtree_test() -> Nil {
+  use <- unitest.tag("serial")
   let assert Ok(#(sockets, beryl_spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())

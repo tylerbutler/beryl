@@ -29,6 +29,16 @@ directly with `cd packages/beryl && gleam test`. unitest supports filters after
 `--`, such as `gleam test -- --test module_name.test_name` or
 `gleam test -- --tag slow`.
 
+`just test` runs the parallel-safe core tests with unitest's automatic worker
+count, capped at four BEAM schedulers to avoid nested oversubscription, then
+runs tests tagged `serial` in a sequential lane. Tag a core test `serial` when
+it observes or changes process-wide state, such as `:telemetry` handlers, the
+Palabres capture handler, or Palabres's global logging level, or when it
+deliberately exercises VM-sensitive restart exhaustion or PubSub scope
+recovery. Also tag tests whose correctness depends on tightly controlled actor
+restart or delayed-ack scheduling. Direct `gleam test` remains a full
+sequential run.
+
 Do not run `just check` before a same-scope build or test; both already
 type-check. Use `just build-strict` when Gleam warnings must fail the check.
 

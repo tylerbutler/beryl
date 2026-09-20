@@ -44,6 +44,15 @@ just deps
 just ci
 ```
 
+`just deps-gleam` uses Node.js 22.12+ to prepare workspace and documentation
+snippet dependencies in sequence. Gleam 1.18.1 updates only one changed path
+dependency fingerprint per call. Preparation repeats until the manifest and
+fingerprints stop changing, retries Hex rate-limit failures with bounded
+backoff, then CI caches that state for all jobs. This workaround can be removed
+when the pinned Gleam release includes
+[gleam-lang/gleam#6246](https://github.com/gleam-lang/gleam/pull/6246).
+Run `just deps-test` to check cold preparation, changed dependencies, and cache reuse.
+
 ## Development Workflow
 
 ### Daily Development
@@ -179,9 +188,18 @@ pub fn parse(input: String) -> Result(Value, ParseError)
 # Run all tests
 just test
 
+# Run the core package sequentially
+cd packages/beryl && gleam test
+
 # Run with verbose output
 gleam test -- --verbose
 ```
+
+The root `just test` command runs the parallel-safe `beryl` tests with
+unitest's automatic worker count, capped at four BEAM schedulers to avoid
+nested oversubscription, then runs its `serial` tag in a separate sequential
+lane. Package-scoped commands keep the same behavior: `just test beryl` runs
+both core lanes, while `just test beryl_mist` does not run core tests.
 
 ### Tutorial browser demos
 
@@ -213,6 +231,24 @@ pub fn error_case_test() {
   |> should.be_error()
 }
 ```
+
+Tests that observe or change process-wide state must use the `serial` tag:
+
+```gleam
+import unitest
+
+pub fn captures_global_telemetry_test() {
+  use <- unitest.tag("serial")
+  // Test code
+}
+```
+
+This includes tests that attach `:telemetry` handlers, install the Palabres
+capture handler, change Palabres's global logging level, or deliberately
+exercise VM-sensitive restart exhaustion, PubSub scope recovery, or tightly
+controlled actor restart and delayed-ack scheduling. Do not tag tests that can
+use unique subjects, scopes, socket IDs, or exact mailbox selectors for
+isolation.
 
 Filter tests by name, file, line, or tag by passing unitest arguments after
 `--`:

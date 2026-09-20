@@ -6,6 +6,7 @@ import beryl/internal
 import beryl/topic
 import beryl/wire
 import beryl/wire/codec
+import envoy
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process
@@ -25,13 +26,28 @@ fn abnormal_exit_description(shape: String) -> String
 @external(erlang, "beryl_diagnostic_test_ffi", "referenced_byte_size")
 fn referenced_byte_size(value: String) -> Int
 
+@external(erlang, "beryl_test_process_ffi", "limit_schedulers")
+fn limit_schedulers(maximum: Int) -> Nil
+
+const parallel_scheduler_limit = 4
+
 fn text_frame(frame: codec.Frame) -> String {
   let assert codec.TextFrame(text) = frame
   text
 }
 
 pub fn main() -> Nil {
-  unitest.main()
+  case envoy.get("BERYL_PARALLEL_TESTS") {
+    Ok("1") -> {
+      // unitest parallelizes both modules and tests within each module.
+      limit_schedulers(parallel_scheduler_limit)
+      unitest.defaults()
+      |> unitest.ignored_tags(["serial"])
+      |> unitest.execution_mode(unitest.RunParallelAuto)
+      |> unitest.run
+    }
+    _ -> unitest.main()
+  }
 }
 
 // Topic pattern tests
