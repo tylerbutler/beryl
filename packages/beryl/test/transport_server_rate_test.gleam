@@ -25,6 +25,7 @@ import gleam/option
 import gleam/string
 import gleeunit/should
 import test_helper
+import unitest
 
 /// Palabres's level is a global, singleton setting (see
 /// `beryl/internal.configure`); restore it to beryl's own default so a
@@ -163,6 +164,7 @@ pub fn frame_rate_limited_heartbeats_lead_to_eviction_test() -> Nil {
 // ── Message-only ─────────────────────────────────────────────────────────
 
 pub fn message_rate_alone_does_not_shed_at_the_edge_test() -> Nil {
+  use <- unitest.tag("serial")
   // With no frame_rate configured, every frame reaches decode and routing;
   // the runtime's message-rate bucket is what sheds the flood. A dropped
   // reply alone would be identical to edge-level shedding, so this test

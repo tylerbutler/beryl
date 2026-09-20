@@ -20,7 +20,12 @@ deps: deps-gleam
 
 # Download gleam dependencies for every workspace member
 deps-gleam:
-    trellis run deps --serial
+    node scripts/prepare-gleam-deps.mjs
+    node website/scripts/check-snippets.mjs --deps-only
+
+# Check dependency preparation and cache reuse
+deps-test:
+    node --test scripts/prepare-gleam-deps.test.mjs
 
 # === BUILD ===
 
@@ -35,8 +40,9 @@ build-strict:
 # === TESTING ===
 
 # Run all tests (optionally scope to packages: `just test beryl_mist`)
-test *ARGS:
-    trellis run test {{ ARGS }}
+test *PACKAGES:
+    BERYL_PARALLEL_TESTS=1 trellis run test {{ PACKAGES }}
+    @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) cd packages/beryl && gleam test -- --tag serial ;; esac
 
 # === CODE QUALITY ===
 

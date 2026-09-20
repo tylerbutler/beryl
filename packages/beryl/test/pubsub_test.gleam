@@ -4,6 +4,7 @@ import gleam/erlang/process
 import gleam/list
 import gleeunit/should
 import test_helper
+import unitest
 
 @external(erlang, "beryl_pubsub_test_ffi", "kill_scope")
 fn kill_scope(scope: atom.Atom) -> process.Pid
@@ -70,6 +71,7 @@ pub fn pubsub_membership_timeout_cleans_up_call_state_test() -> Nil {
 }
 
 pub fn pubsub_scope_recovery_restores_live_memberships_test() -> Nil {
+  use <- unitest.tag("serial")
   let scope = atom.create("test_pubsub_scope_recovery")
   let config = pubsub.config_with_scope(atom.to_string(scope))
   let started = process.new_subject()
@@ -156,6 +158,7 @@ pub fn pubsub_scope_recovery_rejects_unmanaged_scope_test() -> Nil {
 }
 
 pub fn pubsub_scope_recovery_serialises_outage_joins_and_leaves_test() -> Nil {
+  use <- unitest.tag("serial")
   let scope = atom.create("test_pubsub_gated_recovery")
   let config = pubsub.config_with_scope(atom.to_string(scope))
   let instance = pubsub.start(config)
@@ -190,6 +193,7 @@ pub fn pubsub_scope_recovery_serialises_outage_joins_and_leaves_test() -> Nil {
 }
 
 pub fn pubsub_scope_recovery_invalidates_handles_after_registry_loss_test() -> Nil {
+  use <- unitest.tag("serial")
   let scope = atom.create("test_pubsub_registry_loss")
   let config = pubsub.config_with_scope(atom.to_string(scope))
   let instance = pubsub.start(config)
