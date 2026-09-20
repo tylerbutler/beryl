@@ -263,7 +263,8 @@ pub type JoinContext(info) {
 /// A client message delivered to a joined channel's `on_message` callback.
 ///
 /// `reply` is present only when the client asked for a reply; pass it to
-/// [`reply_ok`](#reply_ok) or [`reply_error`](#reply_error).
+/// [`reply_ok`](#reply_ok), [`reply_error`](#reply_error), or
+/// [`discard_reply`](#discard_reply).
 pub type Message {
   Message(
     /// The client-supplied event name.
@@ -307,6 +308,7 @@ pub opaque type Action(phase) {
     reply: option.Option(socket.ReplyRef),
     payload: json.Json,
   )
+  DiscardReplyAction(phase: phase, reply: option.Option(socket.ReplyRef))
   PresenceTrackAction(phase: phase, key: String, meta: json.Json)
   PresenceUntrackAction(key: String)
   PushPresenceAction(
@@ -357,6 +359,15 @@ pub fn reply_error(
   payload: json.Json,
 ) -> Action(Active) {
   ReplyErrorAction(Active, reply, payload)
+}
+
+/// Discard a client message reply handle without sending a wire reply.
+///
+/// Use this for messages the application intentionally will not answer.
+/// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+/// produces no effect.
+pub fn discard_reply(reply: option.Option(socket.ReplyRef)) -> Action(Active) {
+  DiscardReplyAction(Active, reply)
 }
 
 /// Track this socket's presence under `key` on this channel's topic and
@@ -788,12 +799,16 @@ fn effect(topic: String, action: Action(phase)) -> List(socket.Effect) {
       socket.BroadcastFrom(topic: topic, event: event, payload: payload),
     ]
     ReplyOkAction(reply: option.None, ..)
-    | ReplyErrorAction(reply: option.None, ..) -> []
+    | ReplyErrorAction(reply: option.None, ..)
+    | DiscardReplyAction(reply: option.None, ..) -> []
     ReplyOkAction(reply: option.Some(reply), payload: payload, ..) -> [
       socket.ReplyOk(ref: reply, payload: payload),
     ]
     ReplyErrorAction(reply: option.Some(reply), payload: payload, ..) -> [
       socket.ReplyError(ref: reply, payload: payload),
+    ]
+    DiscardReplyAction(reply: option.Some(reply), ..) -> [
+      socket.DiscardReply(ref: reply),
     ]
     PresenceTrackAction(key: key, meta: meta, ..) -> [
       socket.PresenceTrack(topic: topic, key: key, meta: meta),

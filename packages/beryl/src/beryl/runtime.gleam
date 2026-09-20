@@ -16,6 +16,7 @@
 //// order.
 
 import beryl/app_supervisor
+import beryl/atomic_token
 import beryl/error as beryl_error
 import beryl/internal
 import beryl/log.{type Logger}
@@ -47,6 +48,7 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/set.{type Set}
 import gleam/string
+import rasa/monotonic
 
 /// Configuration for the runtime actor. Built by `beryl.child_spec` from a
 /// `beryl.Config`; the fields cover per-topic-pattern rate limits.
@@ -80,22 +82,28 @@ pub type Config {
   )
 }
 
-pub type AdmissionToken
+pub type AdmissionToken =
+  atomic_token.Token
 
-@external(erlang, "beryl_ffi", "admission_token_new")
-pub fn new_admission_token() -> AdmissionToken
+pub fn new_admission_token() -> AdmissionToken {
+  atomic_token.new()
+}
 
-@external(erlang, "beryl_ffi", "admission_token_cancel")
-pub fn cancel_admission(token: AdmissionToken) -> Bool
+pub fn cancel_admission(token: AdmissionToken) -> Bool {
+  atomic_token.cancel(token)
+}
 
-@external(erlang, "beryl_ffi", "admission_token_pending")
-fn admission_pending(token: AdmissionToken) -> Bool
+fn admission_pending(token: AdmissionToken) -> Bool {
+  atomic_token.pending_if_owner_alive(token)
+}
 
-@external(erlang, "beryl_ffi", "admission_token_claim")
-fn claim_admission(token: AdmissionToken) -> Bool
+fn claim_admission(token: AdmissionToken) -> Bool {
+  atomic_token.claim_if_owner_alive(token)
+}
 
-@external(erlang, "beryl_ffi", "admission_token_owner")
-fn admission_owner(token: AdmissionToken) -> Pid
+fn admission_owner(token: AdmissionToken) -> Pid {
+  atomic_token.owner(token)
+}
 
 fn admission_is_pending(admission: Option(AdmissionToken)) -> Bool {
   case admission {
@@ -241,9 +249,9 @@ pub type StatsSnapshot {
   )
 }
 
-/// Erlang monotonic time in milliseconds
-@external(erlang, "beryl_ffi", "monotonic_time_ms")
-fn monotonic_time_ms() -> Int
+fn monotonic_time_ms() -> Int {
+  monotonic.time(monotonic.Millisecond)
+}
 
 type State(model, message) {
   State(
@@ -371,6 +379,20 @@ type WorkerRef {
 // and heartbeats continue.
 
 /// A socket parked on one asynchronous operation.
+/// A parked socket's wait, reified so the actor keeps taking turns.
+///
+/// This cannot be a bounded synchronous receive inside the turn (evaluated
+/// in #344). Two constraints require the reified form:
+///
+/// - A parked socket actor must still answer `FinalizeForStop`, so
+///   `beryl.stop` can settle an in-flight mutation as `PresenceStopping`
+///   and finish inside its drain even when the presence actor is wedged
+///   (the `shutdown_while_*_pending` tests). A turn blocked for up to
+///   `presence_op_timeout_ms` overruns the stop drain instead.
+/// - A closing worker's in-flight `WorkerRan` reports arrive on the same
+///   subject as every other socket message. Completing the close in order
+///   requires deferring the unmatched messages — the `queued`/`drain`
+///   machinery — which a selective receive on one subject cannot express.
 type Suspension(message) {
   Suspension(
     waiting: Waiting,
@@ -3625,6 +3647,7 @@ fn effects_callback_result(effects: List(Effect)) -> telemetry.CallbackResult {
         | socket.BroadcastFrom(_, _, _) -> telemetry.Push
         socket.AcceptJoin(..)
         | socket.RejectJoin(..)
+        | socket.DiscardReply(..)
         | socket.PresenceTrack(..)
         | socket.PresenceUntrack(..)
         | socket.PushPresence(..)
@@ -4595,6 +4618,10 @@ fn apply_effect(
       let state = apply_reply(state, socket_id, ref, codec.StatusError, payload)
       #(state, pending, kicks)
     }
+    socket.DiscardReply(ref) -> {
+      let state = apply_discard_reply(state, socket_id, ref)
+      #(state, pending, kicks)
+    }
     socket.Push(topic_name, event_name, payload) -> {
       apply_push(state, socket_id, topic_name, event_name, payload)
       #(state, pending, kicks)
@@ -4839,6 +4866,42 @@ fn apply_reply(
             )
           let _send_result =
             send_frame_logged(state, socket, socket.reply_ref_topic(ref), frame)
+          work_queue.release(state.inbox, reservation)
+          store_socket(
+            state,
+            SocketState(
+              ..socket,
+              pending_reply_keys: set.delete(
+                socket.pending_reply_keys,
+                socket.reply_ref_wire_key(ref),
+              ),
+              reply_reservations: dict.delete(socket.reply_reservations, ref),
+            ),
+          )
+        }
+      }
+  }
+}
+
+/// Consume a stored `ReplyRef` without sending a wire reply.
+fn apply_discard_reply(
+  state: State(model, message),
+  socket_id: String,
+  ref: ReplyRef,
+) -> State(model, message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> state
+    Ok(socket) ->
+      case dict.get(socket.reply_reservations, ref) {
+        Error(Nil) -> {
+          state.logger
+          |> log.warn("Discard ignored: unknown or completed reply ref", [
+            #("socket_id", socket_id),
+            #("topic", socket.reply_ref_topic(ref)),
+          ])
+          state
+        }
+        Ok(reservation) -> {
           work_queue.release(state.inbox, reservation)
           store_socket(
             state,

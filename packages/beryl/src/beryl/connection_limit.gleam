@@ -16,9 +16,12 @@
 //// table with a supervisor-scoped heir, so they survive reconnects and worker
 //// restarts, then expire once idle long enough to have fully refilled.
 
+import beryl/atomic_token
+import beryl/log
 import beryl/rate_limit
 import gleam/bool
 import gleam/dict.{type Dict}
+import gleam/dynamic/decode
 import gleam/erlang/process.{type Monitor, type Pid, type Subject}
 import gleam/erlang/reference
 import gleam/int
@@ -26,6 +29,8 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
+import heirloom
+import rasa/monotonic
 
 const registry_call_timeout_ms = 100
 
@@ -33,20 +38,39 @@ const bucket_sweep_interval_ms = 60_000
 
 const one_second_ns = 1_000_000_000
 
-/// Erlang monotonic time in nanoseconds.
-@external(erlang, "beryl_ffi", "monotonic_time_ns")
-fn monotonic_time_ns() -> Int
+fn monotonic_time_ns() -> Int {
+  monotonic.time(monotonic.Nanosecond)
+}
 
-type ReservationToken
+type ReservationToken =
+  atomic_token.Token
 
-@external(erlang, "beryl_ffi", "admission_token_new")
-fn new_reservation_token() -> ReservationToken
+fn new_reservation_token() -> ReservationToken {
+  atomic_token.new()
+}
 
-@external(erlang, "beryl_ffi", "admission_token_cancel")
-fn cancel_reservation_token(token: ReservationToken) -> Bool
+fn cancel_reservation_token(token: ReservationToken) -> Bool {
+  atomic_token.cancel(token)
+}
 
-@external(erlang, "beryl_ffi", "reservation_token_pending")
-fn reservation_token_pending(token: ReservationToken) -> Bool
+fn reservation_token_pending(token: ReservationToken) -> Bool {
+  atomic_token.pending(token)
+}
+
+type CallError {
+  CallTimedOut
+  CallOwnerUnavailable
+}
+
+@external(erlang, "beryl_ffi", "connection_limit_call")
+fn call(
+  subject: Subject(Message),
+  timeout_ms: Int,
+  request: fn(Subject(reply)) -> Message,
+) -> Result(reply, CallError)
+
+@external(erlang, "beryl_ffi", "connection_limit_send")
+fn send_if_alive(subject: Subject(Message), message: Message) -> Bool
 
 /// Opaque connection limiter registry.
 pub opaque type ConnectionLimiter {
@@ -70,9 +94,39 @@ type Reservation {
   Reservation(ip: String, owner: Pid, monitor: Monitor, token: ReservationToken)
 }
 
+type CheckpointTable =
+  heirloom.Table(String, State)
+
+type CheckpointRegistryKey
+
+type CheckpointMessage {
+  CheckpointAnnounced(CheckpointTable)
+  CheckpointTransferred(
+    Result(
+      heirloom.Transfer(String, State, decode.Dynamic),
+      heirloom.TransferDecodeError,
+    ),
+  )
+  CheckpointSupervisorDown(process.Down)
+}
+
+type CheckpointState {
+  CheckpointState(key: CheckpointRegistryKey, table: Option(CheckpointTable))
+}
+
+@internal
+pub opaque type CheckpointHeir {
+  CheckpointHeir(
+    pid: Pid,
+    subject: Subject(CheckpointMessage),
+    key: CheckpointRegistryKey,
+  )
+}
+
 type State {
   State(
     store_key: process.Name(Message),
+    checkpoint: Option(CheckpointTable),
     /// Per-IP ceiling; 0 disables the per-IP check.
     max_per_ip: Int,
     /// Node-wide ceiling across all IPs; 0 disables the global check.
@@ -115,15 +169,170 @@ pub opaque type Message {
   Stop(reply: Subject(Nil))
 }
 
-@external(erlang, "beryl_ffi", "connection_limit_state_open")
-fn open_state(store_key: process.Name(Message), initial: State) -> State
+@external(erlang, "beryl_ffi", "connection_limit_checkpoint_supervisor")
+fn checkpoint_supervisor() -> Pid
 
-@external(erlang, "beryl_ffi", "connection_limit_state_put")
-fn put_state(store_key: process.Name(Message), state: State) -> Nil
+@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_key")
+fn checkpoint_registry_key(
+  supervisor: Pid,
+  store_key: process.Name(message),
+) -> CheckpointRegistryKey
+
+@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_get")
+fn checkpoint_registry_get(
+  key: CheckpointRegistryKey,
+) -> Option(heirloom.Table(table_key, value))
+
+@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_put")
+fn checkpoint_registry_put(
+  key: CheckpointRegistryKey,
+  table: heirloom.Table(table_key, value),
+) -> Nil
+
+@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_compare_erase")
+fn checkpoint_registry_compare_erase(
+  key: CheckpointRegistryKey,
+  table: heirloom.Table(table_key, value),
+) -> Nil
 
 fn persist(state: State) -> State {
-  put_state(state.store_key, state)
+  let assert Some(table) = state.checkpoint
+  let assert Ok(Nil) = heirloom.insert(table, "state", state)
   state
+}
+
+fn open_state(store_key: process.Name(Message), initial: State) -> State {
+  let supervisor = checkpoint_supervisor()
+  let key = checkpoint_registry_key(supervisor, store_key)
+  case checkpoint_registry_get(key) {
+    Some(table) ->
+      case heirloom.exists(table) {
+        True -> {
+          let assert Ok(Some(state)) = heirloom.lookup(table, "state")
+          State(..state, checkpoint: Some(table))
+        }
+        False -> new_state_checkpoint(supervisor, key, initial)
+      }
+    None -> new_state_checkpoint(supervisor, key, initial)
+  }
+}
+
+fn new_state_checkpoint(
+  supervisor: Pid,
+  key: CheckpointRegistryKey,
+  initial: State,
+) -> State {
+  let assert Ok(checkpoint_heir) = start_checkpoint_heir(supervisor, key)
+  let specification =
+    heirloom.spec("beryl_connection_limit_state", heirloom.Set)
+    |> heirloom.with_access(heirloom.Public)
+    |> heirloom.with_heir(checkpoint_heir.pid, initial.store_key)
+  let assert Ok(table): Result(CheckpointTable, _) =
+    heirloom.create(specification)
+  let state = State(..initial, checkpoint: Some(table))
+  let assert Ok(Nil) = heirloom.insert(table, "state", state)
+  checkpoint_registry_put(key, table)
+  process.send(checkpoint_heir.subject, CheckpointAnnounced(table))
+  state
+}
+
+fn handle_checkpoint_message(
+  state: CheckpointState,
+  message: CheckpointMessage,
+) -> actor.Next(CheckpointState, CheckpointMessage) {
+  case message {
+    CheckpointAnnounced(table) ->
+      actor.continue(CheckpointState(..state, table: Some(table)))
+    CheckpointTransferred(Ok(heirloom.Transfer(table:, ..))) ->
+      actor.continue(CheckpointState(..state, table: Some(table)))
+    CheckpointTransferred(Error(_error)) -> {
+      log.warn(
+        log.new("beryl.connection_limit"),
+        "Invalid ETS transfer ignored",
+        [],
+      )
+      actor.continue(state)
+    }
+    CheckpointSupervisorDown(_) -> {
+      cleanup_checkpoint(state)
+      actor.stop()
+    }
+  }
+}
+
+fn cleanup_checkpoint(state: CheckpointState) -> Nil {
+  let self = process.self()
+  case state.table {
+    Some(table) -> checkpoint_registry_compare_erase(state.key, table)
+    None ->
+      case checkpoint_registry_get(state.key) {
+        Some(table) ->
+          case heirloom.heir(table) {
+            Ok(Some(pid)) if pid == self ->
+              checkpoint_registry_compare_erase(state.key, table)
+            Ok(Some(_)) | Ok(None) -> Nil
+            Error(heirloom.TableDoesNotExist) -> Nil
+            Error(heirloom.AccessDenied) -> Nil
+          }
+        None -> Nil
+      }
+  }
+}
+
+fn start_checkpoint_heir(
+  supervisor: Pid,
+  key: CheckpointRegistryKey,
+) -> Result(CheckpointHeir, actor.StartError) {
+  actor.new_with_initialiser(1000, fn(subject) {
+    let monitor = process.monitor(supervisor)
+    let selector =
+      process.new_selector()
+      |> process.select(subject)
+      |> process.select_specific_monitor(monitor, CheckpointSupervisorDown)
+      |> heirloom.select_transfers(decode.dynamic, CheckpointTransferred)
+    actor.initialised(CheckpointState(key: key, table: None))
+    |> actor.selecting(selector)
+    |> actor.returning(subject)
+    |> Ok
+  })
+  |> actor.on_message(handle_checkpoint_message)
+  |> actor.start
+  |> result.map(fn(started) {
+    process.unlink(started.pid)
+    CheckpointHeir(pid: started.pid, subject: started.data, key: key)
+  })
+}
+
+@internal
+pub fn start_checkpoint_heir_for_test(
+  supervisor: Pid,
+  store_key: process.Name(message),
+) -> Result(CheckpointHeir, actor.StartError) {
+  start_checkpoint_heir(
+    supervisor,
+    checkpoint_registry_key(supervisor, store_key),
+  )
+}
+
+@internal
+pub fn checkpoint_heir_pid(heir: CheckpointHeir) -> Pid {
+  heir.pid
+}
+
+@internal
+pub fn checkpoint_registry_put_for_test(
+  heir: CheckpointHeir,
+  table: heirloom.Table(key, value),
+) -> Nil {
+  checkpoint_registry_put(heir.key, table)
+}
+
+@internal
+pub fn checkpoint_registry_exists_for_test(heir: CheckpointHeir) -> Bool {
+  case checkpoint_registry_get(heir.key) {
+    Some(_) -> True
+    None -> False
+  }
 }
 
 fn handle_message(
@@ -362,33 +571,31 @@ fn request(
   ip: String,
   subject: Subject(Message),
 ) -> Result(Permit, Nil) {
-  case process.subject_owner(subject) {
-    Error(Nil) -> Error(Nil)
-    Ok(_) -> {
-      let reservation = reference.new()
-      let token = new_reservation_token()
-      let reply_subject = process.new_subject()
-      process.send(
-        subject,
-        Acquire(
-          reservation: reservation,
-          ip: ip,
-          limiter: limiter,
-          owner: process.self(),
-          token: token,
-          reply: reply_subject,
-        ),
+  let reservation = reference.new()
+  let token = new_reservation_token()
+  case
+    call(subject, registry_call_timeout_ms, fn(reply_subject) {
+      Acquire(
+        reservation: reservation,
+        ip: ip,
+        limiter: limiter,
+        owner: process.self(),
+        token: token,
+        reply: reply_subject,
       )
-      case process.receive(reply_subject, registry_call_timeout_ms) {
-        Ok(value) -> value
-        Error(Nil) -> {
-          let _cancelled = cancel_reservation_token(token)
-          // Signals from one process arrive in order. If Acquire is still
-          // queued, this cancellation follows it and reclaims any late slot.
-          process.send(subject, Cancel(reservation))
-          Error(Nil)
-        }
-      }
+    })
+  {
+    Ok(value) -> value
+    Error(CallTimedOut) -> {
+      let _cancelled = cancel_reservation_token(token)
+      // Signals from one process arrive in order. If Acquire is still queued,
+      // this cancellation follows it and reclaims any late slot.
+      let _sent = send_if_alive(subject, Cancel(reservation))
+      Error(Nil)
+    }
+    Error(CallOwnerUnavailable) -> {
+      let _cancelled = cancel_reservation_token(token)
+      Error(Nil)
     }
   }
 }
@@ -415,6 +622,7 @@ fn build(
   let state =
     State(
       store_key: name,
+      checkpoint: None,
       max_per_ip: max_per_ip,
       max_total: max_total,
       connection_rate: rate_config,
@@ -492,17 +700,13 @@ pub fn acquire_optional(
 /// Bind a permit to the calling process (the long-lived connection process),
 /// so its slot is reclaimed if that process dies without releasing.
 fn bind(permit: Permit) -> Result(Nil, Nil) {
-  case process.subject_owner(permit.limiter.subject) {
-    Error(Nil) -> Error(Nil)
-    Ok(_) -> {
-      let reply = process.new_subject()
-      process.send(
-        permit.limiter.subject,
-        Bind(permit.reservation, process.self(), reply),
-      )
-      process.receive(reply, registry_call_timeout_ms)
-      |> result.flatten
-    }
+  case
+    call(permit.limiter.subject, registry_call_timeout_ms, fn(reply) {
+      Bind(permit.reservation, process.self(), reply)
+    })
+  {
+    Ok(outcome) -> outcome
+    Error(CallTimedOut) | Error(CallOwnerUnavailable) -> Error(Nil)
   }
 }
 

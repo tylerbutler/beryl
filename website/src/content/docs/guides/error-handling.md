@@ -3,8 +3,8 @@ title: Handle errors
 description: Reject invalid requests, understand callback panics, and return Phoenix-compatible errors.
 ---
 
-This guide explains how beryl reports errors to your application and clients,
-and how your application should respond.
+beryl reports errors to your application and clients. Your application decides
+how to respond.
 
 ## Rejected joins
 

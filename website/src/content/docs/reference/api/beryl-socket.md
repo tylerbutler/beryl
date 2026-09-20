@@ -127,6 +127,7 @@ pub type Effect {
     ref: ReplyRef,
     payload: json.Json
   )
+  DiscardReply(ref: ReplyRef)
   Push(
     topic: String,
     event: String,
@@ -215,6 +216,18 @@ ReplyError(
 ```
 
 Reply with an error to a client message ref.
+
+##### `DiscardReply`
+
+```gleam
+DiscardReply(ref: ReplyRef)
+```
+
+Discard a client message ref without sending a reply.
+
+ Use this when the application intentionally will not answer a referenced
+ message. It releases the retained socket capacity and permits later reuse
+ of the same wire ref. A completed or stale ref has no effect.
 
 ##### `Push`
 
@@ -500,10 +513,11 @@ pub type ReplyRef
 
 A client message reply correlation handle.
 
- Pass it back in `ReplyOk` or `ReplyError`. You can store reply refs in the
- model and answer them in a later `update` turn, for example after an
- asynchronous lookup. They are single-use. They remain valid only while
- the topic instance that received the message stays open.
+ Pass it back in `ReplyOk`, `ReplyError`, or `DiscardReply`. You can store
+ reply refs in the model and answer them in a later `update` turn, for
+ example after an asynchronous lookup. They do not expire. They are
+ single-use and remain valid only while the topic instance that received
+ the message stays open.
 
 <div class="api-entry-anchor" id="api-type-sender" aria-hidden="true"></div>
 

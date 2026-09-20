@@ -69,6 +69,18 @@ pub fn abandoned_queued_admission_does_not_consume_capacity_test() -> Nil {
   session_presence.stop(tracker)
 }
 
+pub fn at_capacity_returns_descriptive_error_test() -> Nil {
+  let tracker = session_presence.start()
+  let topic = "room:full"
+
+  session_presence.track_if_below(tracker, topic, "first", json.object([]), 1)
+  |> should.equal(Ok(Nil))
+  session_presence.track_if_below(tracker, topic, "second", json.object([]), 1)
+  |> should.equal(Error(session_presence.AtCapacity))
+
+  session_presence.stop(tracker)
+}
+
 pub fn owner_death_reclaims_admitted_capacity_test() -> Nil {
   let tracker = session_presence.start()
   let topic = "room:owner"

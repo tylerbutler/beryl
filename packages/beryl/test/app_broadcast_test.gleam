@@ -15,6 +15,7 @@ import gleam/option.{None}
 import gleam/string
 import gleeunit/should
 import test_helper
+import unitest
 
 @external(erlang, "beryl_pubsub_test_ffi", "kill_scope")
 fn kill_scope(scope: atom.Atom) -> process.Pid
@@ -28,6 +29,7 @@ fn recovered(
 ) -> Bool
 
 pub fn pubsub_scope_recovery_preserves_runtime_broadcasts_test() -> Nil {
+  use <- unitest.tag("serial")
   let scope = "app_bcast_scope_recovery"
   let node_a = start_runtime(scope)
   let node_b = start_runtime(scope)
