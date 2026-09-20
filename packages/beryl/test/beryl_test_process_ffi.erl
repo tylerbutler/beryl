@@ -3,7 +3,8 @@
          with_suspended/2,
          queue_call_lifecycle/0, publication_cleanup_races/0,
          stale_lifecycle_signals/3, monitored_by_count/1,
-         suspend_process/1, resume_process/1, socket_queue/2]).
+         suspend_process/1, resume_process/1, socket_queue/2,
+         socket_actor/2, worker_report_pending/3]).
 
 limit_schedulers(Maximum) ->
     Online = erlang:system_info(schedulers_online),
@@ -15,6 +16,18 @@ socket_queue(Router, SocketId) ->
     {ok, {Table, Router, _, _, _, _, _}} = beryl_work_queue_ffi:lookup(Name),
     [{{target, SocketId}, Queue}] = ets:lookup(Table, {target, SocketId}),
     Queue.
+
+socket_actor(Router, SocketId) ->
+    {_, Owner, _, _, _, _, _} = socket_queue(Router, SocketId),
+    Owner.
+
+worker_report_pending(Router, SocketId, Worker) ->
+    {Table, _, _, _, _, _, _} = socket_queue(Router, SocketId),
+    [{state, #{leases := Leases}}] = ets:lookup(Table, state),
+    lists:any(fun
+        ({pending, _, _, {worker_report, _, _, Worker, _, _}}) -> true;
+        (_) -> false
+    end, maps:values(Leases)).
 
 stale_lifecycle_signals(Router, SocketId, OldActor) ->
     {registered_name, Name} = process_info(Router, registered_name),
