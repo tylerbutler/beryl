@@ -12,7 +12,34 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { prepareDependencies } from "./prepare-gleam-deps.mjs";
+import {
+	prepareDependencies,
+	retryHexRateLimits,
+} from "./prepare-gleam-deps.mjs";
+
+test("retries Hex rate limits and fails fast for other errors", () => {
+	let attempts = 0;
+	const result = retryHexRateLimits(() => {
+		attempts += 1;
+		if (attempts < 3) {
+			const error = new Error("dependency download failed");
+			error.stderr = "The rate limit for the Hex API has been exceeded";
+			throw error;
+		}
+		return "downloaded";
+	}, [0, 0]);
+	assert.equal(result, "downloaded");
+	assert.equal(attempts, 3);
+
+	const otherError = new Error("invalid dependency");
+	assert.throws(
+		() =>
+			retryHexRateLimits(() => {
+				throw otherError;
+			}, [0]),
+		(error) => error === otherError,
+	);
+});
 
 test("cold, changed, and restored path dependencies need no further resolution", (t) => {
 	const directory = mkdtempSync(path.join(tmpdir(), "beryl-deps-"));

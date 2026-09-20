@@ -4,6 +4,44 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
+const HEX_RATE_LIMIT = /rate limit .* exceeded|too many requests/i;
+const RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
+
+function sleep(milliseconds) {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+export function retryHexRateLimits(operation, retryDelays = RETRY_DELAYS_MS) {
+	for (let attempt = 0; ; attempt++) {
+		try {
+			return operation();
+		} catch (error) {
+			const output = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}\n${error}`;
+			const delay = retryDelays[attempt];
+			if (!HEX_RATE_LIMIT.test(output) || delay === undefined) throw error;
+			console.error(
+				`Hex API rate limit exceeded; retrying in ${delay / 1000} seconds.`,
+			);
+			sleep(delay);
+		}
+	}
+}
+
+function downloadDependencies(directory) {
+	retryHexRateLimits(() => {
+		try {
+			const output = execFileSync("gleam", ["deps", "download"], {
+				cwd: directory,
+				encoding: "utf8",
+			});
+			process.stdout.write(output);
+		} catch (error) {
+			if (error?.stdout) process.stdout.write(error.stdout);
+			if (error?.stderr) process.stderr.write(error.stderr);
+			throw error;
+		}
+	});
+}
 
 function dependencyState(directory) {
 	const files = globSync(["manifest.toml", "build/packages/*.config_fingerprint"], {
@@ -20,10 +58,7 @@ export function prepareDependencies(directory, pathDependencyCount) {
 	let previous = dependencyState(directory);
 	// Allow an initial manifest resolution, one pass per path dep, and a stable pass.
 	for (let pass = 0; pass < pathDependencyCount + 2; pass++) {
-		execFileSync("gleam", ["deps", "download"], {
-			cwd: directory,
-			stdio: "inherit",
-		});
+		downloadDependencies(directory);
 		const current = dependencyState(directory);
 		if (current === previous) return;
 		previous = current;
