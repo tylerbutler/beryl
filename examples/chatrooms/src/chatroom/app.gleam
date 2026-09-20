@@ -91,11 +91,13 @@ fn accept_room(
       max_room_users,
     )
   {
-    Error(Nil) ->
+    Error(session_presence.AtCapacity) ->
       channel.reject(error_with_code(
         403,
         "Room is full (max " <> int.to_string(max_room_users) <> ")",
       ))
+    Error(session_presence.OwnerExited) ->
+      channel.reject(error_with_code(503, "Room admission failed"))
     Ok(Nil) -> {
       announce_rooms_changed(application_context, state.room_name)
       case channel.notify(join_context.self, PublishRoster) {
