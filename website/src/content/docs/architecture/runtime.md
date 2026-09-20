@@ -24,8 +24,9 @@ and the socket actor waits for the result. The worker also runs `on_message`
 and `on_info`. It sends effects to the socket actor. The socket actor applies
 them in arrival order and enqueues each frame for the transport. Thus, effects
 for one topic keep their order. Effects for different topics can interleave.
-The socket actor sends a close to the worker before it drops the topic's reply refs. Thus, it
-can deliver a push or reply that the worker computed before a leave.
+Before it drops the topic's reply refs, the socket actor tells the worker to
+close. This lets the socket actor deliver a push or reply that the worker
+computed before the leave.
 
 Channel `on_message` and `on_info` callbacks on different topics can run
 concurrently. This is not complete latency isolation: worker startup during a

@@ -16,6 +16,7 @@
 //// order.
 
 import beryl/app_supervisor
+import beryl/atomic_token
 import beryl/error as beryl_error
 import beryl/internal
 import beryl/log.{type Logger}
@@ -47,6 +48,7 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/set.{type Set}
 import gleam/string
+import rasa/monotonic
 
 /// Configuration for the runtime actor. Built by `beryl.child_spec` from a
 /// `beryl.Config`; the fields cover per-topic-pattern rate limits.
@@ -80,22 +82,28 @@ pub type Config {
   )
 }
 
-pub type AdmissionToken
+pub type AdmissionToken =
+  atomic_token.Token
 
-@external(erlang, "beryl_ffi", "admission_token_new")
-pub fn new_admission_token() -> AdmissionToken
+pub fn new_admission_token() -> AdmissionToken {
+  atomic_token.new()
+}
 
-@external(erlang, "beryl_ffi", "admission_token_cancel")
-pub fn cancel_admission(token: AdmissionToken) -> Bool
+pub fn cancel_admission(token: AdmissionToken) -> Bool {
+  atomic_token.cancel(token)
+}
 
-@external(erlang, "beryl_ffi", "admission_token_pending")
-fn admission_pending(token: AdmissionToken) -> Bool
+fn admission_pending(token: AdmissionToken) -> Bool {
+  atomic_token.pending_if_owner_alive(token)
+}
 
-@external(erlang, "beryl_ffi", "admission_token_claim")
-fn claim_admission(token: AdmissionToken) -> Bool
+fn claim_admission(token: AdmissionToken) -> Bool {
+  atomic_token.claim_if_owner_alive(token)
+}
 
-@external(erlang, "beryl_ffi", "admission_token_owner")
-fn admission_owner(token: AdmissionToken) -> Pid
+fn admission_owner(token: AdmissionToken) -> Pid {
+  atomic_token.owner(token)
+}
 
 fn admission_is_pending(admission: Option(AdmissionToken)) -> Bool {
   case admission {
@@ -241,9 +249,9 @@ pub type StatsSnapshot {
   )
 }
 
-/// Erlang monotonic time in milliseconds
-@external(erlang, "beryl_ffi", "monotonic_time_ms")
-fn monotonic_time_ms() -> Int
+fn monotonic_time_ms() -> Int {
+  monotonic.time(monotonic.Millisecond)
+}
 
 type State(model, message) {
   State(
@@ -371,6 +379,20 @@ type WorkerRef {
 // and heartbeats continue.
 
 /// A socket parked on one asynchronous operation.
+/// A parked socket's wait, reified so the actor keeps taking turns.
+///
+/// This cannot be a bounded synchronous receive inside the turn (evaluated
+/// in #344). Two constraints require the reified form:
+///
+/// - A parked socket actor must still answer `FinalizeForStop`, so
+///   `beryl.stop` can settle an in-flight mutation as `PresenceStopping`
+///   and finish inside its drain even when the presence actor is wedged
+///   (the `shutdown_while_*_pending` tests). A turn blocked for up to
+///   `presence_op_timeout_ms` overruns the stop drain instead.
+/// - A closing worker's in-flight `WorkerRan` reports arrive on the same
+///   subject as every other socket message. Completing the close in order
+///   requires deferring the unmatched messages — the `queued`/`drain`
+///   machinery — which a selective receive on one subject cannot express.
 type Suspension(message) {
   Suspension(
     waiting: Waiting,
@@ -2248,9 +2270,10 @@ fn finalize_suspension(
         }
         // The worker is already running `on_terminate`. The socket sent the
         // request when it started to wait. Give the worker the remaining
-        // time. Then apply its earlier results, answer the leave, and close
-        // the topic. Do not handle other queued socket work because shutdown
-        // stops the actor next.
+        // time, capped so the wait sits inside the stop drain. Then apply
+        // its earlier results, answer the leave, and close the topic. Do
+        // not handle other queued socket work because shutdown stops the
+        // actor next.
         WorkerWait(worker:, ..) ->
           finalize_worker_wait(state, socket_id, suspension, worker, cancelled)
       }
@@ -2272,7 +2295,8 @@ fn finalize_worker_wait(
   cancelled: process.Cancelled,
 ) -> State(model, message) {
   let budget = case cancelled {
-    process.Cancelled(time_remaining:) -> time_remaining
+    process.Cancelled(time_remaining:) ->
+      int.min(time_remaining, stop_worker_terminate_timeout_ms)
     process.TimerNotFound -> 0
   }
   let #(state, message) =
@@ -3669,6 +3693,7 @@ fn effects_callback_result(effects: List(Effect)) -> telemetry.CallbackResult {
         | socket.BroadcastFrom(_, _, _) -> telemetry.Push
         socket.AcceptJoin(..)
         | socket.RejectJoin(..)
+        | socket.DiscardReply(..)
         | socket.PresenceTrack(..)
         | socket.PresenceUntrack(..)
         | socket.PushPresence(..)
@@ -4639,6 +4664,10 @@ fn apply_effect(
       let state = apply_reply(state, socket_id, ref, codec.StatusError, payload)
       #(state, pending, kicks)
     }
+    socket.DiscardReply(ref) -> {
+      let state = apply_discard_reply(state, socket_id, ref)
+      #(state, pending, kicks)
+    }
     socket.Push(topic_name, event_name, payload) -> {
       apply_push(state, socket_id, topic_name, event_name, payload)
       #(state, pending, kicks)
@@ -4883,6 +4912,42 @@ fn apply_reply(
             )
           let _send_result =
             send_frame_logged(state, socket, socket.reply_ref_topic(ref), frame)
+          work_queue.release(state.inbox, reservation)
+          store_socket(
+            state,
+            SocketState(
+              ..socket,
+              pending_reply_keys: set.delete(
+                socket.pending_reply_keys,
+                socket.reply_ref_wire_key(ref),
+              ),
+              reply_reservations: dict.delete(socket.reply_reservations, ref),
+            ),
+          )
+        }
+      }
+  }
+}
+
+/// Consume a stored `ReplyRef` without sending a wire reply.
+fn apply_discard_reply(
+  state: State(model, message),
+  socket_id: String,
+  ref: ReplyRef,
+) -> State(model, message) {
+  case dict.get(state.sockets, socket_id) {
+    Error(Nil) -> state
+    Ok(socket) ->
+      case dict.get(socket.reply_reservations, ref) {
+        Error(Nil) -> {
+          state.logger
+          |> log.warn("Discard ignored: unknown or completed reply ref", [
+            #("socket_id", socket_id),
+            #("topic", socket.reply_ref_topic(ref)),
+          ])
+          state
+        }
+        Ok(reservation) -> {
           work_queue.release(state.inbox, reservation)
           store_socket(
             state,
@@ -6423,6 +6488,21 @@ const worker_join_timeout_ms = 5000
 /// `worker_join_timeout_ms`.
 const worker_terminate_timeout_ms = 5000
 
+/// Maximum time a stop-driven close waits for one worker's queued work and
+/// `on_terminate`.
+///
+/// `beryl.stop` kills socket actors that have not drained at
+/// `stop_drain_timeout_ms`, so this bound sits inside the drain: the
+/// runtime kills a worker that exceeds it and completes the close without
+/// its termination actions, instead of the drain killing the whole socket
+/// actor mid-teardown. Closes outside `beryl.stop` keep
+/// `worker_terminate_timeout_ms`.
+///
+/// ponytail: A per-worker bound. A socket whose topics have several stuck
+/// workers can still exceed the drain in aggregate; track a per-socket
+/// deadline across the teardown if that ever bites.
+const stop_worker_terminate_timeout_ms = 1000
+
 /// The worker contract that `beryl.worker_child_spec` hands to the runtime.
 ///
 /// The socket actor calls `accepts` with the topic name before it starts a
@@ -7306,7 +7386,7 @@ fn close_worker_topic(
           state,
           socket_id,
           worker,
-          monotonic_time_ms() + worker_terminate_timeout_ms,
+          monotonic_time_ms() + stop_worker_terminate_timeout_ms,
         )
       let effects =
         worker_termination_effects(
@@ -7484,7 +7564,11 @@ fn worker_termination_effects(
       Some([])
     }
     WorkerTerminateTimedOut(worker: pid, ..) if pid == awaited -> {
-      kill_stuck_worker(state, socket_id, topic_name, worker)
+      let timeout_ms = case state.stopping {
+        True -> stop_worker_terminate_timeout_ms
+        False -> worker_terminate_timeout_ms
+      }
+      kill_stuck_worker(state, socket_id, topic_name, worker, timeout_ms)
       Some([])
     }
     WorkerReport(..)
@@ -7542,6 +7626,7 @@ fn kill_stuck_worker(
   socket_id: String,
   topic_name: String,
   worker: WorkerRef,
+  timeout_ms: Int,
 ) -> Nil {
   state.logger
   |> log.error(
@@ -7549,7 +7634,7 @@ fn kill_stuck_worker(
     [
       #("socket_id", socket_id),
       #("topic", topic_name),
-      #("timeout_ms", int.to_string(worker_terminate_timeout_ms)),
+      #("timeout_ms", int.to_string(timeout_ms)),
     ],
   )
   process.kill(worker.pid)

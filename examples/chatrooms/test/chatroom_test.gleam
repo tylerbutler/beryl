@@ -1,7 +1,7 @@
-import gleeunit
+import unitest
 
-/// Test entrypoint: gleeunit discovers and runs every `*_test` module in
+/// Test entrypoint: unitest discovers and runs every `*_test` module in
 /// this package.
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }

@@ -144,10 +144,10 @@ addresses.
 
 ## Check origins and authenticate
 
-- `with_allowed_origins` on the Mist transport rejects browser connections
-  from unexpected origins before the WebSocket handshake.
+- `with_allowed_origins` on the transport configuration rejects browser
+  connections from unexpected origins before the WebSocket handshake.
 - `with_on_connect` authenticates the connection once, before upgrade.
-  reject unauthenticated clients with a 403 rather than at join time.
+  Reject unauthenticated clients with a 403 rather than at join time.
 - Authorize each topic in your update's `Join` arm; clients cannot
   send events to topics they have not joined.
 

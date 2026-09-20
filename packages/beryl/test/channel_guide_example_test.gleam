@@ -14,11 +14,11 @@ import beryl/channel
 import beryl/wire
 import gleam/json
 import gleam/otp/static_supervisor
-import gleeunit
 import gleeunit/should
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 // ---------------------------------------------------------------------------
