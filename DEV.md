@@ -191,6 +191,9 @@ just test
 # Run the core package sequentially
 cd packages/beryl && gleam test
 
+# Run real-node PubSub and presence recovery from the repository root
+just test-distributed
+
 # Run with verbose output
 gleam test -- --verbose
 ```
@@ -198,8 +201,21 @@ gleam test -- --verbose
 The root `just test` command runs the parallel-safe `beryl` tests with
 unitest's automatic worker count, capped at four BEAM schedulers to avoid
 nested oversubscription, then runs its `serial` tag in a separate sequential
-lane. Package-scoped commands keep the same behavior: `just test beryl` runs
-both core lanes, while `just test beryl_mist` does not run core tests.
+lane. It then runs the EUnit distributed matrix on real Erlang peer nodes.
+Package-scoped commands keep the same behavior: `just test beryl` runs all
+three core lanes, while `just test beryl_mist` does not run core tests.
+
+`gleam test` uses unitest, which discovers `.gleam` tests only. It does not
+run `beryl_presence_distributed_test.erl`. Use `just test-distributed` for that
+suite, or `just test beryl` for complete core coverage. The source CI job runs
+the three lanes on both Erlang 27 and 28.
+
+The distributed harness controls peers through standard I/O so test queries
+cannot heal a distribution partition. It waits for `pg` membership, snapshot
+rounds, and exact entry identities; broadcast barriers make sender-exclusion
+and scope-isolation checks deterministic. Each test stops its peers in cleanup
+blocks, including on failure. The retirement case waits for the production
+60-second retention period, so the suite takes at least one minute.
 
 ### Tutorial browser demos
 
