@@ -2,7 +2,7 @@
 -export([limit_schedulers/1, mailbox_length/1, queue_memory_evidence/0,
          with_suspended/2,
          queue_call_lifecycle/0, publication_cleanup_races/0,
-         stale_lifecycle_signals/3, monitored_by_count/1,
+         stale_lifecycle_signals/3, monitored_by_count/1, monitor_count/1,
          suspend_process/1, resume_process/1, socket_queue/2,
          socket_actor/2, worker_report_pending/3]).
 
@@ -118,7 +118,6 @@ publication_cleanup_races() ->
             beryl_work_queue_ffi:snapshot(Queue)
     end, lists:seq(1, 100)),
     nil.
-
 mailbox_length(Pid) ->
     case erlang:process_info(Pid, message_queue_len) of
         {message_queue_len, Length} -> Length;
@@ -203,3 +202,9 @@ suspend_process(Pid) ->
 resume_process(Pid) ->
     erlang:resume_process(Pid),
     nil.
+
+monitor_count(Pid) ->
+    case erlang:process_info(Pid, monitors) of
+        {monitors, Monitors} -> length(Monitors);
+        undefined -> 0
+    end.

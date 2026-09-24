@@ -153,6 +153,127 @@ pub type PresenceEntry {
   PresenceEntry(session_id: String, key: String, meta: json.Json)
 }
 
+/// One topic's presence stream, delivered by `channel.on_presence`.
+///
+/// A subscription starts with one snapshot, including an empty list for an
+/// empty topic. Later changes include this connection's own changes and
+/// changes merged from other nodes. Apply leaves before joins; a metadata
+/// update contains both the old entry's leave and the new entry's join.
+pub type Event {
+  Snapshot(entries: List(PresenceEntry))
+  Changed(joins: List(PresenceEntry), leaves: List(PresenceEntry))
+}
+
+/// A credit-controlled delivery to one channel worker.
+@internal
+pub type Delivery {
+  Delivery(sequence: Int, event: Event)
+}
+
+/// Why an observation stream cannot continue.
+@internal
+pub type ObservationError {
+  SourceUnavailable
+  SubscriptionTimedOut
+  ObserverOverflow
+}
+
+@internal
+pub fn describe_observation_error(error: ObservationError) -> String {
+  case error {
+    SourceUnavailable -> "presence source unavailable"
+    SubscriptionTimedOut -> "presence subscription timed out"
+    ObserverOverflow -> "presence observer exceeded 64 pending change batches"
+  }
+}
+
+/// A failure addressed to the socket actor, not the potentially blocked worker.
+@internal
+pub type ObservationFailure {
+  ObservationFailure(
+    socket_id: String,
+    topic: String,
+    worker: process.Pid,
+    reason: ObservationError,
+  )
+}
+
+/// A subscription bound to one presence actor incarnation.
+@internal
+pub opaque type Subscription {
+  Subscription(
+    id: Reference,
+    subject: Subject(Message),
+    monitor: process.Monitor,
+  )
+}
+
+type Observer {
+  Observer(
+    topic: String,
+    events: Subject(Delivery),
+    failures: Subject(ObservationFailure),
+    failure: ObservationFailure,
+    monitor: process.Monitor,
+    sequence: Int,
+    in_flight: Bool,
+    pending: List(Event),
+    pending_count: Int,
+  )
+}
+
+@external(erlang, "beryl_ffi", "pin_subject")
+fn pin_subject(
+  subject: Subject(message),
+) -> Result(#(Subject(message), process.Pid), Nil)
+
+/// Register and capture a snapshot in one actor turn. Only the caller monitors
+/// the source; the presence actor separately monitors the receiving worker.
+@internal
+pub fn subscribe(
+  presence: Presence,
+  socket_id: String,
+  topic: String,
+  worker: process.Pid,
+  events: Subject(Delivery),
+  failures: Subject(ObservationFailure),
+) -> Result(Subscription, Nil) {
+  use #(subject, owner) <- result.try(pin_subject(presence.subject))
+  let id = reference.new()
+  let subscription = Subscription(id, subject, process.monitor(owner))
+  process.send(
+    subject,
+    Observe(
+      id,
+      owner,
+      worker,
+      topic,
+      events,
+      failures,
+      ObservationFailure(socket_id, topic, worker, SourceUnavailable),
+    ),
+  )
+  Ok(subscription)
+}
+
+@internal
+pub fn subscription_monitor(subscription: Subscription) -> process.Monitor {
+  subscription.monitor
+}
+
+/// Return credit only for the exact delivery whose effects have completed.
+@internal
+pub fn acknowledge(subscription: Subscription, sequence: Int) -> Nil {
+  process.send(subscription.subject, ObserverCredit(subscription.id, sequence))
+}
+
+/// Stop observing. Call from the socket actor that created the source monitor.
+@internal
+pub fn unsubscribe(subscription: Subscription) -> Nil {
+  process.demonitor_process(subscription.monitor)
+  process.send(subscription.subject, Unobserve(subscription.id))
+}
+
 /// Build a presence diff from topic-grouped joins and leaves.
 ///
 /// Most applications receive diffs from `Config.on_diff`. Use this function
@@ -322,6 +443,17 @@ pub type PresenceUpdateError {
 pub opaque type Message {
   WorkAvailable
   WorkRecoveryTick
+  Observe(
+    id: Reference,
+    owner: process.Pid,
+    worker: process.Pid,
+    topic: String,
+    events: Subject(Delivery),
+    failures: Subject(ObservationFailure),
+    failure: ObservationFailure,
+  )
+  ObserverCredit(id: Reference, sequence: Int)
+  Unobserve(id: Reference)
   Track(
     topic: String,
     key: String,
@@ -609,6 +741,9 @@ type ActorState {
     /// `count` read directly. Owned by this actor process; see `publish_topic`.
     read_table: ReadTable,
     inbox: work_queue.Queue(Message),
+    observers: Dict(Reference, Observer),
+    observer_topics: Dict(String, Set(Reference)),
+    observer_monitors: Dict(process.Monitor, Reference),
   )
 }
 
@@ -826,6 +961,9 @@ fn build_presence(
         runtime_owners: set.new(),
         read_table: read_table,
         inbox: inbox,
+        observers: dict.new(),
+        observer_topics: dict.new(),
+        observer_monitors: dict.new(),
       )
 
     case config.pubsub {
@@ -869,6 +1007,11 @@ fn build_presence(
       }
       None -> {
         actor.initialised(initial)
+        |> actor.selecting(
+          process.new_selector()
+          |> process.select(subject)
+          |> process.select_monitors(RemoteReplicaDown),
+        )
         |> actor.returning(subject)
         |> Ok
       }
@@ -1476,6 +1619,27 @@ fn handle_message(
       }
       handle_available_work(actor_state)
     }
+    Observe(id, owner, worker, topic, events, failures, failure) -> {
+      case owner == process.self() {
+        False -> {
+          process.send(failures, failure)
+          actor.continue(actor_state)
+        }
+        True ->
+          actor.continue(register_observer(
+            actor_state,
+            id,
+            worker,
+            topic,
+            events,
+            failures,
+            failure,
+          ))
+      }
+    }
+    ObserverCredit(id, sequence) ->
+      actor.continue(observer_credit(actor_state, id, sequence))
+    Unobserve(id) -> actor.continue(remove_observer(actor_state, id))
     Track(topic, key, session_id, meta, reply) -> {
       use #(new_state, ref, _meta) <- continue_with_track(
         actor_state,
@@ -1625,8 +1789,14 @@ fn handle_message(
     }
 
     RemoteSnapshot(reply) -> handle_snapshot(actor_state, reply)
-    RemoteReplicaDown(down) ->
+    RemoteReplicaDown(process.PortDown(..)) -> actor.continue(actor_state)
+    RemoteReplicaDown(process.ProcessDown(monitor:, ..) as down) -> {
+      let actor_state = case dict.get(actor_state.observer_monitors, monitor) {
+        Ok(id) -> remove_observer(actor_state, id)
+        Error(Nil) -> actor_state
+      }
       actor.continue(handle_replica_down(actor_state, down))
+    }
     RetirementTick -> {
       case actor_state.self_subject {
         Some(subject) -> schedule_retirement_tick(subject)
@@ -1914,8 +2084,7 @@ fn do_track(
       InvalidCrdtState(error)
     }),
   )
-  maybe_invoke_on_diff(
-    actor_state.config,
+  let change =
     Diff(
       joins: dict.from_list([
         #(topic, [
@@ -1924,8 +2093,8 @@ fn do_track(
       ]),
       leaves: removed.leaves,
       scope: Cluster,
-    ),
-  )
+    )
+  maybe_invoke_on_diff(actor_state.config, change)
   let new_refs =
     dict.insert(
       removed.refs,
@@ -1949,7 +2118,8 @@ fn do_track(
     |> result.map_error(fn(error) { PublicationFailed(error) }),
   )
   Ok(#(
-    ActorState(..actor_state, crdt: new_crdt, refs: new_refs),
+    ActorState(..actor_state, crdt: new_crdt, refs: new_refs)
+      |> notify_observers(change),
     ref,
     stored_meta,
   ))
@@ -1967,10 +2137,8 @@ fn do_untrack_refs(
     when: removed.topics == [],
     return: Ok(ActorState(..actor_state, refs: removed.refs)),
   )
-  maybe_invoke_on_diff(
-    actor_state.config,
-    Diff(joins: dict.new(), leaves: removed.leaves, scope: Cluster),
-  )
+  let change = Diff(joins: dict.new(), leaves: removed.leaves, scope: Cluster)
+  maybe_invoke_on_diff(actor_state.config, change)
   internal.logger("beryl.presence")
   |> log.debug("Presence untracked", [
     #("ref_count", int.to_string(list.length(refs))),
@@ -1984,7 +2152,10 @@ fn do_untrack_refs(
     )
     |> publication_result,
   )
-  Ok(ActorState(..actor_state, crdt: removed.crdt, refs: removed.refs))
+  Ok(
+    ActorState(..actor_state, crdt: removed.crdt, refs: removed.refs)
+    |> notify_observers(change),
+  )
 }
 
 fn do_untrack_all(
@@ -2235,6 +2406,62 @@ fn merged_snapshot(
   }
 }
 
+fn register_observer(
+  actor_state: ActorState,
+  id: Reference,
+  worker: process.Pid,
+  topic: String,
+  events: Subject(Delivery),
+  failures: Subject(ObservationFailure),
+  failure: ObservationFailure,
+) -> ActorState {
+  let monitor = process.monitor(worker)
+  let observer =
+    Observer(topic, events, failures, failure, monitor, 0, True, [], 0)
+  let entries =
+    state.get_by_topic(actor_state.crdt, topic)
+    |> list.map(fn(entry) {
+      PresenceEntry(session_id: entry.0, key: entry.1, meta: entry.2)
+    })
+  process.send(events, Delivery(0, Snapshot(entries)))
+  let ids =
+    dict.get(actor_state.observer_topics, topic)
+    |> result.unwrap(set.new())
+    |> set.insert(id)
+  ActorState(
+    ..actor_state,
+    observers: dict.insert(actor_state.observers, id, observer),
+    observer_topics: dict.insert(actor_state.observer_topics, topic, ids),
+    observer_monitors: dict.insert(actor_state.observer_monitors, monitor, id),
+  )
+}
+
+fn remove_observer(actor_state: ActorState, id: Reference) -> ActorState {
+  case dict.get(actor_state.observers, id) {
+    Error(Nil) -> actor_state
+    Ok(observer) -> {
+      process.demonitor_process(observer.monitor)
+      let ids =
+        dict.get(actor_state.observer_topics, observer.topic)
+        |> result.unwrap(set.new())
+        |> set.delete(id)
+      let topics = case set.size(ids) {
+        0 -> dict.delete(actor_state.observer_topics, observer.topic)
+        _ -> dict.insert(actor_state.observer_topics, observer.topic, ids)
+      }
+      ActorState(
+        ..actor_state,
+        observers: dict.delete(actor_state.observers, id),
+        observer_topics: topics,
+        observer_monitors: dict.delete(
+          actor_state.observer_monitors,
+          observer.monitor,
+        ),
+      )
+    }
+  }
+}
+
 fn commit_replication(
   actor_state: ActorState,
   crdt: State,
@@ -2245,5 +2472,93 @@ fn commit_replication(
     publish_topics(actor_state.read_table, crdt, diff_topics(diff))
     |> publication_result,
   )
-  Ok(ActorState(..actor_state, crdt: crdt))
+  Ok(ActorState(..actor_state, crdt: crdt) |> notify_observers(diff))
+}
+
+fn observer_credit(
+  actor_state: ActorState,
+  id: Reference,
+  sequence: Int,
+) -> ActorState {
+  case dict.get(actor_state.observers, id) {
+    Ok(observer) if observer.in_flight && observer.sequence == sequence -> {
+      let next = case observer.pending {
+        [] -> Observer(..observer, in_flight: False)
+        [event, ..rest] -> {
+          process.send(observer.events, Delivery(sequence + 1, event))
+          Observer(
+            ..observer,
+            sequence: sequence + 1,
+            pending: rest,
+            pending_count: observer.pending_count - 1,
+          )
+        }
+      }
+      ActorState(
+        ..actor_state,
+        observers: dict.insert(actor_state.observers, id, next),
+      )
+    }
+    Ok(_) | Error(Nil) -> actor_state
+  }
+}
+
+fn notify_observers(actor_state: ActorState, diff: Diff) -> ActorState {
+  list.fold(diff_topics(diff), actor_state, fn(actor_state, topic) {
+    let joins = diff_joins(diff, topic)
+    let leaves = diff_leaves(diff, topic)
+    case joins, leaves {
+      [], [] -> actor_state
+      _, _ -> {
+        let ids =
+          dict.get(actor_state.observer_topics, topic)
+          |> result.unwrap(set.new())
+          |> set.to_list
+        list.fold(ids, actor_state, fn(actor_state, id) {
+          queue_observer(actor_state, id, Changed(joins, leaves))
+        })
+      }
+    }
+  })
+}
+
+fn queue_observer(
+  actor_state: ActorState,
+  id: Reference,
+  event: Event,
+) -> ActorState {
+  case dict.get(actor_state.observers, id) {
+    Error(Nil) -> actor_state
+    Ok(observer) if !observer.in_flight -> {
+      process.send(observer.events, Delivery(observer.sequence + 1, event))
+      ActorState(
+        ..actor_state,
+        observers: dict.insert(
+          actor_state.observers,
+          id,
+          Observer(..observer, sequence: observer.sequence + 1, in_flight: True),
+        ),
+      )
+    }
+    Ok(observer) if observer.pending_count >= 64 -> {
+      process.send(
+        observer.failures,
+        ObservationFailure(..observer.failure, reason: ObserverOverflow),
+      )
+      remove_observer(actor_state, id)
+    }
+    Ok(observer) ->
+      ActorState(
+        ..actor_state,
+        observers: dict.insert(
+          actor_state.observers,
+          id,
+          Observer(
+            ..observer,
+            pending: list.append(observer.pending, [event]),
+            pending_count: observer.pending_count + 1,
+          ),
+        ),
+      )
+  }
 }

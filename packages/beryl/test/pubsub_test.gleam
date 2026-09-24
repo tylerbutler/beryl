@@ -177,12 +177,12 @@ pub fn pubsub_scope_recovery_serialises_outage_joins_and_leaves_test() -> Nil {
       |> should.equal(0)
     })
   test_helper.wait_until(
-    fn() { recovered(scope, old_pid, "room:keep", 1) },
+    fn() { recovered(scope, old_pid, "room:new", 1) },
     5000,
     10,
   )
+  pubsub.subscriber_count(instance, "room:keep") |> should.equal(1)
   pubsub.subscriber_count(instance, "room:leave") |> should.equal(0)
-  pubsub.subscriber_count(instance, "room:new") |> should.equal(1)
   pubsub.broadcast(instance, "room:new", "after_outage", "payload")
   drain_messages(scope, "room:new", "after_outage", "payload", pubsub.System)
   |> should.equal(1)

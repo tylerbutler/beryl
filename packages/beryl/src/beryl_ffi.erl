@@ -6,15 +6,26 @@
          connection_limit_checkpoint_registry_key/2,
          connection_limit_checkpoint_registry_get/1,
          connection_limit_checkpoint_registry_put/2,
-         connection_limit_checkpoint_registry_compare_erase/2]).
+         connection_limit_checkpoint_registry_compare_erase/2,
+         pin_subject/1]).
 
 %% Used only after a selector validates the frozen raw PubSub record shape.
 identity(X) -> X.
 
-%% Return synchronous callback exceptions (error/exit/throw) as
-%% {error, Description}. The caller handles recovery; completed side effects
-%% are not rolled back. Bound the diagnostic depth and length so repeated
-%% callback failures cannot produce oversized log metadata.
+%% Resolve once and retain the existing subject tag. Sending to this captured
+%% pid after an exit is safe and cannot reach a replacement registered name.
+pin_subject({named_subject, Name}) when is_atom(Name) ->
+    case erlang:whereis(Name) of
+        undefined -> {error, nil};
+        Pid -> {ok, {{subject, Pid, Name}, Pid}}
+    end;
+pin_subject({subject, Pid, _Tag} = Subject) when is_pid(Pid) ->
+    {ok, {Subject, Pid}}.
+
+%% Run a callback, converting any crash (error/exit/throw) into an
+%% {error, Description} result so a crashing callback cannot take down the
+%% runtime actor running it. The description is depth-limited and truncated so
+%% client-triggered crashes cannot bloat log metadata.
 rescue(Fun) ->
     try
         {ok, Fun()}
