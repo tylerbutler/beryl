@@ -8,9 +8,9 @@
 
 packages = [
   { name = "argv", version = "1.1.0", build_tools = ["gleam"], requirements = [], otp_app = "argv", source = "hex", outer_checksum = "3277D100448BDB4A29B6D58C0F36F631CBC349E8BDD09766C6309DF202831140" },
-  { name = "beryl", version = "0.4.1", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "telemetry", "rasa"], source = "local", path = "../../packages/beryl" },
-  { name = "beryl_ewe", version = "0.2.2", build_tools = ["gleam"], requirements = ["beryl", "ewe", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_stdlib", "glisten"], source = "local", path = "../../packages/beryl_ewe" },
-  { name = "beryl_mist", version = "0.3.2", build_tools = ["gleam"], requirements = ["beryl", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_stdlib", "glisten", "mist"], source = "local", path = "../../packages/beryl_mist" },
+  { name = "beryl", version = "0.5.0", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "telemetry", "rasa"], source = "local", path = "../../packages/beryl" },
+  { name = "beryl_ewe", version = "0.2.3", build_tools = ["gleam"], requirements = ["beryl", "ewe", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_stdlib", "glisten"], source = "local", path = "../../packages/beryl_ewe" },
+  { name = "beryl_mist", version = "0.4.0", build_tools = ["gleam"], requirements = ["beryl", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_stdlib", "glisten", "mist"], source = "local", path = "../../packages/beryl_mist" },
   { name = "clip", version = "1.2.2", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "clip", source = "hex", outer_checksum = "12A01D12B289C078506B1C383F65A916381A2596C7F2CA7051E8A44BF4FC6FC3" },
   { name = "compresso", version = "0.1.0", build_tools = ["gleam"], requirements = ["exception", "gleam_erlang", "gleam_stdlib", "gleam_yielder", "logging"], otp_app = "compresso", source = "hex", outer_checksum = "8BE29A1EDA42F70826ED148EAE40C46BB3FC18E78FE472663DB01DD4A38172D4" },
   { name = "envoy", version = "1.2.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "envoy", source = "hex", outer_checksum = "9C6FBB6BFA02A52798BEEC5977A738CAD6E4A057F4B67FD0C8061AD2502C191A" },

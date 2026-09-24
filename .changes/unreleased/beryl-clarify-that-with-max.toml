@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Clarify that with_max_connections applies independently to each beryl system on each BEAM node."

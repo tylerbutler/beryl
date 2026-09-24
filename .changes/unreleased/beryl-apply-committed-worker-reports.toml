@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Apply committed worker reports before closing a topic whose worker has exited."

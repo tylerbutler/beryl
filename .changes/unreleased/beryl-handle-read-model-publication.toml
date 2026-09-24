@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Handle read-model publication failures without panicking."

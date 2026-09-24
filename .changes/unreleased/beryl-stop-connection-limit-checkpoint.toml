@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Stop connection-limit checkpoint heirs when their supervising subtree exits during checkpoint initialization."

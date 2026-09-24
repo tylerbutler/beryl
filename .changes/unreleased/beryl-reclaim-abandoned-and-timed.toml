@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Reclaim abandoned and timed-out connection reservations."
