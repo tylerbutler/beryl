@@ -12,6 +12,7 @@ import gleam/erlang/process
 import gleam/json
 import gleam/option.{None, Some}
 import gleeunit/should
+import unitest
 
 /// Opaque handle to the attached :telemetry capture handler, produced and
 /// consumed only by the test FFI — never inspected from Gleam.
@@ -100,6 +101,7 @@ fn route_heartbeat(sockets: beryl.Sockets, socket_id: String) -> Nil {
 }
 
 pub fn lifecycle_and_callback_results_emit_once_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let sockets = start(telemetry_config())
   let frames = app_test_helper.connect(sockets, "socket-1")
@@ -138,6 +140,7 @@ pub fn lifecycle_and_callback_results_emit_once_test() -> Nil {
 }
 
 pub fn join_terminal_outcomes_are_reported_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let sockets = start(telemetry_config())
   let frames = app_test_helper.connect(sockets, "join-outcomes")
@@ -174,6 +177,7 @@ pub fn join_terminal_outcomes_are_reported_test() -> Nil {
 }
 
 pub fn message_rejection_rate_limit_and_crash_are_terminal_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let limited =
     start(
@@ -206,6 +210,7 @@ pub fn message_rejection_rate_limit_and_crash_are_terminal_test() -> Nil {
 }
 
 pub fn decoded_binary_route_preserves_message_kind_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let sockets = start(telemetry_config())
   let frames = app_test_helper.connect(sockets, "decoded-binary")
@@ -259,6 +264,7 @@ fn raw_binary_codec() -> codec.Codec {
 }
 
 pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let pubsub_instance = pubsub.start(pubsub.default_config())
   let senders = process.new_subject()
@@ -299,6 +305,7 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
 }
 
 pub fn shutdown_reason_and_disabled_runtime_are_reported_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let enabled = start(telemetry_config())
   let _frames = app_test_helper.connect(enabled, "shutdown")

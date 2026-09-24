@@ -64,8 +64,8 @@ let config =
   // Concurrent connections per client IP. Size to your expected
   // clients-behind-one-NAT worst case; see the caveat below.
   |> beryl.with_max_connections_per_ip(max_connections: 100)
-  // Node-wide ceiling on concurrent connections across all IPs. Size to a
-  // single node's process/socket/runtime budget; see below.
+  // Per-system ceiling on this node across all IPs. Size all systems on a
+  // node to its combined process/socket/runtime budget; see below.
   |> beryl.with_max_connections(max_connections: 10_000)
 
 let assert Ok(websocket_config) =
@@ -105,27 +105,32 @@ starve others.
 ### Combine per-IP rate and connection limits
 
 `with_connection_rate_per_ip` caps how quickly each peer can open connections,
-which prevents repeated reconnects from refreshing per-connection frame and
-message bursts. Its token buckets are stored in the supervised connection
-limiter, so they survive disconnects and app runtime restarts. Idle buckets are
-removed after their allowance has fully refilled.
+which limits how often reconnects can refresh per-connection frame and message
+bursts. The connection limiter checkpoints these per-IP buckets in an ETS
+table with an heir. They survive disconnects, router restarts, and
+limiter-worker restarts. They do not survive shutdown or replacement of the
+enclosing beryl supervisor, or a node restart. Idle buckets expire after their
+allowance has fully refilled.
 
 `with_max_connections_per_ip` separately throttles a single peer's concurrent
 connections, while `with_max_connections` caps concurrent connections across
-the whole node. A connection must pass every configured rate and concurrency
-limit; otherwise the transport rejects it with `429` **before** allocating any
-long-lived socket or runtime state. Freed concurrency capacity is reclaimed on
-normal close, transport failure, heartbeat eviction, crash, and setup failure.
+all IP addresses for one beryl system on one BEAM node. A connection must pass
+every configured rate and concurrency limit; otherwise the transport rejects it
+with `429` **before** allocating any long-lived socket or runtime state. Freed
+concurrency capacity is reclaimed on normal close, transport failure, heartbeat
+eviction, crash, and setup failure.
 
 A per-IP limit cannot stop many source addresses. A botnet or a host that
 rotates IPv6 addresses can open a few connections from each address. Together,
-these connections can exhaust the node. The node-wide ceiling limits the total
-number of connections across all IP addresses.
+these connections can exhaust the system's capacity. The per-system ceiling
+limits the total number of connections across all IP addresses.
 
-Because it is enforced per BEAM node, a load-balanced cluster of N nodes has an
-effective ceiling of roughly `max_connections × N`. Size the per-node value
-against one node's capacity, and use your load balancer's own global
-connection/rate controls when you need a cluster-wide cap.
+Each independently constructed `Sockets` system has its own limiter. Two
+systems on one node can therefore each admit up to their configured limit. With
+one system per node, a load-balanced cluster of N nodes has an effective
+ceiling of roughly `max_connections × N`. If a node runs multiple systems, size
+their combined limits against that node's capacity. Use your load balancer's
+own global connection/rate controls when you need a cluster-wide cap.
 
 ### Limits behind proxies and shared IP addresses
 
@@ -142,12 +147,14 @@ effects:
 
 ### Reconnects reset per-connection limits
 
-Per-socket limits are keyed by connection, so a client that hits a limit
-can reconnect for a fresh allowance. They bound the damage of any single
-connection. Configure `with_connection_rate_per_ip` to limit repeated reconnects
-from one peer IP, and retain infrastructure-level controls (load balancer
-connection/request limits, WAF rules) against attackers rotating source
-addresses.
+Transports store frame-rate buckets per connection; socket actors store
+message and join buckets. When those owners exit, their buckets disappear.
+A client that reconnects gets a fresh allowance. These limits bound the damage
+of a single connection; they do not preserve a client's quota across reconnects.
+Configure `with_connection_rate_per_ip` to limit repeated reconnects from one
+peer IP. Keep infrastructure-level controls (load balancer connection/request
+limits, WAF rules) for limits that must survive beryl restarts and for attackers
+rotating source addresses.
 
 ## Check origins and authenticate
 
@@ -163,6 +170,10 @@ addresses.
 
 ## Secure the Erlang cluster
 
+Before enabling Erlang distribution, restrict its ports to trusted hosts and
+configure mutually verified TLS. Apply these controls even to a single node,
+in development and staging as well as production, whether or not it runs beryl.
+
 beryl PubSub and presence replication use Erlang distribution. Trust every
 connected peer. Erlang peers can run arbitrary code on connected nodes. A
 hostile peer can compromise the full cluster. Topic access, broadcasts,
@@ -176,9 +187,6 @@ They protect only WebSocket clients.
 |---|---|---|
 | WebSocket clients | Untrusted | `with_on_connect` authentication, `Join` authorization, and `Message` handling in `update` |
 | Erlang distribution peers | Fully trusted | Network isolation + mutually verified TLS distribution (cookies prevent accidental cross-cluster connections only) |
-
-All distributed BEAM applications need network isolation and secure
-distribution. beryl assumes that you enforce this trust boundary.
 
 ### The Erlang cookie does not secure distribution
 
@@ -199,8 +207,8 @@ openssl rand -base64 48
 
 ### Use mutually verified TLS distribution
 
-Use TLS distribution with mutual certificate verification for secure
-multi-node deployments, including traffic within private networks. See the
+Use TLS distribution with mutual certificate verification when enabling
+distribution, including on private networks. See the
 [Erlang TLS Distribution guide](https://www.erlang.org/doc/apps/ssl/ssl_distribution.html)
 for setup instructions.
 

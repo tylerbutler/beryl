@@ -575,7 +575,7 @@ result.
 
 Implementation notes (brief): the CRDT comes from the `lattice_presence`
 package. beryl wraps it in an OTP actor on each node. Initial and periodic
-requests exchange versioned **full CRDT snapshots**, including while replicas
+requests exchange versioned **full owner snapshots**, including while replicas
 are quiet. Peers merge them and report local/merge diffs through `with_on_diff`.
 Those replication payloads are not the client wire format. The app separately
 emits Phoenix-compatible `presence_state` / `presence_diff` joins/leaves maps,
@@ -659,7 +659,7 @@ workload baselines: https://github.com/tylerbutler/beryl/issues/400.
 
 ## Production status
 
-**Built in:** per-IP connection caps · node-wide connection ceiling
+**Built in:** per-IP connection caps · per-system connection ceiling
 token-bucket rate limits · same-origin WebSocket policy by default
 
 **Deployment requirements:** edge proxy with a frame-size limit
@@ -674,7 +674,7 @@ limits."
 
 BUILT IN (config on the transport, name the real APIs):
 - `with_max_connections_per_ip`: per-IP connection caps, plus a
-  node-wide total connection ceiling so one node
+  per-system total connection ceiling on each node so one system
   cannot be socket-flooded past its capacity.
 - `with_message_rate`: token-bucket rate limiting per socket. This is
   what tamed the cursor firehose in the demo.

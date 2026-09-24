@@ -182,7 +182,7 @@ Try to acquire a configured connection slot for a transport.
 
  Pass the real socket peer IP. Do not pass a client-supplied address such as
  `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
- node-wide limit is already reached.
+ per-system limit on this node is already reached.
 
 <div class="api-entry-anchor" id="api-function-active_codec" aria-hidden="true"></div>
 

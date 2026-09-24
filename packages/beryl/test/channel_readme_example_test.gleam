@@ -3,7 +3,7 @@
 //// cannot drift from the real API.
 ////
 //// One deliberate deviation from the published text: the README's entry
-//// point is `pub fn main()`, which is the gleeunit runner's name here, so
+//// point is `pub fn main()`, which is the unitest runner's name here, so
 //// its body lives in the test function below instead.
 
 import beryl
@@ -11,11 +11,11 @@ import beryl/channel
 import beryl/wire
 import gleam/json
 import gleam/otp/static_supervisor
-import gleeunit
 import gleeunit/should
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 pub fn room() -> channel.Handler {

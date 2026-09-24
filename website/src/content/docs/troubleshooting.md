@@ -12,7 +12,8 @@ message arrives.
 
 **Checks:**
 
-1. **Check that Mist is listening.** Confirm that `mist.start` returned
+1. **Check that the HTTP server is listening.** With Mist, confirm that
+   `mist.start` returned `Ok(_)`. With Ewe, confirm that `ewe.start` returned
    `Ok(_)`. Handle the `Error` case.
 
 2. **Path mismatch.** The Phoenix JS client appends `/websocket` to the socket path you pass:
@@ -53,9 +54,15 @@ state. It does not receive `phx_reply`.
    With `beryl/channel`, confirm a handler pattern matches the topic. The
    layer rejects an unclaimed topic with `{"reason": "unmatched topic"}`.
 
-2. **Is `beryl.Sockets` passed to the transport?** The `mist_transport.upgrade` call must receive the `channels` value from the tuple returned by `beryl.child_spec` or `channel.child_spec` after its child spec is started:
+2. **Is `beryl.Sockets` passed to the transport?** Pass the `channels` value
+   from `beryl.child_spec` or `channel.child_spec` to the selected transport
+   after its child specification starts:
    ```gleam
+   // Mist
    use <- mist_transport.upgrade(request, channels, config)
+
+   // Ewe
+   ewe_transport.handler(channels, config, http_fallback)
    ```
 
 3. **Check for a `Join` crash.** A crash during `Join` rejects the join but
@@ -196,6 +203,12 @@ recent joins or leaves.
    merges state over PubSub; without PubSub, nodes have independent state.
 
 3. **`on_diff` not broadcasting.** If clients rely on receiving `presence_diff` events, confirm `on_diff` is configured and calls `beryl.broadcast_presence_diff`. See the [Presence guide](/guides/presence).
+
+4. **Healthy clients receive false leaves.** Pass the original callback diff to
+   `beryl.broadcast_presence_diff`. Encoding it and calling a generic broadcast
+   loses its delivery scope. Replica-view diffs, including failure and recovery
+   decisions, must stay on the observing node; application mutations retain
+   cluster-wide delivery.
 
 ---
 

@@ -122,6 +122,7 @@ The channel composition surface: a channel is a topic pattern paired
 <li><a href="#api-function-broadcast_presence"><code>broadcast_presence</code></a></li>
 <li><a href="#api-function-child_spec"><code>child_spec</code></a></li>
 <li><a href="#api-function-close"><code>close</code></a></li>
+<li><a href="#api-function-discard_reply"><code>discard_reply</code></a></li>
 <li><a href="#api-function-handler"><code>handler</code></a></li>
 <li><a href="#api-function-next"><code>next</code></a></li>
 <li><a href="#api-function-notify"><code>notify</code></a></li>
@@ -298,7 +299,8 @@ pub type Message {
 A client message delivered to a joined channel's `on_message` callback.
 
  `reply` is present only when the client asked for a reply; pass it to
- [`reply_ok`](#reply_ok) or [`reply_error`](#reply_error).
+ [`reply_ok`](#reply_ok), [`reply_error`](#reply_error), or
+ [`discard_reply`](#discard_reply).
 
 <div class="api-entry-anchor" id="api-type-next" aria-hidden="true"></div>
 
@@ -442,6 +444,20 @@ Leave this channel after applying `actions` in order.
 
  The socket stays connected. Its other channels do not change. This
  channel's [`on_terminate`](#on_terminate) callback still runs.
+
+<div class="api-entry-anchor" id="api-function-discard_reply" aria-hidden="true"></div>
+
+### `discard_reply`
+
+```gleam
+pub fn discard_reply(option.Option(socket.ReplyRef)) -> Action(Active)
+```
+
+Discard a client message reply handle without sending a wire reply.
+
+ Use this for messages the application intentionally will not answer.
+ [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+ produces no effect.
 
 <div class="api-entry-anchor" id="api-function-handler" aria-hidden="true"></div>
 

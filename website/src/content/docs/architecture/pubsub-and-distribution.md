@@ -23,11 +23,16 @@ subscriber mailbox, including a beryl runtime or presence mailbox. Runtime
 fan-out from those messages still reserves each destination socket's capacity.
 See [overload boundaries](/guides/overload/#memory-boundaries).
 
-## How Gleam calls Erlang `pg`
+## How beryl manages Erlang `pg`
 
-The Gleam module `beryl/pubsub` calls
-`src/beryl_pubsub_ffi.erl` through `@external` declarations. This small Erlang
-module translates Gleam calls into built-in `pg` functions.
+The Gleam module `beryl/pubsub` uses a typed membership actor in
+`beryl/pubsub_memberships`. The actor owns local membership intent and restores
+live memberships after the scoped `pg` process restarts.
+
+`beryl/pubsub_native` contains typed wrappers for member queries and raw sends.
+A small Erlang boundary starts the node-owned supervision tree, adapts actor
+startup to OTP child specifications, and converts failing `pg` mutations into
+typed errors.
 
 | Function | Description |
 |---|---|
@@ -96,6 +101,10 @@ the message to members on Node 2. You do not need another message bus.
 
 ## Secure cluster connections
 
+Configure network isolation and mutually verified TLS before enabling Erlang
+distribution, even on a single node or in development. These requirements
+apply whether or not the node runs beryl.
+
 Treat all Erlang distribution traffic as **trusted cluster input**. A peer can
 run arbitrary code on connected nodes. The beryl capabilities below are only
 part of that access. Use network isolation and mutual TLS verification for the
@@ -124,4 +133,7 @@ verified TLS distribution, EPMD port restrictions, and cookie handling).
 | File | Role |
 |---|---|
 | `src/beryl/pubsub.gleam` | Public Gleam API: types, config, and all broadcast functions |
-| `src/beryl_pubsub_ffi.erl` | Erlang FFI: thin `pg` wrappers called via `@external` |
+| `src/beryl/pubsub_memberships.gleam` | Typed actor: local membership intent, owner monitors, and `pg` recovery |
+| `src/beryl/pubsub_native.gleam` | Internal typed member-query and raw-send wrappers |
+| `src/beryl_pubsub_supervisor.erl` | Node-owned root and per-scope OTP supervision |
+| `src/beryl_pubsub_ffi.erl` | Small startup, subject, and failure-conversion adapters |

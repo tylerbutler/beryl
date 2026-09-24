@@ -4,12 +4,12 @@ import gleam/erlang/process
 import gleam/erlang/reference
 import gleam/json
 import gleam/list
-import gleeunit
 import gleeunit/should
 import test_helper
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 // ── Helper ──────────────────────────────────────────────────────────
@@ -28,6 +28,11 @@ fn test_config(
   presence.default_config(replica)
   |> presence.with_pubsub(pubsub_instance)
   |> presence.with_broadcast_interval(interval_ms)
+}
+
+fn stop_presence(tracker: presence.Presence) -> Nil {
+  let assert Ok(owner) = process.subject_owner(presence.subject(tracker))
+  process.kill(owner)
 }
 
 // ── BroadcastTick sends state via PubSub ────────────────────────────
@@ -296,6 +301,59 @@ pub fn untrack_propagates_via_pubsub_test() -> Nil {
   list.length(presence_entries(tracker2, "room:lobby")) |> should.equal(0)
 }
 
+pub fn untrack_all_reports_only_removed_local_entries_test() -> Nil {
+  let pubsub_instance = test_pubsub("untrack_all_local_only")
+  let leaves = process.new_subject()
+  let config1 =
+    test_config(pubsub_instance, "node1", 30)
+    |> presence.with_on_diff(fn(diff) {
+      case presence.diff_leaves(diff, "room:lobby") {
+        [] -> Nil
+        entries -> process.send(leaves, entries)
+      }
+    })
+  let assert Ok(tracker1) = presence.start(config1)
+  let assert Ok(tracker2) =
+    presence.start(test_config(pubsub_instance, "node2", 30))
+
+  let assert Ok(_) =
+    presence.track(
+      tracker2,
+      "room:lobby",
+      "user:remote",
+      "shared-session",
+      json.null(),
+    )
+  test_helper.wait_until(
+    fn() { presence_count(tracker1, "room:lobby") == 1 },
+    2000,
+    20,
+  )
+
+  let assert Ok(_) = presence.untrack_all(tracker1, "shared-session")
+
+  presence_count(tracker1, "room:lobby") |> should.equal(1)
+  process.receive(leaves, 0) |> should.equal(Error(Nil))
+
+  let assert Ok(_) =
+    presence.track(
+      tracker1,
+      "room:lobby",
+      "user:local",
+      "shared-session",
+      json.null(),
+    )
+  presence_count(tracker1, "room:lobby") |> should.equal(2)
+
+  let assert Ok(_) = presence.untrack_all(tracker1, "shared-session")
+
+  let assert [remaining] = presence_entries(tracker1, "room:lobby")
+  remaining.key |> should.equal("user:remote")
+  let assert Ok([left]) = process.receive(leaves, 1000)
+  left.key |> should.equal("user:local")
+  process.receive(leaves, 0) |> should.equal(Error(Nil))
+}
+
 // ── Resilience: malformed sync messages ──────────────────────────────
 //
 // The sync payload is now a native, typed `SyncPayload` term rather than a
@@ -342,18 +400,16 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
   |> should.equal(2)
 }
 
-// ── Resilience: exception raised inside the merge/processing path ─────
+// ── Resilience: exception raised by a remote-merge callback ───────────
 
-/// A valid remote sync can decode successfully yet still crash while the
-/// merge result is processed — for example, a user-supplied `on_diff`
-/// callback that panics, a mixed-version peer, or a compromised node. The
-/// exception must be contained: the shared presence actor stays alive and its
-/// state is not partially mutated by the poisoned sync.
-pub fn survives_exception_in_processing_path_test() -> Nil {
+/// A valid remote sync can trigger an `on_diff` callback exception. The
+/// callback boundary reports the failure, but the merge and publication
+/// complete and the presence actor stays alive. This does not test protection
+/// against a hostile distribution peer.
+pub fn remote_callback_panic_is_reported_and_merge_is_published_test() -> Nil {
   let pubsub_instance = test_pubsub("processing_crash")
+  let selector = test_helper.begin_capture()
 
-  // Node1's on_diff panics whenever a diff touches "room:poison". Diffs for
-  // any other topic pass through untouched, so local tracking still works.
   let config1 =
     presence.default_config("node1")
     |> presence.with_pubsub(pubsub_instance)
@@ -364,8 +420,9 @@ pub fn survives_exception_in_processing_path_test() -> Nil {
       }
     })
   let assert Ok(tracker1) = presence.start(config1)
+  let assert Ok(owner_before) =
+    process.subject_owner(presence.subject(tracker1))
 
-  // Prove the actor is alive and record its state before the poisoned sync.
   let assert Ok(_) =
     presence.track(
       tracker1,
@@ -376,9 +433,6 @@ pub fn survives_exception_in_processing_path_test() -> Nil {
     )
   list.length(presence_entries(tracker1, "room:lobby")) |> should.equal(1)
 
-  // Node2 broadcasts a *valid* sync that decodes cleanly but produces a diff
-  // touching "room:poison", tripping node1's panicking callback inside the
-  // merge/processing path.
   let config2 = test_config(pubsub_instance, "node2", 50)
   let assert Ok(tracker2) = presence.start(config2)
   let assert Ok(_) =
@@ -390,10 +444,14 @@ pub fn survives_exception_in_processing_path_test() -> Nil {
       json.null(),
     )
 
-  // Give node1 time to receive and reject several broadcasts of the poison.
-  process.sleep(200)
+  test_helper.receive_log(selector, "Presence on_diff callback failed", 10)
+  |> should.be_ok
+  test_helper.wait_until(
+    fn() { presence_count(tracker1, "room:poison") == 1 },
+    2000,
+    10,
+  )
 
-  // The actor is still alive: a fresh local track succeeds.
   let assert Ok(_) =
     presence.track(
       tracker1,
@@ -403,60 +461,13 @@ pub fn survives_exception_in_processing_path_test() -> Nil {
       json.null(),
     )
   list.length(presence_entries(tracker1, "room:lobby")) |> should.equal(2)
+  presence_count(tracker1, "room:poison") |> should.equal(1)
+  process.subject_owner(presence.subject(tracker1))
+  |> should.equal(Ok(owner_before))
 
-  // State was not partially mutated: the poisoned sync never merged, so
-  // "room:poison" remains empty on node1.
-  presence_entries(tracker1, "room:poison") |> should.equal([])
-}
-
-pub fn merge_failure_leaves_read_model_unchanged_test() -> Nil {
-  let pubsub_instance = test_pubsub("merge_failure_read_model")
-
-  let config1 =
-    presence.default_config("node1")
-    |> presence.with_pubsub(pubsub_instance)
-    |> presence.with_on_diff(fn(diff) {
-      case presence.diff_joins(diff, "room:poison") {
-        [] -> Nil
-        _ -> panic as "poisoned diff"
-      }
-    })
-  let assert Ok(tracker1) = presence.start(config1)
-
-  // Snapshot the read model for an unrelated topic before the poisoned sync.
-  let assert Ok(_) =
-    presence.track(
-      tracker1,
-      "room:lobby",
-      "user:safe",
-      "socket-safe",
-      json.null(),
-    )
-  let before_entries = presence_entries(tracker1, "room:lobby")
-  let before_count = presence_count(tracker1, "room:lobby")
-
-  let config2 = test_config(pubsub_instance, "node2", 50)
-  let assert Ok(tracker2) = presence.start(config2)
-  let assert Ok(_) =
-    presence.track(
-      tracker2,
-      "room:poison",
-      "user:boom",
-      "socket-boom",
-      json.null(),
-    )
-
-  // Give node1 time to receive and reject the poisoned broadcast.
-  process.sleep(200)
-
-  // The read model for the untouched topic is byte-for-byte unchanged.
-  presence_entries(tracker1, "room:lobby") |> should.equal(before_entries)
-  presence_count(tracker1, "room:lobby") |> should.equal(before_count)
-  // The poisoned topic's read model was never published in the first
-  // place -- it reads empty because the merge was rejected before any
-  // ETS write happened, not because of a later prune or partial write.
-  presence_entries(tracker1, "room:poison") |> should.equal([])
-  presence_count(tracker1, "room:poison") |> should.equal(0)
+  test_helper.stop_capture()
+  stop_presence(tracker1)
+  stop_presence(tracker2)
 }
 
 // ── Helper to drain stray messages ──────────────────────────────────
@@ -620,11 +631,20 @@ pub fn restart_prune_updates_read_model_count_test() -> Nil {
   // The pruned ghost must not inflate the peer's count once it converges
   // on the restarted incarnation.
   test_helper.wait_until(
-    fn() { presence_count(tracker2, "room:lobby") == 1 },
+    fn() {
+      let identities =
+        presence_entries(tracker2, "room:lobby")
+        |> list.map(fn(entry) { #(entry.session_id, entry.key) })
+      presence_count(tracker2, "room:lobby") == 1
+      && identities == [#("socket-live", "user:live")]
+    },
     3000,
     10,
   )
   presence_count(tracker2, "room:lobby") |> should.equal(1)
+  presence_entries(tracker2, "room:lobby")
+  |> list.map(fn(entry) { #(entry.session_id, entry.key) })
+  |> should.equal([#("socket-live", "user:live")])
 }
 
 // ── Reads stay responsive while the actor mailbox is busy ────────────
@@ -661,6 +681,7 @@ pub fn reads_stay_responsive_while_actor_mailbox_is_blocked_test() -> Nil {
       }
     })
   let assert Ok(tracker) = presence.start(config)
+  let assert Ok(owner_before) = process.subject_owner(presence.subject(tracker))
   let assert Ok(_) =
     presence.track(tracker, "room:lobby", "user:1", "socket-1", json.null())
 
@@ -678,6 +699,21 @@ pub fn reads_stay_responsive_while_actor_mailbox_is_blocked_test() -> Nil {
   // ahead of both that diff's read-model publish and its own reply.
   let assert Ok(release) = process.receive(entered, 1000)
 
+  let unrelated_done = process.new_subject()
+  process.spawn_unlinked(fn() {
+    let assert Ok(_) =
+      presence.track(tracker, "room:other", "user:3", "socket-3", json.null())
+    process.send(unrelated_done, Nil)
+  })
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = presence.queue_snapshot(tracker)
+      current.items == 2
+    },
+    1000,
+    5,
+  )
+
   // Reads must stay responsive, and still see the already-published
   // user:1 state, even though the actor's mailbox is busy handling the
   // still-blocked second track call.
@@ -691,12 +727,87 @@ pub fn reads_stay_responsive_while_actor_mailbox_is_blocked_test() -> Nil {
   // present-tense check on a fixed synchronization point, not a timing
   // race, since the actor cannot have replied while parked above.
   process.receive(track_done, 0) |> should.equal(Error(Nil))
+  process.receive(unrelated_done, 0) |> should.equal(Error(Nil))
+  presence_count(tracker, "room:other") |> should.equal(0)
+  process.is_alive(owner_before) |> should.be_true
 
   // Release the callback and drain completion so it can't bleed into a
   // later test.
   process.send(release, Nil)
   let assert Ok(_) = process.receive(track_done, 1000)
-  Nil
+  let assert Ok(Nil) = process.receive(unrelated_done, 1000)
+  presence_count(tracker, "room:lobby") |> should.equal(2)
+  presence_count(tracker, "room:other") |> should.equal(1)
+  process.subject_owner(presence.subject(tracker))
+  |> should.equal(Ok(owner_before))
+}
+
+pub fn remote_callback_blocks_publication_and_later_mutations_test() -> Nil {
+  let pubsub_instance = test_pubsub("slow_remote_callback")
+  let entered = process.new_subject()
+  let receiver_config =
+    presence.default_config("receiver")
+    |> presence.with_pubsub(pubsub_instance)
+    |> presence.with_broadcast_interval(0)
+    |> presence.with_on_diff(fn(diff) {
+      case presence.diff_joins(diff, "room:remote") {
+        [] -> Nil
+        _ -> {
+          let release = process.new_subject()
+          process.send(entered, release)
+          let assert Ok(Nil) = process.receive(release, 5000)
+          Nil
+        }
+      }
+    })
+  let assert Ok(receiver) = presence.start(receiver_config)
+  let assert Ok(owner_before) =
+    process.subject_owner(presence.subject(receiver))
+  let assert Ok(source) =
+    presence.start(test_config(pubsub_instance, "source", 30))
+
+  let assert Ok(_) =
+    presence.track(
+      source,
+      "room:remote",
+      "user:remote",
+      "socket-remote",
+      json.null(),
+    )
+  let assert Ok(release) = process.receive(entered, 2000)
+
+  let local_done = process.new_subject()
+  process.spawn_unlinked(fn() {
+    let assert Ok(_) =
+      presence.track(
+        receiver,
+        "room:local",
+        "user:local",
+        "socket-local",
+        json.null(),
+      )
+    process.send(local_done, Nil)
+  })
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = presence.queue_snapshot(receiver)
+      current.items == 1
+    },
+    1000,
+    5,
+  )
+
+  presence_count(receiver, "room:remote") |> should.equal(0)
+  presence_count(receiver, "room:local") |> should.equal(0)
+  process.receive(local_done, 0) |> should.equal(Error(Nil))
+  process.is_alive(owner_before) |> should.be_true
+
+  process.send(release, Nil)
+  let assert Ok(Nil) = process.receive(local_done, 1000)
+  presence_count(receiver, "room:remote") |> should.equal(1)
+  presence_count(receiver, "room:local") |> should.equal(1)
+  process.subject_owner(presence.subject(receiver))
+  |> should.equal(Ok(owner_before))
 }
 
 // ── track/untrack reply only after the read model is published ───────

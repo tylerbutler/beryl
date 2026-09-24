@@ -70,9 +70,6 @@ Implement `verify_token` with your token library. For example, use
 [`gleam_crypto`](https://hexdocs.pm/gleam_crypto/) to check an HMAC signature.
 You can also use a JWT library for signed identity-provider tokens. The
 function must validate the signature and expiry and return typed `Claims`.
-Token creation is a separate process. An OAuth2 library such as
-[`vestibule`](https://vestibule.tylerbutler.com) can provide an authenticated
-identity for token creation.
 
 ```gleam
 import beryl_mist as mist_transport

@@ -7,6 +7,7 @@
 import beryl/overload
 import gleam/bool
 import gleam/int
+import rasa/monotonic
 
 /// Transport implementations supported by beryl's telemetry schema.
 pub type Transport {
@@ -134,16 +135,18 @@ pub type Event {
     callback_result: CallbackResult,
   )
   BroadcastStop(duration: Int, recipients: Int, origin: BroadcastOrigin)
+  PresenceSyncRejected
 }
 
 @external(erlang, "beryl_telemetry_ffi", "execute")
 fn execute(event: Event) -> Nil
 
-@external(erlang, "beryl_telemetry_ffi", "monotonic_time")
-fn monotonic_time() -> Int
-
 @external(erlang, "beryl_telemetry_ffi", "mailbox_length")
 fn current_mailbox_length() -> Int
+
+fn monotonic_time() -> Int {
+  monotonic.time(monotonic.Native)
+}
 
 /// Emit a typed event when telemetry is enabled.
 ///

@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Hide unavailable presence replicas after actor, node, or membership loss. Keep replica-view diffs node-local while preserving cluster-wide application diffs and causal state for reconnect."

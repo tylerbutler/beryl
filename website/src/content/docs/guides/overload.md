@@ -19,7 +19,11 @@ into a callback or a suspended effect list does not release its capacity.
 
 The socket limit includes input, pending worker reports, active effect lists,
 and unanswered reply refs. Callback completion does not release an unanswered
-ref. A reply, topic close, or socket close releases it.
+ref, and reply refs do not expire. `socket.DiscardReply` or
+`channel.discard_reply` releases a ref without sending a wire reply. A reply,
+explicit discard, topic close, or socket close releases its capacity. When the
+socket budget is full, the runtime rejects new work and closes client input
+that it cannot safely retain.
 
 A worker can have one normal report waiting for the socket. Its input stays
 charged until the socket applies or cancels the report and its continuation.

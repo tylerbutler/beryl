@@ -6,7 +6,13 @@
 //// - Publishes an actor-owned ETS read model
 //// - Requests snapshots at startup and periodically through PubSub
 //// - Receives remote snapshots and merges them internally
+//// - Hides unavailable remote replicas without forgetting their causal state
 //// - Invokes `on_diff` when local changes or merges produce non-empty diffs
+////
+//// Each actor owns its local entries. Remote snapshots are accepted only from
+//// a live owner answering an outstanding request, never through a relay.
+//// Unavailable state is retained for 60 seconds before safe compaction; see
+//// `with_pubsub` for the recovery and incarnation rules.
 ////
 //// Presence is independent of the beryl runtime and runs under your
 //// application's supervision tree.
@@ -18,6 +24,8 @@
 //// merge, or prune. Synchronous mutations publish before replying, and
 //// runtime mutations acknowledge only after publishing, so a later read
 //// observes the completed mutation without waiting on the actor mailbox.
+//// A read-model deletion failure stops publication and enters the mutation or
+//// sync processing error path; it is never treated as a successful write.
 ////
 //// A read concurrent with a queued or in-progress mutation can observe the
 //// previous or new complete snapshot. Reads of separate topics do not form
@@ -52,6 +60,7 @@ import beryl/internal
 import beryl/log
 import beryl/overload
 import beryl/pubsub.{type PubSub}
+import beryl/telemetry
 import beryl/wire
 import beryl/work_queue
 import gleam/bit_array
@@ -71,12 +80,21 @@ import gleam/result
 import gleam/set.{type Set}
 import gleam/string
 import lattice_presence/presence_state as state
+import rasa/monotonic
 
 /// Well-known PubSub topic for presence state replication
 const sync_topic = "beryl:presence:sync"
 
 /// PubSub event name for presence sync messages
 const sync_event = "presence_sync"
+
+const replica_retention_ms = 60_000
+
+const retirement_check_interval_ms = 1000
+
+fn monotonic_time_ms() -> Int {
+  monotonic.time(monotonic.Millisecond)
+}
 
 /// A running Presence instance.
 ///
@@ -105,14 +123,25 @@ pub opaque type Presence {
 type State =
   state.State
 
+/// The audience for a presence diff.
+pub type DiffScope {
+  /// Application mutations and explicitly constructed diffs may be broadcast
+  /// to the cluster.
+  Cluster
+  /// Replication, failure detection, and recovery describe this node's view.
+  /// Deliver these diffs only to socket subscribers on the observing node.
+  LocalNode
+}
+
 /// An opaque diff representing presence joins and leaves grouped by topic.
 ///
 /// beryl passes this value to `Config.on_diff`.
-/// `beryl.broadcast_presence_diff` also accepts it.
+/// `beryl.broadcast_presence_diff` preserves its delivery scope automatically.
 pub opaque type Diff {
   Diff(
     joins: Dict(String, List(PresenceEntry)),
     leaves: Dict(String, List(PresenceEntry)),
+    scope: DiffScope,
   )
 }
 
@@ -127,12 +156,31 @@ pub type PresenceEntry {
 /// Build a presence diff from topic-grouped joins and leaves.
 ///
 /// Most applications receive diffs from `Config.on_diff`. Use this function
-/// to construct a diff for `beryl.broadcast_presence_diff`.
+/// to construct an application diff with `Cluster` scope for
+/// `beryl.broadcast_presence_diff`. Do not rebuild a replica-view diff with
+/// this function: that would discard its `LocalNode` scope.
 pub fn diff(
   joins joins: List(#(String, List(PresenceEntry))),
   leaves leaves: List(#(String, List(PresenceEntry))),
 ) -> Diff {
-  Diff(joins: dict.from_list(joins), leaves: dict.from_list(leaves))
+  Diff(
+    joins: dict.from_list(joins),
+    leaves: dict.from_list(leaves),
+    scope: Cluster,
+  )
+}
+
+/// Return where this diff may be delivered.
+///
+/// Local application mutations produce `Cluster` diffs. Remote snapshots and
+/// replica availability changes produce `LocalNode` diffs, even when one
+/// update contains both causal changes and liveness changes. They repair the
+/// observing node's view and must not be rebroadcast to other nodes.
+///
+/// Prefer `beryl.broadcast_presence_diff`, which handles this distinction.
+/// Custom publishers must preserve it; the Phoenix JSON payload has no scope.
+pub fn diff_scope(diff: Diff) -> DiffScope {
+  diff.scope
 }
 
 /// List topics touched by this diff.
@@ -169,29 +217,47 @@ fn unique_strings(
   }
 }
 
-fn wrap_state_diff(diff: state.Diff) -> Diff {
-  Diff(
-    joins: state_entries_to_presence_entries(diff.joins),
-    leaves: state_entries_to_presence_entries(diff.leaves),
-  )
+type VisibleEntry =
+  #(String, String, String, json.Json)
+
+fn visible_counts(crdt: State) -> Dict(VisibleEntry, Int) {
+  state.online_list(crdt)
+  |> list.fold(dict.new(), fn(counts, entry) {
+    let count = dict.get(counts, entry) |> result.unwrap(0)
+    dict.insert(counts, entry, count + 1)
+  })
 }
 
-fn state_entries_to_presence_entries(
-  entries: Dict(String, List(#(String, String, json.Json))),
+fn added_entries(
+  after: Dict(VisibleEntry, Int),
+  before: Dict(VisibleEntry, Int),
 ) -> Dict(String, List(PresenceEntry)) {
-  entries
-  |> dict.to_list
-  |> list.map(fn(entry) {
-    let #(topic, topic_entries) = entry
-    #(
+  dict.fold(after, dict.new(), fn(grouped, entry, count) {
+    let added = count - { dict.get(before, entry) |> result.unwrap(0) }
+    use <- bool.guard(when: added <= 0, return: grouped)
+    let #(session_id, topic, key, meta) = entry
+    let existing = dict.get(grouped, topic) |> result.unwrap([])
+    dict.insert(
+      grouped,
       topic,
-      list.map(topic_entries, fn(topic_entry) {
-        let #(key, session_id, meta) = topic_entry
-        PresenceEntry(session_id: session_id, key: key, meta: meta)
-      }),
+      list.append(
+        list.repeat(PresenceEntry(session_id, key, meta), added),
+        existing,
+      ),
     )
   })
-  |> dict.from_list
+}
+
+/// The CRDT's merge diff includes hidden entries. Compare final visible
+/// multisets instead, preserving duplicate non-object metas without phx_ref.
+fn visible_diff(before: State, after: State) -> Diff {
+  let before = visible_counts(before)
+  let after = visible_counts(after)
+  Diff(
+    joins: added_entries(after, before),
+    leaves: added_entries(before, after),
+    scope: LocalNode,
+  )
 }
 
 /// The snapshot request carried over PubSub between presence replicas.
@@ -225,10 +291,10 @@ pub opaque type Config {
     pubsub: Option(PubSub(SyncPayload)),
     /// This node's replica base name. Must identify at most one live node
     /// in the cluster. Each actor start derives a unique incarnation name
-    /// from it (`base@suffix`), so restarting a node never reuses the
-    /// previous incarnation's CRDT clocks; state from older incarnations
-    /// of the same base is pruned automatically. Two *live* nodes sharing
-    /// a base will continuously prune each other — do not do that.
+    /// from it, so restarting a node never reuses the previous
+    /// incarnation's CRDT clocks; state from older incarnations of the
+    /// same base is pruned automatically. Two *live* nodes sharing
+    /// a base violate the ownership contract; concurrent reuse is unsupported.
     replica: String,
     /// How often to request snapshots for replication (ms). Non-positive
     /// values disable periodic requests, but not the initial exchange or replies.
@@ -307,6 +373,8 @@ pub opaque type Message {
   /// Incoming PubSub snapshot request from a remote replica.
   RemoteSync(pubsub_message: pubsub.Message(SyncPayload))
   RemoteSnapshot(reply: SyncReply)
+  RemoteReplicaDown(down: process.Down)
+  RetirementTick
 }
 
 /// Acknowledgement of an asynchronous presence mutation.
@@ -383,6 +451,10 @@ type CountLookup {
 /// values are only created and consumed by `beryl_presence_read_ffi`.
 type ReadTable
 
+type ReadTableWriteError {
+  ReadTableUnavailable
+}
+
 @external(erlang, "beryl_presence_read_ffi", "new_table")
 fn ffi_new_read_table(name: process.Name(Message)) -> ReadTable
 
@@ -395,7 +467,10 @@ fn ffi_put_topic(
 ) -> Nil
 
 @external(erlang, "beryl_presence_read_ffi", "delete_topic")
-fn ffi_delete_topic(table: ReadTable, topic: String) -> Nil
+fn ffi_delete_topic(
+  table: ReadTable,
+  topic: String,
+) -> Result(Nil, ReadTableWriteError)
 
 @external(erlang, "beryl_presence_read_ffi", "get_topic")
 fn ffi_get_topic(name: process.Name(Message), topic: String) -> TopicLookup
@@ -407,7 +482,11 @@ fn ffi_get_count(name: process.Name(Message), topic: String) -> CountLookup
 /// the read model, or remove its snapshot entirely once it has no entries
 /// left, so a missing topic is only ever "no snapshot recorded", never a
 /// stale empty leftover.
-fn publish_topic(table: ReadTable, crdt: State, topic: String) -> Nil {
+fn publish_topic(
+  table: ReadTable,
+  crdt: State,
+  topic: String,
+) -> Result(Nil, ReadTableWriteError) {
   let entries =
     state.get_by_topic(crdt, topic)
     |> list.map(fn(entry) {
@@ -416,15 +495,38 @@ fn publish_topic(table: ReadTable, crdt: State, topic: String) -> Nil {
     })
   case entries {
     [] -> ffi_delete_topic(table, topic)
-    _ -> ffi_put_topic(table, topic, list.length(entries), entries)
+    _ -> {
+      ffi_put_topic(table, topic, list.length(entries), entries)
+      Ok(Nil)
+    }
   }
 }
 
 /// Republish every topic named in `topics` from `crdt`. Used after
 /// operations (remote merges, replica pruning) that can touch several
 /// topics at once.
-fn publish_topics(table: ReadTable, crdt: State, topics: List(String)) -> Nil {
-  list.each(topics, fn(topic) { publish_topic(table, crdt, topic) })
+fn publish_topics(
+  table: ReadTable,
+  crdt: State,
+  topics: List(String),
+) -> Result(Nil, ReadTableWriteError) {
+  list.try_each(topics, fn(topic) { publish_topic(table, crdt, topic) })
+}
+
+fn publication_result(
+  result: Result(Nil, ReadTableWriteError),
+) -> Result(Nil, ReadTableWriteError) {
+  case result {
+    Ok(Nil) -> Ok(Nil)
+    Error(error) -> {
+      log.error(
+        internal.logger("beryl.presence"),
+        "Presence read model is unavailable for publication",
+        [],
+      )
+      Error(error)
+    }
+  }
 }
 
 /// Read a topic's materialized entries directly from the read model.
@@ -462,7 +564,21 @@ type TrackedPresence {
 }
 
 type PendingSync {
-  PendingSync(request: Reference, round: Int)
+  PendingSync(request: Reference, round: Int, requested_at: Int)
+}
+
+type ReplicaAvailability {
+  Available(monitor: process.Monitor)
+  Unavailable(since: Int)
+}
+
+type ReplicaOwner {
+  ReplicaOwner(
+    replica: String,
+    pid: process.Pid,
+    availability: ReplicaAvailability,
+    confirmed_round: Int,
+  )
 }
 
 type SyncState {
@@ -470,6 +586,8 @@ type SyncState {
     reply: Subject(SyncReply),
     requests: Dict(process.Pid, PendingSync),
     round: Int,
+    /// One confirmed incarnation per configured replica base.
+    owners: Dict(String, ReplicaOwner),
   )
 }
 
@@ -513,6 +631,25 @@ pub fn default_config(replica: String) -> Config {
 }
 
 /// Enable PubSub replication for presence.
+///
+/// Remote visibility follows monitored actor ownership and the local `pg`
+/// membership view. Actor exit, node disconnection, or membership loss hides
+/// that replica and emits leaves. Its causal state remains available for repair.
+/// A fresh snapshot from the same actor restores its current entries; a
+/// replacement actor starts a new incarnation. A partition can therefore hide
+/// sessions that remain connected to their local node.
+///
+/// Each snapshot contains only its sender's authoritative state. A receiver's
+/// request order, not a random suffix or message arrival order, determines
+/// whether a new incarnation can replace its known owner. Concurrent live
+/// actors sharing a replica base in one scope are unsupported.
+///
+/// A confirmed replacement retires its predecessor. Otherwise, unavailable
+/// state remains for 60 seconds, checked every second while the actor runs.
+/// Compaction invalidates outstanding requests. A returning actor must answer
+/// a new request with its current full local snapshot, so delayed replies and
+/// lagging peers cannot reintroduce compacted history. The retention check also
+/// runs when periodic snapshot requests are disabled. Actor work can delay it.
 pub fn with_pubsub(config: Config, pubsub: PubSub(SyncPayload)) -> Config {
   Config(..config, pubsub: Some(pubsub))
 }
@@ -549,7 +686,15 @@ pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
   Config(..config, call_timeout_ms: timeout_ms)
 }
 
-/// Set the callback for diffs from local changes or remote merges.
+/// Set the callback for diffs from local changes, remote merges, or replica
+/// availability changes.
+///
+/// Pass the original diff to `beryl.broadcast_presence_diff` to preserve its
+/// delivery scope. Application mutations publish cluster-wide at their source.
+/// Replication and availability callbacks repair local clients only. A custom
+/// publisher must inspect `diff_scope` rather than broadcast encoded JSON
+/// unconditionally. A local worker may handle the callback; do not move a
+/// `LocalNode` diff to another node for publication.
 ///
 /// The callback runs synchronously on the presence actor, for both local
 /// mutations (`track`/`update`/`untrack`/`untrack_all`, and the asynchronous
@@ -573,7 +718,20 @@ pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
 /// `list`/`get_by_key`/`count` calls from other processes do not use the
 /// mailbox and are not delayed. A socket with an active presence effect waits
 /// for the callback. Callers of synchronous mutations also wait for their
-/// replies.
+/// replies. Enqueue a small message to a bounded application-owned worker and
+/// return. Do not make network calls or synchronously mutate the same presence
+/// actor from this callback.
+///
+/// beryl catches and logs callback exceptions, exits, and throws. A callback
+/// failure does not veto an otherwise successful local mutation or remote
+/// merge: beryl still publishes the snapshot and replies or acknowledges.
+/// beryl does not retry the callback, and it cannot roll back callback effects
+/// that completed before the failure. Treat delivery as a notification, not
+/// exactly-once application processing.
+///
+/// Presence queue snapshots and occupancy telemetry retain an admitted local
+/// mutation while its callback runs. They do not impose a callback deadline,
+/// apply to remote sync, or bound an application worker's mailbox.
 pub fn with_on_diff(config: Config, callback: fn(Diff) -> Nil) -> Config {
   Config(..config, on_diff: Some(callback))
 }
@@ -638,9 +796,10 @@ fn build_presence(
   // name after a restart would reset its clocks while peers still remember
   // the old ones: new joins would be silently filtered as already-seen,
   // and the previous incarnation's entries would resurrect via merges.
-  // A unique per-start suffix makes every incarnation a distinct replica;
-  // `prune_superseded` cleans up the dead predecessors.
-  let crdt = state.new(incarnate_replica(config.replica))
+  // The library mints an identity that is unique per start and keeps the
+  // configured name recoverable. Receiver-issued requests establish
+  // incarnation freshness; the identity itself does not order actor starts.
+  let crdt = state.new_incarnation(config.replica)
 
   actor.new_with_initialiser(5000, fn(subject) {
     // Created here, in the actor process itself, so the read model's
@@ -678,7 +837,12 @@ fn build_presence(
         let initial =
           ActorState(
             ..initial,
-            sync: Some(SyncState(reply: reply, requests: dict.new(), round: 0)),
+            sync: Some(SyncState(
+              reply: reply,
+              requests: dict.new(),
+              round: 0,
+              owners: dict.new(),
+            )),
           )
         let logger = internal.logger("beryl.presence")
         logger
@@ -692,9 +856,11 @@ fn build_presence(
           process.new_selector()
           |> process.select(subject)
           |> process.select_map(reply, RemoteSnapshot)
+          |> process.select_monitors(RemoteReplicaDown)
           |> pubsub.selecting(subscriber, RemoteSync)
 
         process.send(subject, BroadcastTick)
+        schedule_retirement_tick(subject)
 
         actor.initialised(initial)
         |> actor.selecting(selector)
@@ -717,13 +883,14 @@ fn request_snapshots(
   actor_state: ActorState,
   pubsub_instance: PubSub(SyncPayload),
 ) -> ActorState {
+  let members =
+    pubsub.subscribers(pubsub_instance, sync_topic)
+    |> list.filter(fn(member) { member != process.self() })
+    |> set.from_list
+  let actor_state = reconcile_membership(actor_state, members)
   case actor_state.sync {
     None -> actor_state
     Some(sync) -> {
-      let members =
-        pubsub.subscribers(pubsub_instance, sync_topic)
-        |> list.filter(fn(member) { member != process.self() })
-        |> set.from_list
       let sync =
         SyncState(
           ..sync,
@@ -741,6 +908,189 @@ fn request_snapshots(
   }
 }
 
+fn reconcile_membership(
+  actor_state: ActorState,
+  members: Set(process.Pid),
+) -> ActorState {
+  case actor_state.sync {
+    None -> actor_state
+    Some(sync) ->
+      dict.fold(sync.owners, actor_state, fn(actor_state, base, owner) {
+        case set.contains(members, owner.pid) {
+          True -> actor_state
+          False -> hide_replica(actor_state, base)
+        }
+      })
+  }
+}
+
+fn hide_replica(actor_state: ActorState, base: String) -> ActorState {
+  case actor_state.sync {
+    None -> actor_state
+    Some(sync) ->
+      case dict.get(sync.owners, base) {
+        Error(Nil) | Ok(ReplicaOwner(_, _, Unavailable(_), _)) -> actor_state
+        Ok(ReplicaOwner(replica, pid, Available(monitor), round)) ->
+          hide_available_replica(
+            actor_state,
+            sync,
+            base,
+            replica,
+            pid,
+            monitor,
+            round,
+          )
+      }
+  }
+}
+
+fn hide_available_replica(
+  actor_state: ActorState,
+  sync: SyncState,
+  base: String,
+  replica: String,
+  pid: process.Pid,
+  monitor: process.Monitor,
+  round: Int,
+) -> ActorState {
+  let #(crdt, _diff) = state.replica_down(actor_state.crdt, replica)
+  let hidden =
+    ActorState(
+      ..actor_state,
+      sync: Some(
+        SyncState(
+          ..sync,
+          requests: dict.delete(sync.requests, pid),
+          owners: dict.insert(
+            sync.owners,
+            base,
+            ReplicaOwner(replica, pid, Unavailable(monotonic_time_ms()), round),
+          ),
+        ),
+      ),
+    )
+  case commit_replication(hidden, crdt) {
+    Ok(state) -> {
+      process.demonitor_process(monitor)
+      state
+    }
+    Error(ReadTableUnavailable) -> actor_state
+  }
+}
+
+fn handle_replica_down(
+  actor_state: ActorState,
+  down: process.Down,
+) -> ActorState {
+  case actor_state.sync, down {
+    Some(sync), process.ProcessDown(monitor, pid, _) ->
+      dict.fold(sync.owners, actor_state, fn(actor_state, base, owner) {
+        case owner.pid == pid && owner.availability == Available(monitor) {
+          True -> hide_replica(actor_state, base)
+          False -> actor_state
+        }
+      })
+    None, _ | _, process.PortDown(_, _, _) -> actor_state
+  }
+}
+
+fn watch_replica(
+  actor_state: ActorState,
+  replica: String,
+  pid: process.Pid,
+  round: Int,
+) -> ActorState {
+  case actor_state.sync {
+    None -> actor_state
+    Some(sync) -> {
+      let base = state.base_replica(replica)
+      let previous = dict.get(sync.owners, base)
+      let monitor = case previous {
+        Ok(ReplicaOwner(_, old_pid, Available(monitor), _)) if old_pid == pid ->
+          monitor
+        Ok(ReplicaOwner(_, _, Available(monitor), _)) -> {
+          process.demonitor_process(monitor)
+          process.monitor(pid)
+        }
+        Ok(ReplicaOwner(_, _, Unavailable(_), _)) | Error(Nil) ->
+          process.monitor(pid)
+      }
+      let requests = case previous {
+        Ok(previous) if previous.pid != pid ->
+          dict.delete(sync.requests, previous.pid)
+        Ok(_) | Error(Nil) -> sync.requests
+      }
+      ActorState(
+        ..actor_state,
+        sync: Some(
+          SyncState(
+            ..sync,
+            requests: requests,
+            owners: dict.insert(
+              sync.owners,
+              base,
+              ReplicaOwner(replica, pid, Available(monitor), round),
+            ),
+          ),
+        ),
+      )
+    }
+  }
+}
+
+fn schedule_retirement_tick(subject: Subject(Message)) -> Nil {
+  let _timer =
+    process.send_after(subject, retirement_check_interval_ms, RetirementTick)
+  Nil
+}
+
+fn retire_unavailable(actor_state: ActorState) -> ActorState {
+  let members = case actor_state.config.pubsub {
+    Some(pubsub_instance) ->
+      pubsub.subscribers(pubsub_instance, sync_topic) |> set.from_list
+    None -> set.new()
+  }
+  let actor_state = reconcile_membership(actor_state, members)
+  case actor_state.sync {
+    None -> actor_state
+    Some(sync) -> {
+      let now = monotonic_time_ms()
+      let sync =
+        SyncState(
+          ..sync,
+          requests: dict.filter(sync.requests, fn(pid, pending) {
+            set.contains(members, pid)
+            || now - pending.requested_at < replica_retention_ms
+          }),
+        )
+      let actor_state = ActorState(..actor_state, sync: Some(sync))
+      let retired =
+        dict.filter(sync.owners, fn(_base, owner) {
+          case owner.availability {
+            Available(_) -> False
+            Unavailable(since) -> now - since >= replica_retention_ms
+          }
+        })
+      use <- bool.guard(when: dict.is_empty(retired), return: actor_state)
+      let crdt =
+        dict.fold(retired, actor_state.crdt, fn(crdt, _base, owner) {
+          compact_replica(crdt, owner.replica)
+        })
+      let owners =
+        dict.fold(retired, sync.owners, fn(owners, base, _) {
+          dict.delete(owners, base)
+        })
+      // Dropping a base's freshness record is safe only after revoking every
+      // pre-compaction reply, including requests to unconfirmed old owners.
+      ActorState(
+        ..actor_state,
+        crdt: crdt,
+        sync: Some(SyncState(..sync, owners: owners, requests: dict.new())),
+      )
+    }
+  }
+}
+
 fn request_snapshot(
   sync: SyncState,
   pubsub_instance: PubSub(SyncPayload),
@@ -750,7 +1100,9 @@ fn request_snapshot(
   let round = sync.round + 1
   let pending =
     dict.get(sync.requests, member)
-    |> result.lazy_unwrap(fn() { PendingSync(reference.new(), round) })
+    |> result.lazy_unwrap(fn() {
+      PendingSync(reference.new(), round, monotonic_time_ms())
+    })
   pubsub.send_to(
     pubsub_instance,
     member,
@@ -786,67 +1138,19 @@ fn generate_ref() -> String {
   |> bit_array.base16_encode()
 }
 
-/// Separates a replica base name from its per-start incarnation suffix.
-const incarnation_separator = "@"
-
-/// Derive a unique incarnation name for this actor start.
-fn incarnate_replica(base: String) -> String {
-  base
-  <> incarnation_separator
-  <> bit_array.base16_encode(crypto.strong_random_bytes(4))
+fn compact_replica(crdt: State, replica: String) -> State {
+  let #(crdt, _diff) = state.replica_down(crdt, replica)
+  state.remove_down_replica(crdt, replica)
 }
 
-/// Recover the configured base from an incarnation-qualified replica name.
+/// Reduce a state to the data its own replica owns.
 ///
-/// The suffix we mint never contains the separator, so everything before
-/// the last separator is the base — even when the base itself contains one
-/// (e.g. Erlang-style `app@host` names). Names without a separator (from
-/// nodes running older beryl versions) are their own base.
-fn base_replica(replica: String) -> String {
-  case list.reverse(string.split(replica, incarnation_separator)) {
-    [_suffix, ..rest] if rest != [] ->
-      string.join(list.reverse(rest), incarnation_separator)
-    _ -> replica
-  }
-}
-
-/// Prune CRDT state left behind by dead incarnations of the given live
-/// replicas (the sync sender and ourselves).
-///
-/// This is the beryl-side workaround for replica reuse across restarts
-/// (first-class incarnations are proposed upstream in lattice): any replica
-/// sharing a live replica's base but not its suffix belongs to a dead
-/// predecessor. Hide it (emitting leave diffs through `on_diff`) and prune
-/// it. A lagging peer can briefly resurrect pruned entries until it
-/// observes the live incarnation itself; the prune re-applies on every
-/// sync, so the cluster converges within about one broadcast interval.
-///
-/// Returns the pruned CRDT along with every topic its pruning touched, so
-/// the caller can republish exactly those topics' read-model snapshots.
-fn prune_superseded(
-  config: Config,
-  crdt: State,
-  live: List(String),
-) -> #(State, List(String)) {
-  let stale =
-    dict.keys(state.compacted_clocks(crdt))
-    |> list.filter(fn(replica) {
-      list.any(live, fn(live_replica) {
-        replica != live_replica
-        && base_replica(replica) == base_replica(live_replica)
-      })
-    })
-  list.fold(stale, #(crdt, []), fn(pruned, replica) {
-    let #(crdt, touched_topics) = pruned
-    let #(crdt, down_diff) = state.replica_down(crdt, replica)
-    let diff = wrap_state_diff(down_diff)
-    maybe_invoke_on_diff(config, diff)
-    let crdt = state.remove_down_replica(crdt, replica)
-    let newly_touched =
-      list.append(dict.keys(diff.joins), dict.keys(diff.leaves))
-    #(crdt, list.append(touched_topics, newly_touched))
-  })
-}
+/// beryl replicates one full state per owner. The dependency's lifecycle API
+/// keeps a high-water clock for every replica it removes, which is correct for
+/// local state but wrong to relay: a receiver that adopted a peer's clocks for
+/// a third replica would treat that replica's later entries as already seen.
+@external(erlang, "beryl_presence_state_ffi", "owner_snapshot")
+fn owner_snapshot(crdt: State) -> State
 
 /// Merge the server-generated tracking ref into the tracked meta as
 /// `phx_ref`, matching Phoenix behaviour. Phoenix client `Presence` helpers
@@ -939,7 +1243,11 @@ pub fn untrack(
   call(presence, fn(reply) { Untrack(ref, reply) })
 }
 
-/// Untrack all presences for a session, such as when a socket disconnects.
+/// Untrack all presences locally tracked for a session, such as when a socket
+/// disconnects.
+///
+/// Replicated entries owned by another presence actor are not removed, even
+/// when they use the same session ID.
 ///
 /// Returns a typed call error on admission failure, owner exit, or timeout.
 /// A timeout cancels pending work, but a running mutation may still complete.
@@ -1169,8 +1477,10 @@ fn handle_message(
       handle_available_work(actor_state)
     }
     Track(topic, key, session_id, meta, reply) -> {
-      let #(new_state, ref, _meta) =
-        do_track(actor_state, topic, key, session_id, meta, SupersedeNothing)
+      use #(new_state, ref, _meta) <- continue_with_track(
+        actor_state,
+        do_track(actor_state, topic, key, session_id, meta, SupersedeNothing),
+      )
       log_tracked(logger, topic, key, session_id, ref)
       // The read model was published inside `do_track`, before this reply,
       // so a `track(); list()` caller always observes the entry it just
@@ -1182,7 +1492,8 @@ fn handle_message(
     Update(ref, meta, reply) -> {
       case dict.get(actor_state.refs, ref) {
         Ok(TrackedPresence(topic, key, session_id, _, _, PublicOwner)) -> {
-          let #(new_state, new_ref, _meta) =
+          use #(new_state, new_ref, _meta) <- continue_with_track(
+            actor_state,
             do_track(
               actor_state,
               topic,
@@ -1190,7 +1501,8 @@ fn handle_message(
               session_id,
               meta,
               SupersedePublicRef(ref),
-            )
+            ),
+          )
           log_tracked(logger, topic, key, session_id, new_ref)
           reply(Ok(new_ref))
           actor.continue(new_state)
@@ -1214,15 +1526,19 @@ fn handle_message(
       reply,
     ) ->
       case process.is_alive(owner) {
-        False -> {
-          let assert Ok(Nil) =
-            work_queue.activate_cleanup(actor_state.inbox, owner)
-          process.send(reply, MutationAck(tag, operation_id, Untracked))
-          actor.continue(actor_state)
-        }
+        False ->
+          handle_dead_track_owner(
+            actor_state,
+            owner,
+            tag,
+            operation_id,
+            reply,
+            logger,
+          )
         True -> {
           let actor_state = monitor_runtime_owner(actor_state, owner)
-          let #(new_state, ref, stored_meta) =
+          use #(new_state, ref, stored_meta) <- continue_with_track(
+            actor_state,
             do_track(
               actor_state,
               topic,
@@ -1230,7 +1546,8 @@ fn handle_message(
               session_id,
               meta,
               SupersedeSameKey(explicit: replace, owner: owner),
-            )
+            ),
+          )
           log_tracked(logger, topic, key, session_id, ref)
           process.send(
             reply,
@@ -1241,33 +1558,46 @@ fn handle_message(
       }
 
     Untrack(ref, reply) -> {
-      let new_state = do_untrack_refs(actor_state, [ref])
-      reply(Nil)
-      actor.continue(new_state)
+      case do_untrack_refs(actor_state, [ref]) {
+        Ok(new_state) -> {
+          reply(Nil)
+          actor.continue(new_state)
+        }
+        Error(ReadTableUnavailable) -> actor.stop()
+      }
     }
 
     UntrackAsync(refs, tag, operation_id, reply) -> {
-      let new_state = do_untrack_refs(actor_state, refs)
-      process.send(reply, MutationAck(tag, operation_id, Untracked))
-      actor.continue(new_state)
+      case do_untrack_refs(actor_state, refs) {
+        Ok(new_state) -> {
+          process.send(reply, MutationAck(tag, operation_id, Untracked))
+          actor.continue(new_state)
+        }
+        Error(ReadTableUnavailable) -> actor.stop()
+      }
     }
 
     UntrackAll(session_id, reply) -> {
-      let new_state = do_untrack_all(actor_state, session_id)
-      reply(Nil)
-      actor.continue(new_state)
+      case do_untrack_all(actor_state, session_id) {
+        Ok(new_state) -> {
+          reply(Nil)
+          actor.continue(new_state)
+        }
+        Error(ReadTableUnavailable) -> actor.stop()
+      }
     }
 
     UntrackRuntimeOwner(owner) ->
-      actor.continue(
-        do_untrack_runtime_owner(actor_state, owner)
-        |> fn(state) {
-          ActorState(
-            ..state,
-            runtime_owners: set.delete(state.runtime_owners, owner),
+      case do_untrack_runtime_owner(actor_state, owner) {
+        Ok(state) ->
+          actor.continue(
+            ActorState(
+              ..state,
+              runtime_owners: set.delete(state.runtime_owners, owner),
+            ),
           )
-        },
-      )
+        Error(ReadTableUnavailable) -> actor.stop()
+      }
 
     BroadcastTick -> {
       case actor_state.config.pubsub, actor_state.self_subject {
@@ -1295,6 +1625,60 @@ fn handle_message(
     }
 
     RemoteSnapshot(reply) -> handle_snapshot(actor_state, reply)
+    RemoteReplicaDown(down) ->
+      actor.continue(handle_replica_down(actor_state, down))
+    RetirementTick -> {
+      case actor_state.self_subject {
+        Some(subject) -> schedule_retirement_tick(subject)
+        None -> Nil
+      }
+      actor.continue(retire_unavailable(actor_state))
+    }
+  }
+}
+
+fn handle_dead_track_owner(
+  actor_state: ActorState,
+  owner: process.Pid,
+  tag: String,
+  operation_id: Int,
+  reply: Subject(MutationAck),
+  logger: log.Logger,
+) -> actor.Next(ActorState, Message) {
+  let cleanup = case work_queue.activate_cleanup(actor_state.inbox, owner) {
+    Ok(Nil) -> Ok(actor_state)
+    Error(error) -> {
+      log.warn(logger, "Presence cleanup activation failed", [
+        #("reason", overload.describe(error)),
+      ])
+      // This actor owns the state, so direct cleanup is the safe fallback
+      // when its queue cannot schedule the obligation.
+      do_untrack_runtime_owner(actor_state, owner)
+    }
+  }
+  case cleanup {
+    Ok(actor_state) -> {
+      process.send(reply, MutationAck(tag, operation_id, Untracked))
+      actor.continue(actor_state)
+    }
+    Error(ReadTableUnavailable) -> actor.stop()
+  }
+}
+
+type TrackMutationError {
+  InvalidCrdtState(Nil)
+  PublicationFailed(ReadTableWriteError)
+}
+
+fn continue_with_track(
+  actor_state: ActorState,
+  tracked: Result(value, TrackMutationError),
+  next: fn(value) -> actor.Next(ActorState, Message),
+) -> actor.Next(ActorState, Message) {
+  case tracked {
+    Ok(value) -> next(value)
+    Error(InvalidCrdtState(_)) -> actor.continue(actor_state)
+    Error(PublicationFailed(_)) -> actor.stop()
   }
 }
 
@@ -1490,7 +1874,8 @@ fn superseded_refs(
 
 /// Track one key, superseding previous refs for it (see `Supersede`) in the
 /// same turn. Returns the new actor state, the generated ref, and the meta
-/// as stored (the caller's meta with `phx_ref` merged in).
+/// as stored (the caller's meta with `phx_ref` merged in). Returns an error
+/// if the CRDT does not expose the local clock that `state.join` must create.
 fn do_track(
   actor_state: ActorState,
   topic: String,
@@ -1498,7 +1883,7 @@ fn do_track(
   session_id: String,
   meta: json.Json,
   supersede: Supersede,
-) -> #(ActorState, String, json.Json) {
+) -> Result(#(ActorState, String, json.Json), TrackMutationError) {
   let ref = generate_ref()
   let stored_meta = meta_with_phx_ref(meta, ref)
   // Superseding removes the old entries and adds the new one before
@@ -1518,7 +1903,17 @@ fn do_track(
     SupersedeSameKey(owner:, ..) -> RuntimeOwner(owner)
   }
   let replica = state.replica(new_crdt)
-  let assert Ok(clock) = dict.get(state.compacted_clocks(new_crdt), replica)
+  // state.join inserts this clock. Keep the lookup fallible so a dependency
+  // contract regression rejects the mutation instead of crashing the library.
+  use clock <- result.try(
+    dict.get(state.compacted_clocks(new_crdt), replica)
+    |> result.map_error(fn(error) {
+      log.error(internal.logger("beryl.presence"), "Local CRDT clock missing", [
+        #("replica", replica),
+      ])
+      InvalidCrdtState(error)
+    }),
+  )
   maybe_invoke_on_diff(
     actor_state.config,
     Diff(
@@ -1528,6 +1923,7 @@ fn do_track(
         ]),
       ]),
       leaves: removed.leaves,
+      scope: Cluster,
     ),
   )
   let new_refs =
@@ -1543,94 +1939,94 @@ fn do_track(
         owner: owner,
       ),
     )
-  publish_topics(
-    actor_state.read_table,
-    new_crdt,
-    unique_strings([topic, ..removed.topics], set.new(), []),
+  use _ <- result.try(
+    publish_topics(
+      actor_state.read_table,
+      new_crdt,
+      unique_strings([topic, ..removed.topics], set.new(), []),
+    )
+    |> publication_result
+    |> result.map_error(fn(error) { PublicationFailed(error) }),
   )
-  #(ActorState(..actor_state, crdt: new_crdt, refs: new_refs), ref, stored_meta)
+  Ok(#(
+    ActorState(..actor_state, crdt: new_crdt, refs: new_refs),
+    ref,
+    stored_meta,
+  ))
 }
 
 /// Remove every named ref in one turn. Unknown or already-removed refs are
 /// skipped; a batch that removes no live CRDT entry invokes no callback, but
 /// still prunes any dangling refs it named.
-fn do_untrack_refs(actor_state: ActorState, refs: List(String)) -> ActorState {
+fn do_untrack_refs(
+  actor_state: ActorState,
+  refs: List(String),
+) -> Result(ActorState, ReadTableWriteError) {
   let removed = remove_refs(actor_state.crdt, actor_state.refs, refs)
   use <- bool.guard(
     when: removed.topics == [],
-    return: ActorState(..actor_state, refs: removed.refs),
+    return: Ok(ActorState(..actor_state, refs: removed.refs)),
   )
   maybe_invoke_on_diff(
     actor_state.config,
-    Diff(joins: dict.new(), leaves: removed.leaves),
+    Diff(joins: dict.new(), leaves: removed.leaves, scope: Cluster),
   )
   internal.logger("beryl.presence")
   |> log.debug("Presence untracked", [
     #("ref_count", int.to_string(list.length(refs))),
     #("topics", string.join(dict.keys(removed.leaves), ",")),
   ])
-  publish_topics(
-    actor_state.read_table,
-    removed.crdt,
-    unique_strings(removed.topics, set.new(), []),
+  use _ <- result.try(
+    publish_topics(
+      actor_state.read_table,
+      removed.crdt,
+      unique_strings(removed.topics, set.new(), []),
+    )
+    |> publication_result,
   )
-  ActorState(..actor_state, crdt: removed.crdt, refs: removed.refs)
+  Ok(ActorState(..actor_state, crdt: removed.crdt, refs: removed.refs))
 }
 
-fn do_untrack_all(actor_state: ActorState, session_id: String) -> ActorState {
-  let diff = leave_all_diff(actor_state.crdt, session_id)
-  let new_crdt = state.leave_by_pid(actor_state.crdt, session_id)
-  maybe_invoke_on_diff(actor_state.config, diff)
-  // Drop any refs that pointed at the removed session so they cannot leak
-  // or later leave presences they no longer own.
-  let new_refs =
-    dict.filter(actor_state.refs, fn(_ref, tracked) {
-      tracked.session_id != session_id
-    })
-  // A single session can hold presences in several topics; republish
-  // every topic the leave touched (from the pre-mutation diff).
-  publish_topics(actor_state.read_table, new_crdt, dict.keys(diff.leaves))
-  ActorState(..actor_state, crdt: new_crdt, refs: new_refs)
+fn do_untrack_all(
+  actor_state: ActorState,
+  session_id: String,
+) -> Result(ActorState, ReadTableWriteError) {
+  actor_state.refs
+  |> dict.filter(fn(_ref, tracked) { tracked.session_id == session_id })
+  |> dict.keys
+  |> do_untrack_refs(actor_state, _)
 }
 
 fn do_untrack_runtime_owner(
   actor_state: ActorState,
   owner: process.Pid,
-) -> ActorState {
+) -> Result(ActorState, ReadTableWriteError) {
   actor_state.refs
   |> dict.filter(fn(_ref, tracked) { tracked.owner == RuntimeOwner(owner) })
   |> dict.keys
   |> do_untrack_refs(actor_state, _)
 }
 
-fn leave_all_diff(crdt: State, session_id: String) -> Diff {
-  let leaves =
-    state.online_list(crdt)
-    |> list.filter(fn(entry) { entry.0 == session_id })
-    |> list.fold(dict.new(), fn(grouped, entry) {
-      let #(_, topic, key, meta) = entry
-      let existing =
-        dict.get(grouped, topic)
-        |> result.unwrap([])
-      dict.insert(grouped, topic, [
-        PresenceEntry(session_id: session_id, key: key, meta: meta),
-        ..existing
-      ])
-    })
-
-  Diff(joins: dict.new(), leaves: leaves)
-}
-
-/// Invoke the on_diff callback if configured and the diff is non-empty
+/// Invoke the on_diff callback if configured and the diff is non-empty.
 fn maybe_invoke_on_diff(config: Config, diff: Diff) -> Nil {
   case config.on_diff {
     None -> Nil
-    Some(callback) -> {
-      case dict.is_empty(diff.joins) && dict.is_empty(diff.leaves) {
-        True -> Nil
-        False -> callback(diff)
-      }
-    }
+    Some(callback) -> invoke_on_diff(callback, diff)
+  }
+}
+
+fn invoke_on_diff(callback: fn(Diff) -> Nil, diff: Diff) -> Nil {
+  use <- bool.guard(
+    when: dict.is_empty(diff.joins) && dict.is_empty(diff.leaves),
+    return: Nil,
+  )
+  case internal.rescue(fn() { callback(diff) }) {
+    Ok(Nil) -> Nil
+    Error(crash) ->
+      internal.logger("beryl.presence")
+      |> log.error("Presence on_diff callback failed", [
+        #("crash", crash),
+      ])
   }
 }
 
@@ -1647,7 +2043,7 @@ fn handle_sync_payload(
         SyncReply(
           request: payload.request,
           owner: process.self(),
-          state: actor_state.crdt,
+          state: owner_snapshot(actor_state.crdt),
         ),
       )
       case payload.request_back {
@@ -1712,6 +2108,8 @@ fn handle_snapshot(
                 ),
               ),
             ),
+            reply.owner,
+            pending.round,
             reply.state,
           )
         // Duplicates and replies to requests cancelled by membership loss.
@@ -1722,39 +2120,36 @@ fn handle_snapshot(
 
 fn merge_remote_sync(
   actor_state: ActorState,
+  owner: process.Pid,
+  round: Int,
   remote_state: State,
 ) -> actor.Next(ActorState, Message) {
   // Crash boundary — see internal.rescue. Version skew or bugs can produce
   // malformed sync state; Erlang distribution peers are fully trusted (see
   // the production-hardening guide). Preserve the previous actor state unless
-  // merge, on_diff, prune, and read-model publication all complete.
+  // merge, prune, and read-model publication all complete. `on_diff` has its
+  // own callback-only boundary, so its failure cannot discard a valid merge.
   let processed =
     internal.rescue(fn() {
-      let #(new_crdt, state_diff) =
-        state.merge_with_diff(actor_state.crdt, remote_state)
-      let diff = wrap_state_diff(state_diff)
-      maybe_invoke_on_diff(actor_state.config, diff)
-      // The merge may have (re)admitted state from dead incarnations —
-      // the sender's predecessors, or our own pre-restart self echoed back
-      // by a peer. Prune anything superseded by the two incarnations known
-      // to be live right now: the sender and ourselves.
-      let #(new_crdt, pruned_topics) =
-        prune_superseded(actor_state.config, new_crdt, [
-          state.replica(remote_state),
-          state.replica(new_crdt),
-        ])
-      // Republish every topic touched by either the merge or the prune,
-      // from the final crdt, in one pass — readers only ever see the
-      // fully-merged-and-pruned snapshot, never an intermediate one.
-      let touched_topics =
-        list.append(dict.keys(diff.joins), dict.keys(diff.leaves))
-        |> list.append(pruned_topics)
-        |> unique_strings(set.new(), [])
-      publish_topics(actor_state.read_table, new_crdt, touched_topics)
-      ActorState(..actor_state, crdt: new_crdt)
+      let sender = state.replica(remote_state)
+      case accepts_snapshot(actor_state, sender, owner, round) {
+        False -> {
+          log.debug(
+            internal.logger("beryl.presence"),
+            "Ignored stale presence incarnation",
+            [
+              #("replica", sender),
+            ],
+          )
+          Error(SyncRejected)
+        }
+        True -> merged_snapshot(actor_state, sender, remote_state)
+      }
     })
   case processed {
-    Ok(next_state) -> actor.continue(next_state)
+    Ok(Ok(#(next_state, sender))) ->
+      actor.continue(watch_replica(next_state, sender, owner, round))
+    Ok(Error(_)) -> actor.continue(actor_state)
     Error(crash) -> {
       let logger = internal.logger("beryl.presence")
       logger
@@ -1764,4 +2159,91 @@ fn merge_remote_sync(
       actor.continue(actor_state)
     }
   }
+}
+
+fn accepts_snapshot(
+  actor_state: ActorState,
+  sender: String,
+  owner: process.Pid,
+  round: Int,
+) -> Bool {
+  let base = state.base_replica(sender)
+  !state.same_base(sender, state.replica(actor_state.crdt))
+  && case actor_state.sync {
+    None -> False
+    Some(sync) ->
+      case dict.get(sync.owners, base) {
+        Error(Nil) -> True
+        Ok(current) ->
+          { current.replica == sender && current.pid == owner }
+          || round > current.confirmed_round
+      }
+  }
+}
+
+/// Merge an accepted snapshot after retiring the sender's predecessors.
+///
+/// Returns an error when the sender conflicts with this replica's identity.
+/// Dropping the round keeps local state authoritative.
+type SyncProcessingError {
+  SyncRejected
+  SyncPublicationFailed(ReadTableWriteError)
+}
+
+fn merged_snapshot(
+  actor_state: ActorState,
+  sender: String,
+  remote_state: State,
+) -> Result(#(ActorState, String), SyncProcessingError) {
+  // accepts_snapshot rejects local-base senders first. Match the dependency
+  // error too, so this library remains total if either contract changes.
+  use #(crdt, _diff) <- result.try(
+    state.supersede(actor_state.crdt, sender)
+    |> result.map_error(fn(error) {
+      let state.CannotSupersedeLocalReplica(local_replica, remote_replica) =
+        error
+      internal.logger("beryl.presence")
+      |> log.error("Refused to retire the local presence replica", [
+        #("local_replica", local_replica),
+        #("remote_replica", remote_replica),
+      ])
+      SyncRejected
+    }),
+  )
+  case state.merge(crdt, owner_snapshot(remote_state)) {
+    Ok(crdt) -> {
+      let #(crdt, _diff) = state.replica_up(crdt, sender)
+      use actor_state <- result.try(
+        commit_replication(actor_state, crdt)
+        |> result.map_error(fn(error) { SyncPublicationFailed(error) }),
+      )
+      Ok(#(actor_state, sender))
+    }
+    Error(state.SameReplica(replica)) -> {
+      telemetry.emit(
+        actor_state.config.telemetry,
+        telemetry.PresenceSyncRejected,
+      )
+      internal.logger("beryl.presence")
+      |> log.error("Dropped presence sync that claims this replica identity", [
+        #("local_replica", state.replica(actor_state.crdt)),
+        #("remote_replica", sender),
+        #("conflicting_replica", replica),
+      ])
+      Error(SyncRejected)
+    }
+  }
+}
+
+fn commit_replication(
+  actor_state: ActorState,
+  crdt: State,
+) -> Result(ActorState, ReadTableWriteError) {
+  let diff = visible_diff(actor_state.crdt, crdt)
+  maybe_invoke_on_diff(actor_state.config, diff)
+  use _ <- result.try(
+    publish_topics(actor_state.read_table, crdt, diff_topics(diff))
+    |> publication_result,
+  )
+  Ok(ActorState(..actor_state, crdt: crdt))
 }

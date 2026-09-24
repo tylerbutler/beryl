@@ -1,5 +1,5 @@
 -module(beryl_telemetry_ffi).
--export([execute/1, monotonic_time/0, mailbox_length/0]).
+-export([execute/1, mailbox_length/0]).
 
 execute({queue_occupancy,
          {occupancy, Boundary, Items, Bytes, MaxItems, MaxBytes,
@@ -71,10 +71,14 @@ execute({broadcast_stop, Duration, Recipients, Origin}) ->
         },
         #{origin => broadcast_origin(Origin)}
     ),
+    nil;
+execute(presence_sync_rejected) ->
+    telemetry:execute(
+        [beryl, presence, sync, rejected],
+        #{count => 1},
+        #{reason => same_replica}
+    ),
     nil.
-
-monotonic_time() ->
-    erlang:monotonic_time().
 
 mailbox_length() ->
     {message_queue_len, Length} =
