@@ -172,6 +172,17 @@ pub fn release_bypasses_saturation_and_is_coalesced_test() -> Nil {
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
+pub fn bind_and_release_tolerate_unavailable_limiter_test() -> Nil {
+  let sockets = start(4, 4096)
+  let assert Ok(first) = transport.acquire_connection_slot(sockets, "192.0.2.1")
+  let assert Ok(second) =
+    transport.acquire_connection_slot(sockets, "192.0.2.2")
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  transport.bind_connection_slot(first) |> should.equal(Error(Nil))
+  transport.release_connection_slot(first)
+  transport.release_connection_slot(second)
+}
+
 pub fn replacement_discards_pending_work_but_preserves_holders_test() -> Nil {
   use <- unitest.tag("serial")
   let sockets = start(4, 4096)

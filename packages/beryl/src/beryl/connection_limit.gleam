@@ -830,10 +830,19 @@ pub fn bind_optional(permit: Option(Permit)) -> Result(Nil, Nil) {
   }
 }
 
+@external(erlang, "beryl_ffi", "pin_subject")
+fn pin_subject(
+  subject: Subject(message),
+) -> Result(#(Subject(message), Pid), Nil)
+
 /// Release a previously acquired slot.
 fn release(permit: Permit) -> Nil {
   use <- bool.guard(when: !cancel_reservation_token(permit.token), return: Nil)
-  process.send(permit.limiter.subject, Release(permit.reservation))
+  // Cancel before resolving the owner so restart recovery can reclaim the slot.
+  case pin_subject(permit.limiter.subject) {
+    Ok(#(subject, _owner)) -> process.send(subject, Release(permit.reservation))
+    Error(Nil) -> Nil
+  }
 }
 
 /// Release a slot if one was acquired.
