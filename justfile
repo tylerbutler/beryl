@@ -43,6 +43,11 @@ build-strict:
 test *PACKAGES:
     BERYL_PARALLEL_TESTS=1 trellis run test {{ PACKAGES }}
     @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) cd packages/beryl && gleam test -- --tag serial ;; esac
+    @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) just test-distributed ;; esac
+
+# Real-node PubSub and presence recovery, including the 60-second retirement policy
+test-distributed:
+    cd packages/beryl && gleam build && erl +S 4:4 -noshell -pa build/dev/erlang/*/ebin -eval 'case eunit:test(beryl_presence_distributed_test, [verbose]) of ok -> halt(0); _ -> halt(1) end.'
 
 # === CODE QUALITY ===
 

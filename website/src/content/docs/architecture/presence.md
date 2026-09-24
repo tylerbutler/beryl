@@ -116,6 +116,13 @@ PubSub copies presence state between nodes.
 
 ## Sync between nodes
 
+Each presence actor owns its local tracked entries and refs. A successful
+mutation commits that actor's CRDT and ETS read model before it returns.
+Remote entries form an eventually convergent view of other actors' state;
+a local read does not certify a cluster-wide snapshot or a remote session's
+liveness. Replicas converge after mutations stop if they continue to exchange
+snapshots over direct connections.
+
 When you configure `with_pubsub`, the presence actor requests snapshots once
 at startup and then at the configured interval, which defaults to 1500 ms:
 
@@ -149,10 +156,20 @@ Presence uses version 2 of its internal sync envelope. Version 1 unsolicited
 snapshots and version 2 requests do not interoperate; upgrade the replicas in
 a presence scope together. The frozen five-element PubSub tuple is unchanged.
 
-Automated tests cover quiet bootstrap, partition repair, empty restart, and
-`pg` recovery across separate BEAM nodes, as well as same-node replication.
-[Issue #365](https://github.com/tylerbutler/beryl/issues/365) tracks the broader
-distributed PubSub and presence matrix.
+Run `just test-distributed` for the real-node recovery matrix. `just test beryl`
+includes it alongside the same-node tests, and CI runs it on Erlang 27 and 28.
+
+| Scenario | Required result |
+|---|---|
+| PubSub across nodes | Exact scope, topic, event, payload, and sender; scope isolation and local/remote sender exclusion |
+| Independent mutations | Both actors' CRDT and ETS views contain the same session, key, and metadata identities |
+| Update and untrack | Replacement metadata, refs, joins, and leaves reach the peer without an unrelated mutation |
+| Idle bootstrap | A newcomer receives an unchanged owner's snapshot |
+| Partition and `pg` recovery | A peer receives missed changes after reconnection without a new mutation |
+| Empty actor or node restart | The restarted replica recovers live peers' entries and does not restore its old entries |
+| Permanent departure | The observer hides the departed owner's entries, preserves live peers, and keeps ghosts hidden through later local mutations |
+| Delayed old-incarnation reply | An older reply cannot displace a confirmed replacement |
+| Retirement and lagging peers | The 60-second policy revokes old requests; forwarded history cannot restore retired entries |
 
 ## Replica availability
 

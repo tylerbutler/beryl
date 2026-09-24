@@ -4,12 +4,117 @@
          begin_outage/1, end_outage/1, diff_history/1,
          retained/1, replica/1, crdt/1, request_round/1, pending_request/2,
          start_reply_gate/1, held_reply_count/1, release_replies/1,
-         start_lagging_replica/2, start_held_replica/2, legacy_snapshot/1]).
+         start_lagging_replica/2, start_held_replica/2, legacy_snapshot/1,
+         start_subscriber/1, broadcast_matrix/1, detailed_view/1,
+         detailed_diffs/1]).
 
 -define(TOPIC, <<"room:distributed">>).
 -define(SYNC_TOPIC, <<"beryl:presence:sync">>).
 -define(SCOPE, <<"beryl_presence_distributed_test">>).
 -define(SOCKET_SCOPE, <<"beryl_presence_socket_frames_test">>).
+-define(PUBSUB_SCOPE, <<"beryl_distributed_pubsub">>).
+-define(ISOLATED_SCOPE, <<"beryl_distributed_isolated">>).
+
+pubsub_wire_scope_and_sender_exclusion_test_() ->
+    {timeout, 30, fun() ->
+        with_peers(2, fun([A, B]) ->
+            connect(A, B),
+            Local = call(A, ?MODULE, start_subscriber, [[?PUBSUB_SCOPE]]),
+            Remote = call(B, ?MODULE, start_subscriber, [[?PUBSUB_SCOPE]]),
+            Both = call(B, ?MODULE, start_subscriber,
+                [[?PUBSUB_SCOPE, ?ISOLATED_SCOPE]]),
+            Isolated = call(B, ?MODULE, start_subscriber, [[?ISOLATED_SCOPE]]),
+            lists:foreach(fun({Scope, Count}) ->
+                PubSub = presence_pubsub(A, Scope),
+                await({pubsub_members, element(2, A), Scope}, fun() ->
+                    call(A, 'beryl@pubsub', subscriber_count, [PubSub, ?TOPIC])
+                        =:= Count
+                end)
+            end, [{?PUBSUB_SCOPE, 3}, {?ISOLATED_SCOPE, 2}]),
+            %% The broadcast worker sends barriers over the same distribution
+            %% channel as the messages. Negative assertions need no sleep.
+            Histories = call(A, ?MODULE, broadcast_matrix,
+                [[Local, Remote, Both, Isolated]]),
+            Scope = binary_to_atom(?PUBSUB_SCOPE, utf8),
+            Other = binary_to_atom(?ISOLATED_SCOPE, utf8),
+            Payload = #{<<"body">> => <<"across-nodes">>, <<"version">> => 1},
+            System = {Scope, ?TOPIC, <<"system">>, Payload, system},
+            FromRemote = {Scope, ?TOPIC, <<"remote-excluded">>, Payload,
+                {from_pid, Remote}},
+            FromLocal = {Scope, ?TOPIC, <<"local-excluded">>, Payload,
+                {from_pid, Local}},
+            IsolatedMessage = {Other, ?TOPIC, <<"isolated">>,
+                {different, payload}, system},
+            ?assertEqual([System, FromRemote], maps:get(Local, Histories)),
+            ?assertEqual([System, FromLocal], maps:get(Remote, Histories)),
+            ?assertEqual([System, FromRemote, FromLocal, IsolatedMessage],
+                maps:get(Both, Histories)),
+            ?assertEqual([IsolatedMessage], maps:get(Isolated, Histories))
+        end)
+    end}.
+
+independent_mutations_update_and_untrack_test_() ->
+    {timeout, 30, fun() ->
+        with_peers(2, fun([A, B]) ->
+            Source = start(A, <<"source">>, 30),
+            Receiver = start(B, <<"receiver">>, 30),
+            %% Both actors mutate while isolated, before pg can propagate.
+            {ok, RefA} = track(A, Source, <<"entry-a">>),
+            {ok, RefB} = track(B, Receiver, <<"entry-b">>),
+            EntryA = {<<"entry-a">>, <<"entry-a">>, null},
+            EntryB = {<<"entry-b">>, <<"entry-b">>, null},
+            connect(A, B),
+            lists:foreach(fun({Peer, Instance}) ->
+                await_details(Peer, Instance, [EntryA, EntryB]),
+                await_detailed_diffs(Peer, Instance, [EntryA, EntryB], [])
+            end, [{A, Source}, {B, Receiver}]),
+            Meta = 'gleam@json':object([
+                {<<"status">>, 'gleam@json':string(<<"updated">>)}]),
+            {ok, NewRef} = presence_call(A, update, [handle(Source), RefA, Meta]),
+            Updated = {<<"entry-a">>, <<"entry-a">>,
+                #{<<"status">> => <<"updated">>, <<"phx_ref">> => NewRef}},
+            lists:foreach(fun({Peer, Instance}) ->
+                await_details(Peer, Instance, [Updated, EntryB]),
+                await_detailed_diffs(Peer, Instance,
+                    [EntryA, EntryB, Updated], [EntryA])
+            end, [{A, Source}, {B, Receiver}]),
+            {ok, nil} = presence_call(B, untrack, [handle(Receiver), RefB]),
+            lists:foreach(fun({Peer, Instance}) ->
+                await_details(Peer, Instance, [Updated]),
+                await_detailed_diffs(Peer, Instance,
+                    [EntryA, EntryB, Updated], [EntryA, EntryB])
+            end, [{A, Source}, {B, Receiver}])
+        end)
+    end}.
+
+empty_node_restart_repairs_without_track_test_() ->
+    {timeout, 30, fun() ->
+        with_peers(2, fun([{Controller, Node} = A, B]) ->
+            connect(A, B),
+            Source = start(A, <<"source">>, 30),
+            Receiver = start(B, <<"receiver">>, 30),
+            {ok, _} = track(A, Source, <<"old-node-entry">>),
+            {ok, _} = track(B, Receiver, <<"survivor">>),
+            await_view(B, Receiver, [<<"old-node-entry">>, <<"survivor">>]),
+            OldReplica = call(A, ?MODULE, replica, [Source]),
+            ok = peer:stop(Controller),
+            await_view(B, Receiver, [<<"survivor">>]),
+            [Name, _Host] = string:split(atom_to_list(Node), "@"),
+            with_peer(Name, fun(Restarted) ->
+                ?assertEqual(Node, element(2, Restarted)),
+                Empty = start(Restarted, <<"source">>, 30),
+                ?assertNotEqual(OldReplica, call(Restarted, ?MODULE, replica, [Empty])),
+                connect(Restarted, B),
+                await_view(Restarted, Empty, [<<"survivor">>]),
+                await_view(B, Receiver, [<<"survivor">>]),
+                await({empty_replacement_pruned, element(2, B)}, fun() ->
+                    #{entry_replicas := Replicas} =
+                        call(B, ?MODULE, retained, [Receiver]),
+                    not lists:member(OldReplica, Replicas)
+                end)
+            end)
+        end)
+    end}.
 
 presence_scope_outage_diffs_stay_on_observing_node_test_() ->
     {timeout, 30, fun() ->
@@ -189,7 +294,12 @@ actor_failure_hides_only_its_entries_test_() ->
             await_diff(B, Receiver, leaves, [<<"gone">>, <<"gone">>]),
             #{clocks := Clocks, entries := 4} =
                 call(B, ?MODULE, retained, [Receiver]),
-            ?assert(maps:is_key(SourceReplica, Clocks))
+            ?assert(maps:is_key(SourceReplica, Clocks)),
+            {ok, _} = track(B, Receiver, <<"after-departure">>),
+            lists:foreach(fun({Peer, Instance}) ->
+                await_view(Peer, Instance,
+                    [<<"after-departure">>, <<"healthy">>, <<"local">>])
+            end, [{B, Receiver}, {C, Healthy}])
         end)
     end}.
 
@@ -399,9 +509,14 @@ held_predecessor(A, B) ->
 with_peers(0, Run) ->
     Run([]);
 with_peers(Count, Run) ->
+    with_peer(peer:random_name("beryl_presence"), fun(Peer) ->
+        with_peers(Count - 1, fun(Peers) -> Run([Peer | Peers]) end)
+    end).
+
+with_peer(Name, Run) ->
     Paths = [filename:absname(Path) || Path <- code:get_path()],
     {ok, Controller, Node} = peer:start_link(#{
-        name => peer:random_name("beryl_presence"),
+        name => Name,
         connection => standard_io,
         peer_down => continue,
         args => ["+S", "2:2", "+A", "1", "-connect_all", "false",
@@ -410,9 +525,12 @@ with_peers(Count, Run) ->
     Peer = {Controller, Node},
     try
         _ = presence_pubsub(Peer),
-        with_peers(Count - 1, fun(Peers) -> Run([Peer | Peers]) end)
+        Run(Peer)
     after
-        peer:stop(Controller)
+        case is_process_alive(Controller) of
+            true -> peer:stop(Controller);
+            false -> ok
+        end
     end.
 
 call({Controller, _Node}, Module, Function, Arguments) ->
@@ -511,6 +629,78 @@ handle(#{handle := Presence}) -> Presence.
 track(Peer, Instance, Key) ->
     presence_call(Peer, track,
         [handle(Instance), ?TOPIC, Key, Key, 'gleam@json':null()]).
+
+start_subscriber(Scopes) ->
+    Parent = self(),
+    Ref = make_ref(),
+    Pid = spawn(fun() ->
+        lists:foreach(fun(Scope) ->
+            PubSub = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(Scope)),
+            Subscriber = 'beryl@pubsub':subscriber(PubSub),
+            nil = 'beryl@pubsub':join(Subscriber, ?TOPIC)
+        end, Scopes),
+        Parent ! {Ref, ready},
+        collect_broadcasts([])
+    end),
+    receive {Ref, ready} -> Pid
+    after 5000 -> error({subscriber_start_timeout, node(), Scopes})
+    end.
+
+collect_broadcasts(Messages) ->
+    receive
+        Message = {Scope, ?TOPIC, _Event, _Payload, _From}
+                when Scope =:= beryl_distributed_pubsub;
+                     Scope =:= beryl_distributed_isolated ->
+            collect_broadcasts([Message | Messages]);
+        {broadcast_barrier, Caller, Ref} ->
+            Caller ! {Ref, self(), lists:reverse(Messages)},
+            collect_broadcasts([])
+    end.
+
+broadcast_matrix([Local, Remote, _Both, _Isolated] = Subscribers) ->
+    PubSub = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(?PUBSUB_SCOPE)),
+    Isolated = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(?ISOLATED_SCOPE)),
+    Payload = #{<<"body">> => <<"across-nodes">>, <<"version">> => 1},
+    nil = 'beryl@pubsub':broadcast(PubSub, ?TOPIC, <<"system">>, Payload),
+    nil = 'beryl@pubsub':broadcast_from(
+        PubSub, Remote, ?TOPIC, <<"remote-excluded">>, Payload),
+    nil = 'beryl@pubsub':broadcast_from(
+        PubSub, Local, ?TOPIC, <<"local-excluded">>, Payload),
+    nil = 'beryl@pubsub':broadcast(
+        Isolated, ?TOPIC, <<"isolated">>, {different, payload}),
+    Ref = make_ref(),
+    lists:foreach(fun(Pid) -> Pid ! {broadcast_barrier, self(), Ref} end, Subscribers),
+    maps:from_list([receive
+        {Ref, Pid, Messages} -> {Pid, Messages}
+    after 5000 -> error({broadcast_barrier_timeout, node(Pid), Pid})
+    end || Pid <- Subscribers]).
+
+decoded_entry({presence_entry, Session, Key, Meta}) ->
+    decoded_entry({Session, Key, Meta});
+decoded_entry({Session, Key, Meta}) ->
+    {Session, Key, json:decode('gleam@json':to_string(Meta))}.
+
+detailed_view(#{handle := Presence, pid := Pid}) ->
+    {ok, Entries} = 'beryl@presence':list(Presence, ?TOPIC),
+    {ok, Count} = 'beryl@presence':count(Presence, ?TOPIC),
+    Crdt = element(2, sys:get_state(Pid)),
+    Online = 'lattice_presence@presence_state':get_by_topic(Crdt, ?TOPIC),
+    #{entries => lists:sort([decoded_entry(Entry) || Entry <- Entries]),
+      count => Count,
+      crdt => lists:sort([decoded_entry(Entry) || Entry <- Online])}.
+
+await_details(Peer, Instance, Entries) ->
+    Expected = lists:sort(Entries),
+    await({presence_details, element(2, Peer), Expected}, fun() ->
+        call(Peer, ?MODULE, detailed_view, [Instance]) =:=
+            #{entries => Expected, crdt => Expected, count => length(Entries)}
+    end).
+
+await_detailed_diffs(Peer, Instance, Joins, Leaves) ->
+    Expected = #{joins => lists:sort(Joins), leaves => lists:sort(Leaves)},
+    await({presence_metadata_diffs, element(2, Peer), Expected}, fun() ->
+        call(Peer, ?MODULE, detailed_diffs, [Instance]) =:= Expected
+    end).
 
 view(#{handle := Presence, pid := Pid}) ->
     {ok, Entries} = 'beryl@presence':list(Presence, ?TOPIC),
@@ -710,12 +900,22 @@ collect_diffs(Diffs) ->
     end.
 
 diff_history(#{collector := Collector}) ->
+    Diffs = collected_diffs(Collector),
+    #{joins => diff_keys(Diffs, diff_joins),
+      leaves => diff_keys(Diffs, diff_leaves)}.
+
+detailed_diffs(#{collector := Collector}) ->
+    Diffs = collected_diffs(Collector),
+    maps:from_list([{Kind, lists:sort([
+        decoded_entry(Entry) || Diff <- Diffs,
+        Entry <- apply('beryl@presence', Accessor, [Diff, ?TOPIC])])}
+        || {Kind, Accessor} <- [{joins, diff_joins}, {leaves, diff_leaves}]]).
+
+collected_diffs(Collector) ->
     Ref = make_ref(),
     Collector ! {diff_history, self(), Ref},
     receive
-        {Ref, Diffs} ->
-            #{joins => diff_keys(Diffs, diff_joins),
-              leaves => diff_keys(Diffs, diff_leaves)}
+        {Ref, Diffs} -> Diffs
     after 5000 -> error(diff_collector_timeout)
     end.
 
