@@ -106,7 +106,8 @@ pub type ForceCloseError {
 /// upgrades before the handshake as CSWSH protection. Same-origin upgrades and
 /// non-browser clients (no `Origin` header) are admitted without
 /// configuration. Each connection also has an outbound budget of 256 frames
-/// and 1 MiB of payload data. A connection that exceeds either limit is closed.
+/// and 1 MiB of retained payload binaries. A connection that exceeds either
+/// limit is closed.
 ///
 /// Add `with_on_connect` to authenticate connections and/or seed connect
 /// metadata. Use `with_allowed_origins` to set an explicit allow-list. Use
@@ -183,14 +184,20 @@ pub fn with_allow_all_origins(
   TransportConfig(..config, origin_policy: origin.AllowAll)
 }
 
-/// Set the per-connection outbound frame and payload-byte limits.
+/// Set the per-connection outbound frame and retained-payload-byte limits.
 ///
 /// `max_frames` must be from 1 through 8,388,607. `max_bytes` must be from 1
 /// through 1,099,511,627,775 (one byte less than 1 TiB). Before beryl enqueues
-/// a text or binary frame, it reserves one frame and the payload's byte size.
+/// a text or binary frame, it reserves one frame and the payload's referenced
+/// BEAM binary size. A sub-binary is charged for its full backing allocation,
+/// not only its logical length. Shared backing allocations are charged once
+/// per frame; beryl does not copy or deduplicate them.
+///
 /// If either limit would be exceeded, the frame is rejected and the slow
-/// connection is closed. Capacity is released after a successful write, a
-/// write error, or connection close.
+/// connection is closed. This transport reservation is independent of runtime
+/// work reservations and lasts until a successful write, a write error, or
+/// connection close. It is not a total-memory cap: process heaps, WebSocket
+/// framing, and transport or kernel buffers are outside this budget.
 pub fn with_outbound_limits(
   config: TransportConfig(body),
   max_frames max_frames: Int,
@@ -480,10 +487,15 @@ fn finish_upgrade(
 
 // --- Connection lifecycle ---
 
+@external(erlang, "binary", "referenced_byte_size")
+fn retained_bytes(data: BitArray) -> Int
+
 /// Outbound requests from the runtime to a connection process.
 ///
 /// Transports receive these as custom or user WebSocket messages. They send
-/// the frame or close the connection.
+/// the frame or close the connection. `bytes` is the retained binary charge,
+/// not necessarily the frame's logical length. Pass it unchanged to
+/// `finish_outbound_write`.
 pub type SendRequest {
   SendText(String, bytes: Int)
   SendBinary(BitArray, bytes: Int)
@@ -578,7 +590,7 @@ pub fn init_connection(
   // `Ok` means that the frame was admitted to the connection process mailbox.
   // It does not mean that the frame was written or received by the peer.
   let send_fn = fn(text: String) -> Result(Nil, Nil) {
-    let bytes = string.byte_size(text)
+    let bytes = retained_bytes(bit_array.from_string(text))
     case
       outbound_budget.reserve_and_send(
         budget,
@@ -598,7 +610,7 @@ pub fn init_connection(
   }
 
   let send_binary_fn = fn(data: BitArray) -> Result(Nil, Nil) {
-    let bytes = bit_array.byte_size(data)
+    let bytes = retained_bytes(data)
     case
       outbound_budget.reserve_and_send(
         budget,
@@ -700,6 +712,8 @@ pub fn close_connection(state: ConnectionState) -> Nil {
 /// On success, this releases the frame and byte reservation and keeps the
 /// connection open. On error, it releases the reservation, records the
 /// connection as closed, logs the failure, and tells the transport to stop.
+/// Pass the `bytes` from the corresponding `SendRequest` unchanged; do not
+/// recompute it from the logical frame size.
 pub fn finish_outbound_write(
   state: ConnectionState,
   bytes: Int,

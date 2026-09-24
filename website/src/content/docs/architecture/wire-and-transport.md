@@ -107,7 +107,9 @@ and peer-IP functions:
 
 **`server.with_outbound_limits(config, max_frames:, max_bytes:)`**: sets the
 finite per-connection budget reserved before outbound frames enter the
-connection mailbox. The defaults are 256 frames and 1 MiB. Exceeding either
+connection mailbox. Text and binary frames are charged for their referenced
+BEAM binary size, including a sub-binary's backing allocation, until write
+completion or close. The defaults are 256 frames and 1 MiB. Exceeding either
 limit closes the connection; frames are not silently dropped. An `Ok` send
 result means enqueued, not delivered.
 
