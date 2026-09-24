@@ -4807,7 +4807,7 @@ fn apply_accept_join(
         }
         Ok(Nil) -> {
           let state = subscribe_socket(state, socket_id, pending_join)
-          release_worker(state, socket_id, pending_join.topic)
+          let state = release_worker(state, socket_id, pending_join.topic)
           send_status_reply(
             state,
             socket_id,
@@ -6912,7 +6912,11 @@ fn serve(
       case message {
         WorkerHalt -> Error(Nil)
         WorkerGo(_) ->
-          list.try_fold(list.reverse(held), WorkerRunning(worker, link), serve)
+          list.try_fold(
+            list.reverse(held),
+            WorkerRunning(worker, WorkerLink(..link, current: None)),
+            serve,
+          )
           |> result.try(fn(state) { serve(state, WorkerAvailable) })
         WorkerAvailable | WorkerRecoveryTick | WorkerReportApplied(_) ->
           Ok(state)
@@ -6983,11 +6987,17 @@ fn serve(
             }
             _ -> Ok(state)
           }
-        WorkerTerminate(reason) ->
+        WorkerTerminate(reason) -> {
+          let link = case link.current {
+            Some(ReportReservation(input: None, ..)) ->
+              WorkerLink(..link, current: None)
+            Some(_) | None -> link
+          }
           finish_closing_worker(
             worker,
             WorkerLink(..link, terminate: Some(reason)),
           )
+        }
       }
   }
 }
@@ -7717,10 +7727,19 @@ fn execute_worker_report(
         True -> list.append(effects, [socket.KickTopic(topic_name)])
         False -> effects
       }
-      let continuation = case credit {
-        None -> ContinueDriving
-        Some(#(subscription, sequence)) ->
-          ContinueObserverCredit(subscription, sequence, ContinueDriving)
+      let continuation = case credit, continuation {
+        None, _ -> continuation
+        Some(#(subscription, sequence)),
+          ContinueAcknowledgingWorker(worker, reservation, outer)
+        -> {
+          ContinueAcknowledgingWorker(
+            worker,
+            reservation,
+            ContinueObserverCredit(subscription, sequence, outer),
+          )
+        }
+        Some(#(subscription, sequence)), _ ->
+          ContinueObserverCredit(subscription, sequence, continuation)
       }
       Continue(state, [
         StepEffects(

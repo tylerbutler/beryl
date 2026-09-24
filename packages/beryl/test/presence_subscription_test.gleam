@@ -28,6 +28,7 @@ fn start_distributed(
 
 fn stop(handle: presence.Presence) -> Nil {
   let assert Ok(owner) = process.subject_owner(presence.subject(handle))
+  process.unlink(owner)
   process.kill(owner)
 }
 
