@@ -11,10 +11,11 @@
 //// for that storage lifetime; this module does not persist buckets.
 
 import gleam/int
+import rasa/monotonic
 
-/// Erlang monotonic time in nanoseconds
-@external(erlang, "beryl_ffi", "monotonic_time_ns")
-fn monotonic_time_ns() -> Int
+fn monotonic_time_ns() -> Int {
+  monotonic.time(monotonic.Nanosecond)
+}
 
 // ── Configuration ───────────────────────────────────────────────────────────
 

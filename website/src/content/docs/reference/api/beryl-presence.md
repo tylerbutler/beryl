@@ -40,6 +40,8 @@ Distributed presence tracking with a CRDT
  merge, or prune. Synchronous mutations publish before replying, and
  runtime mutations acknowledge only after publishing, so a later read
  observes the completed mutation without waiting on the actor mailbox.
+ A read-model deletion failure stops publication and enters the mutation or
+ sync processing error path; it is never treated as a successful write.
 
  A read concurrent with a queued or in-progress mutation can observe the
  previous or new complete snapshot. Reads of separate topics do not form
@@ -495,7 +497,11 @@ pub fn untrack_all(
 ) -> Result(Nil, overload.CallError)
 ```
 
-Untrack all presences for a session, such as when a socket disconnects.
+Untrack all presences locally tracked for a session, such as when a socket
+ disconnects.
+
+ Replicated entries owned by another presence actor are not removed, even
+ when they use the same session ID.
 
  Returns a typed call error on admission failure, owner exit, or timeout.
  A timeout cancels pending work, but a running mutation may still complete.
@@ -606,7 +612,20 @@ Set the callback for diffs from local changes, remote merges, or replica
  `list`/`get_by_key`/`count` calls from other processes do not use the
  mailbox and are not delayed. A socket with an active presence effect waits
  for the callback. Callers of synchronous mutations also wait for their
- replies.
+ replies. Enqueue a small message to a bounded application-owned worker and
+ return. Do not make network calls or synchronously mutate the same presence
+ actor from this callback.
+
+ beryl catches and logs callback exceptions, exits, and throws. A callback
+ failure does not veto an otherwise successful local mutation or remote
+ merge: beryl still publishes the snapshot and replies or acknowledges.
+ beryl does not retry the callback, and it cannot roll back callback effects
+ that completed before the failure. Treat delivery as a notification, not
+ exactly-once application processing.
+
+ Presence queue snapshots and occupancy telemetry retain an admitted local
+ mutation while its callback runs. They do not impose a callback deadline,
+ apply to remote sync, or bound an application worker's mailbox.
 
 <div class="api-entry-anchor" id="api-function-with_pubsub" aria-hidden="true"></div>
 

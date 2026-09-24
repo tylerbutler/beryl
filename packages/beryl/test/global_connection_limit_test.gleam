@@ -1,11 +1,12 @@
-//// Node-wide (global) connection ceiling enforcement tests.
+//// Per-system connection ceiling enforcement tests.
 ////
 //// These exercise the same public transport-facing API
 //// (`transport.acquire_connection_slot` / `transport.bind_connection_slot` /
 //// `transport.release_connection_slot`) the Mist transport uses, but focus on
-//// node-wide ceiling configured with `beryl.with_max_connections` — the limit
-//// that bounds concurrent connections across *all* source IPs, which a per-IP
-//// limit alone cannot enforce against distributed/rotating addresses.
+//// the total ceiling configured with `beryl.with_max_connections` for one
+//// beryl system on one node. It bounds connections across *all* source IPs,
+//// which a per-IP limit alone cannot enforce against distributed or rotating
+//// addresses.
 
 import app_test_helper
 import beryl
@@ -62,7 +63,7 @@ pub fn global_zero_means_unlimited_test() -> Nil {
   Nil
 }
 
-// Connections at or below the node-wide limit are admitted regardless of which
+// Connections at or below the per-system limit are admitted regardless of which
 // IP they come from.
 pub fn admits_connections_under_global_limit_test() -> Nil {
   let channels = start_with_global_limit(3)
@@ -75,8 +76,8 @@ pub fn admits_connections_under_global_limit_test() -> Nil {
   Nil
 }
 
-// A connection that would exceed the node-wide limit is rejected even though it
-// comes from a brand-new IP — this is the distributed-source case a per-IP
+// A connection that would exceed the per-system limit is rejected even though
+// it comes from a brand-new IP — this is the distributed-source case a per-IP
 // limit cannot stop.
 pub fn rejects_connection_over_global_limit_test() -> Nil {
   let channels = start_with_global_limit(2)
@@ -92,7 +93,7 @@ pub fn rejects_connection_over_global_limit_test() -> Nil {
   Nil
 }
 
-// Releasing a slot frees node-wide capacity so a subsequent connection (from
+// Releasing a slot frees per-system capacity so a subsequent connection (from
 // any IP) succeeds. Guards against global-slot leaks on normal close.
 pub fn releasing_slot_frees_global_capacity_test() -> Nil {
   let channels = start_with_global_limit(1)
@@ -139,15 +140,15 @@ pub fn global_slot_reclaimed_when_holder_dies_without_release_test() -> Nil {
   Nil
 }
 
-// The per-IP and node-wide ceilings compose: a connection must be under both.
-// Here the node-wide ceiling refuses a second IP even though that IP is under
+// The per-IP and per-system ceilings compose: a connection must be under both.
+// Here the total ceiling refuses a second IP even though that IP is under
 // its own per-IP limit.
 pub fn per_ip_and_global_compose_test() -> Nil {
-  // Per-IP allows 5 each, but the node as a whole allows only 1.
+  // Per-IP allows 5 each, but this system as a whole allows only 1.
   let channels = start_with_both_limits(5, 1)
 
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.4.1"))
-  // Different IP, well under its per-IP limit, but the node is full.
+  // Different IP, well under its per-IP limit, but the system is full.
   transport.acquire_connection_slot(channels, "10.0.4.2")
   |> should.equal(Error(Nil))
 
@@ -155,23 +156,23 @@ pub fn per_ip_and_global_compose_test() -> Nil {
   Nil
 }
 
-// The per-IP limit still bites under a generous node-wide ceiling: a single IP
-// cannot exceed its per-IP allotment even when the node has global room.
+// The per-IP limit still bites under a generous per-system ceiling: a single IP
+// cannot exceed its per-IP allotment even when the system has total room.
 pub fn per_ip_limit_still_enforced_under_global_test() -> Nil {
   let channels = start_with_both_limits(1, 10)
 
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.5.1"))
-  // Same IP is at its per-IP limit even though the node has room.
+  // Same IP is at its per-IP limit even though the system has room.
   transport.acquire_connection_slot(channels, "10.0.5.1")
   |> should.equal(Error(Nil))
-  // A different IP is admitted (node still under its global ceiling).
+  // A different IP is admitted (the system is still under its total ceiling).
   should.be_ok(transport.acquire_connection_slot(channels, "10.0.5.2"))
 
   let assert Ok(Nil) = beryl.stop(channels)
   Nil
 }
 
-// Concurrent opens cannot race past the node-wide ceiling. Many processes
+// Concurrent opens cannot race past the per-system ceiling. Many processes
 // attempt to acquire at once; because the check-and-increment is serialized
 // inside the limiter actor, exactly `ceiling` of them succeed.
 pub fn concurrent_opens_do_not_exceed_global_ceiling_test() -> Nil {
@@ -183,7 +184,7 @@ pub fn concurrent_opens_do_not_exceed_global_ceiling_test() -> Nil {
   int.range(from: 1, to: attempts + 1, with: Nil, run: fn(_, i) {
     process.spawn_unlinked(fn() {
       // Each attempt uses a unique IP so per-IP tracking cannot be what caps
-      // the total — only the node-wide ceiling can.
+      // the total — only the per-system ceiling can.
       let ip = "10.9." <> int.to_string(i) <> ".1"
       let outcome = case transport.acquire_connection_slot(channels, ip) {
         Ok(permit) -> {
@@ -214,5 +215,23 @@ pub fn concurrent_opens_do_not_exceed_global_ceiling_test() -> Nil {
   |> should.equal(ceiling)
 
   let assert Ok(Nil) = beryl.stop(channels)
+  Nil
+}
+
+// Independently constructed systems on one node do not share total capacity.
+pub fn independent_systems_have_independent_limits_test() -> Nil {
+  let first = start_with_global_limit(1)
+  let second = start_with_global_limit(1)
+
+  should.be_ok(transport.acquire_connection_slot(first, "10.10.0.1"))
+  should.be_ok(transport.acquire_connection_slot(second, "10.10.0.2"))
+
+  transport.acquire_connection_slot(first, "10.10.0.3")
+  |> should.equal(Error(Nil))
+  transport.acquire_connection_slot(second, "10.10.0.4")
+  |> should.equal(Error(Nil))
+
+  let assert Ok(Nil) = beryl.stop(first)
+  let assert Ok(Nil) = beryl.stop(second)
   Nil
 }

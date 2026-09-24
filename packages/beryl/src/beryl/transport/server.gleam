@@ -17,6 +17,7 @@
 import beryl.{type Sockets}
 import beryl/internal
 import beryl/log
+import beryl/outbound_budget
 import beryl/overload
 import beryl/rate_limit
 import beryl/socket.{type ConnectSeed}
@@ -238,7 +239,7 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 /// 1. Applies the configured origin policy and the `?vsn` version check,
 ///    rejecting failures with `reject(403)`.
 /// 2. Acquires a connection slot for `request_ip(request)` (per-IP and
-///    node-wide ceilings), rejecting with `reject(429)` when at a limit.
+///    per-system ceilings), rejecting with `reject(429)` when at a limit.
 /// 3. Runs any `on_connect` callback; on `Error(ConnectRejected)` the slot is
 ///    released and the request is rejected with `reject(403)`.
 /// 4. Hands admitted requests to `accept` with the callback's connect
@@ -269,15 +270,14 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 /// exhausted. Its state survives disconnects and app runtime restarts, so
 /// reconnecting does not refresh the configured burst.
 ///
-/// When `beryl.with_max_connections` is configured, a node-wide ceiling on
-/// concurrent connections across all IPs is likewise enforced with
-/// `reject(429)` before allocating any long-lived socket/runtime state. The
-/// two limits compose: a connection must be under both to be admitted. The
-/// node-wide ceiling bounds total resource use when a per-IP limit alone
-/// cannot (many distributed source addresses / IPv6 rotation). It is enforced
-/// per BEAM node, so across a load-balanced cluster the effective ceiling
-/// scales with the node count. Use the load balancer's controls for a
-/// cluster-wide cap.
+/// When `beryl.with_max_connections` is configured, a ceiling on concurrent
+/// connections across all IPs for the supplied `Sockets` system is likewise
+/// enforced with `reject(429)` before allocating any long-lived socket/runtime
+/// state. The two limits compose: a connection must be under both to be
+/// admitted. The total ceiling bounds resource use when a per-IP limit alone
+/// cannot (many distributed source addresses / IPv6 rotation). Each
+/// independently constructed system has a separate limiter on its BEAM node.
+/// Use the load balancer's controls for a cluster-wide cap.
 pub fn upgrade(
   request request: Request(body),
   sockets sockets: Sockets,
@@ -491,33 +491,6 @@ pub type SendRequest {
   Close
 }
 
-type OutboundBudget
-
-@external(erlang, "beryl_outbound_ffi", "new")
-fn new_outbound_budget() -> OutboundBudget
-
-@external(erlang, "beryl_outbound_ffi", "reserve_and_send")
-fn reserve_and_send(
-  budget: OutboundBudget,
-  subject: process.Subject(SendRequest),
-  request: SendRequest,
-  bytes: Int,
-  max_frames: Int,
-  max_bytes: Int,
-) -> Bool
-
-@external(erlang, "beryl_outbound_ffi", "release")
-fn release_outbound(budget: OutboundBudget, bytes: Int) -> Nil
-
-@external(erlang, "beryl_outbound_ffi", "close_and_send")
-fn close_outbound(
-  budget: OutboundBudget,
-  subject: process.Subject(SendRequest),
-) -> Nil
-
-@external(erlang, "beryl_outbound_ffi", "cancel")
-fn cancel_outbound(budget: OutboundBudget) -> Nil
-
 /// State maintained per WebSocket connection.
 pub opaque type ConnectionState {
   ConnectionState(
@@ -535,7 +508,7 @@ pub opaque type ConnectionState {
     /// It is independent of the runtime's decoded-message limiter.
     frame_limiter: Option(rate_limit.Bucket),
     logger: log.Logger,
-    outbound_budget: OutboundBudget,
+    outbound_budget: outbound_budget.Budget,
   )
 }
 
@@ -599,7 +572,7 @@ pub fn init_connection(
   let socket_id = generate_socket_id()
   let send_subject = process.new_subject()
   let selector = process.select(base_selector, send_subject)
-  let outbound_budget = new_outbound_budget()
+  let budget = outbound_budget.new()
   let logger = internal.logger(logger_name)
 
   // `Ok` means that the frame was admitted to the connection process mailbox.
@@ -607,8 +580,8 @@ pub fn init_connection(
   let send_fn = fn(text: String) -> Result(Nil, Nil) {
     let bytes = string.byte_size(text)
     case
-      reserve_and_send(
-        outbound_budget,
+      outbound_budget.reserve_and_send(
+        budget,
         send_subject,
         SendText(text, bytes),
         bytes,
@@ -627,8 +600,8 @@ pub fn init_connection(
   let send_binary_fn = fn(data: BitArray) -> Result(Nil, Nil) {
     let bytes = bit_array.byte_size(data)
     case
-      reserve_and_send(
-        outbound_budget,
+      outbound_budget.reserve_and_send(
+        budget,
         send_subject,
         SendBinary(data, bytes),
         bytes,
@@ -652,7 +625,7 @@ pub fn init_connection(
       // A timed-out bind may still be queued. Release follows it from this
       // process, so the limiter cannot retain a late transfer.
       transport.release_connection_slot(connection_permit)
-      close_outbound(outbound_budget, send_subject)
+      outbound_budget.close_and_send(budget, send_subject, Close)
       force_close_logged(logger, socket_id, force_close)
       selector
     }
@@ -669,12 +642,14 @@ pub fn init_connection(
           send_binary: send_binary_fn,
           codec: socket_codec,
           seed: seed,
-          close: fn() { close_outbound(outbound_budget, send_subject) },
+          close: fn() {
+            outbound_budget.close_and_send(budget, send_subject, Close)
+          },
         )
       selector
     }
     Ok(Nil), Error(Nil) -> {
-      close_outbound(outbound_budget, send_subject)
+      outbound_budget.close_and_send(budget, send_subject, Close)
       selector
     }
   }
@@ -690,7 +665,7 @@ pub fn init_connection(
       frame_limiter: beryl.frame_limits(sockets)
         |> option.map(rate_limit.new_bucket),
       logger: logger,
-      outbound_budget: outbound_budget,
+      outbound_budget: budget,
     )
 
   #(state, selector)
@@ -715,7 +690,7 @@ fn force_close_logged(
 ///
 /// Release the held connection slot and report the disconnect to the runtime.
 pub fn close_connection(state: ConnectionState) -> Nil {
-  cancel_outbound(state.outbound_budget)
+  outbound_budget.cancel(state.outbound_budget)
   transport.release_connection_slot(state.connection_permit)
   transport.socket_disconnected(state.sockets, state.socket_id)
 }
@@ -730,11 +705,11 @@ pub fn finish_outbound_write(
   bytes: Int,
   succeeded: Bool,
 ) -> FrameDisposition {
-  release_outbound(state.outbound_budget, bytes)
+  outbound_budget.release(state.outbound_budget, bytes)
   case succeeded {
     True -> Continue(state)
     False -> {
-      cancel_outbound(state.outbound_budget)
+      outbound_budget.cancel(state.outbound_budget)
       log.warn(state.logger, "Failed to write outbound WebSocket frame", [
         #("socket_id", state.socket_id),
       ])

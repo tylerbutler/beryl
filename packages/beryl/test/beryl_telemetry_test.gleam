@@ -2,6 +2,7 @@ import beryl/overload
 import beryl/telemetry
 import beryl/work_queue
 import gleeunit/should
+import unitest
 
 /// Opaque handle to an attached :telemetry handler, produced and consumed
 /// only by the test FFI — never inspected from Gleam.
@@ -36,6 +37,7 @@ fn assert_queue_event(
 fn assert_no_queue_event() -> Nil
 
 pub fn queue_events_match_admission_and_cancellation_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach_queue()
   let assert Ok(limits) = overload.limits(items: 1, bytes: 8)
   let queue = work_queue.new(limits, overload.WorkerQueue, True, fn() { Nil })
@@ -60,6 +62,7 @@ pub fn queue_events_match_admission_and_cancellation_test() -> Nil {
 }
 
 pub fn disabled_queue_does_not_emit_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach_queue()
   let assert Ok(limits) = overload.limits(items: 1, bytes: 8)
   let queue = work_queue.new(limits, overload.WorkerQueue, False, fn() { Nil })
@@ -85,6 +88,7 @@ pub fn mailbox_length_is_non_negative_test() -> Nil {
 }
 
 pub fn enabled_emit_executes_typed_event_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler_id = attach_socket_connected()
   telemetry.emit(True, telemetry.SocketConnected)
   |> should.equal(Nil)
@@ -96,6 +100,7 @@ pub fn enabled_emit_executes_typed_event_test() -> Nil {
 }
 
 pub fn disabled_emit_does_not_execute_event_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler_id = attach_socket_connected()
   telemetry.emit(False, telemetry.SocketConnected)
   let received = received_socket_connected()

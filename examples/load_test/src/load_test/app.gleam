@@ -15,12 +15,12 @@ pub type App {
 
 pub fn start() -> App {
   let presence_tracker = session_presence.start()
-  let cost_us = bench.callback_cost_us()
+  let callback_elapsed_us = bench.callback_elapsed_us()
   let assert Ok(#(channels, specification)) = case bench.use_channel_layer() {
     True ->
       beryl_channel.child_spec(
         environment_config(),
-        handlers: channel.handlers(presence_tracker, cost_us),
+        handlers: channel.handlers(presence_tracker, callback_elapsed_us),
       )
       |> result.map_error(fn(error) { string.inspect(error) })
     False ->
@@ -28,7 +28,7 @@ pub fn start() -> App {
         environment_config(),
         init: channel.init,
         update: fn(model, input) {
-          channel.update(presence_tracker, cost_us, model, input)
+          channel.update(presence_tracker, callback_elapsed_us, model, input)
         },
       )
       |> result.map_error(fn(error) { string.inspect(error) })

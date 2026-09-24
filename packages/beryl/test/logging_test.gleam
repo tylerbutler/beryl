@@ -7,6 +7,7 @@ import gleam/dict
 import gleam/option
 import gleeunit/should
 import test_helper.{type CapturedLog}
+import unitest
 
 fn get_metadata(captured: CapturedLog, key: String) -> Result(String, Nil) {
   dict.get(captured.metadata, key)
@@ -30,6 +31,7 @@ fn start_accepting_app(config: beryl.Config) -> beryl.Sockets {
 }
 
 pub fn start_app_accepts_debug_logging_config_test() -> Nil {
+  use <- unitest.tag("serial")
   let config =
     beryl.config(wire.phoenix_codec())
     |> beryl.with_logging(beryl.logging_config(
@@ -71,6 +73,7 @@ pub fn preview_metadata_bounds_payloads_when_enabled_test() -> Nil {
 }
 
 pub fn debug_join_log_carries_metadata_without_payload_preview_test() -> Nil {
+  use <- unitest.tag("serial")
   let selector = test_helper.begin_capture()
 
   let config =
@@ -101,6 +104,7 @@ pub fn debug_join_log_carries_metadata_without_payload_preview_test() -> Nil {
 }
 
 pub fn socket_connected_is_logged_with_socket_id_test() -> Nil {
+  use <- unitest.tag("serial")
   let selector = test_helper.begin_capture()
 
   let channels =
@@ -120,6 +124,7 @@ pub fn socket_connected_is_logged_with_socket_id_test() -> Nil {
 }
 
 pub fn start_app_warns_when_no_abuse_controls_configured_test() -> Nil {
+  use <- unitest.tag("serial")
   let selector = test_helper.begin_capture()
 
   let channels = start_accepting_app(beryl.config(wire.phoenix_codec()))
@@ -132,6 +137,7 @@ pub fn start_app_warns_when_no_abuse_controls_configured_test() -> Nil {
 }
 
 pub fn start_app_does_not_warn_when_a_limit_is_configured_test() -> Nil {
+  use <- unitest.tag("serial")
   let selector = test_helper.begin_capture()
 
   let channels =

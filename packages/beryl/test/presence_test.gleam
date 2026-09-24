@@ -6,12 +6,25 @@ import gleam/list
 import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/string
-import gleeunit
 import gleeunit/should
 import test_helper
+import unitest
+
+type ReadTableWriteError {
+  ReadTableUnavailable
+}
+
+@external(erlang, "beryl_presence_read_test_ffi", "delete_absent_topic")
+fn delete_absent_topic() -> Result(Nil, ReadTableWriteError)
+
+@external(erlang, "beryl_presence_read_test_ffi", "delete_gone_table")
+fn delete_gone_table() -> Result(Nil, ReadTableWriteError)
+
+@external(erlang, "beryl_presence_read_test_ffi", "delete_unowned_table")
+fn delete_unowned_table() -> Result(Nil, ReadTableWriteError)
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 fn test_config(replica: String) -> presence.Config {
@@ -682,6 +695,49 @@ pub fn on_diff_callback_receives_all_rapid_diffs_test() -> Nil {
   list.length(joins2) |> should.equal(1)
 }
 
+pub fn on_diff_panic_is_reported_without_blocking_ack_or_owner_test() -> Nil {
+  let selector = test_helper.begin_capture()
+  let assert Ok(tracker) =
+    presence.start(
+      presence.default_config("callback-panic")
+      |> presence.with_on_diff(fn(_) { panic as "expected on_diff failure" }),
+    )
+  let assert Ok(owner_before) = process.subject_owner(presence.subject(tracker))
+  let reply = process.new_subject()
+
+  presence.track_async(
+    tracker,
+    "room:panic",
+    "user:1",
+    "socket-1",
+    json.null(),
+    None,
+    process.self(),
+    "track",
+    1,
+    reply,
+  )
+  |> should.equal(Ok(Nil))
+
+  let assert Ok(presence.MutationAck(
+    outcome: presence.Tracked(..),
+    tag: "track",
+    operation_id: 1,
+  )) = process.receive(reply, 1000)
+  presence_count(tracker, "room:panic") |> should.equal(1)
+  test_helper.receive_log(selector, "Presence on_diff callback failed", 5)
+  |> should.be_ok
+
+  let assert Ok(_) =
+    presence.track(tracker, "room:unrelated", "user:2", "socket-2", json.null())
+  presence_count(tracker, "room:unrelated") |> should.equal(1)
+  process.subject_owner(presence.subject(tracker))
+  |> should.equal(Ok(owner_before))
+
+  test_helper.stop_capture()
+  test_helper.kill_presence(tracker)
+}
+
 pub fn diff_accessors_return_empty_lists_for_unmentioned_topics_test() -> Nil {
   let diff =
     presence.diff(
@@ -825,6 +881,15 @@ pub fn configured_call_timeout_is_used_test() -> Nil {
 // checks prove that in practice: several presence actors' reads stay fully
 // isolated from one another, and terminating one actor's table has no
 // effect on the others.
+
+pub fn deleting_absent_topic_from_valid_read_table_succeeds_test() -> Nil {
+  delete_absent_topic() |> should.equal(Ok(Nil))
+}
+
+pub fn invalid_read_table_deletions_return_errors_test() -> Nil {
+  delete_gone_table() |> should.equal(Error(ReadTableUnavailable))
+  delete_unowned_table() |> should.equal(Error(ReadTableUnavailable))
+}
 
 pub fn multiple_presence_actors_have_independent_read_tables_test() -> Nil {
   let assert Ok(tracker1) = presence.start(test_config("node1"))

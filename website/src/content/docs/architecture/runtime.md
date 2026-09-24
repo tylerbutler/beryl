@@ -24,8 +24,9 @@ and the socket actor waits for the result. The worker also runs `on_message`
 and `on_info`. It sends effects to the socket actor. The socket actor applies
 them in arrival order and enqueues each frame for the transport. Thus, effects
 for one topic keep their order. Effects for different topics can interleave.
-The socket actor sends a close to the worker before it drops the topic's reply refs. Thus, it
-can deliver a push or reply that the worker computed before a leave.
+Before it drops the topic's reply refs, the socket actor tells the worker to
+close. This lets the socket actor deliver a push or reply that the worker
+computed before the leave.
 
 Channel `on_message` and `on_info` callbacks on different topics can run
 concurrently. This is not complete latency isolation: worker startup during a
@@ -196,7 +197,7 @@ do not establish an end-to-end or node-wide memory bound. See
 
 | Boundary | Current control and overload behavior |
 |---|---|
-| Connection admission | Optional per-IP attempt-rate and concurrent connection limits, plus a node-wide concurrent connection limit. All default to disabled. The limiter owns accounting; a rejected upgrade receives HTTP `429`. |
+| Connection admission | Optional per-IP attempt-rate and concurrent connection limits, plus a per-system concurrent connection limit on each node. All default to disabled. Each beryl system owns its limiter; a rejected upgrade receives HTTP `429`. |
 | Complete inbound frames | The connection process closes the connection for frames over 1 MiB by default, after assembly. Optional frame-rate limiting drops over-rate frames before decoding. Neither bounds pre-assembly buffers or router queues. |
 | Decoded socket input | Socket actors own optional message, join, and channel/topic rate buckets. Rates default to disabled. Over-rate messages are dropped; over-rate joins receive an error reply. These are not worker queue limits. |
 | Topic-worker input | 256 outstanding inputs and 8 MiB per worker. Client input rejection closes the topic; server notifications return errors. |

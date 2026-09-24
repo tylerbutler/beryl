@@ -1,7 +1,8 @@
 -module(beryl_supervisor_test_ffi).
 -export([get_subject_pid/1, crash_reason/0, active_child_count/1,
          only_active_child/1,
-         gate_new/0, gate_wait/1, gate_release/1]).
+         gate_new/0, gate_wait/1, gate_release/1,
+         connection_limit_checkpoint_heir/1]).
 
 %% Extract the process that will receive messages for a subject.
 %% For named subjects, the name is registered with the process.
@@ -34,6 +35,16 @@ active_child_count(Pid) ->
 only_active_child(Pid) ->
     case supervisor:which_children(Pid) of
         [{_, Child, _, _}] when is_pid(Child) -> {ok, Child};
+        _ -> {error, nil}
+    end.
+
+connection_limit_checkpoint_heir(Limiter) ->
+    Heirs = [ets:info(Table, heir)
+             || Table <- ets:all(),
+                ets:info(Table, name) =:= beryl_connection_limit_state,
+                ets:info(Table, owner) =:= Limiter],
+    case [Heir || Heir <- Heirs, is_pid(Heir)] of
+        [Heir] -> {ok, Heir};
         _ -> {error, nil}
     end.
 

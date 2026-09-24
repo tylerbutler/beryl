@@ -48,10 +48,11 @@ pub opaque type JoinRef {
 
 /// A client message reply correlation handle.
 ///
-/// Pass it back in `ReplyOk` or `ReplyError`. You can store reply refs in the
-/// model and answer them in a later `update` turn, for example after an
-/// asynchronous lookup. They are single-use. They remain valid only while
-/// the topic instance that received the message stays open.
+/// Pass it back in `ReplyOk`, `ReplyError`, or `DiscardReply`. You can store
+/// reply refs in the model and answer them in a later `update` turn, for
+/// example after an asynchronous lookup. They do not expire. They are
+/// single-use and remain valid only while the topic instance that received
+/// the message stays open.
 pub opaque type ReplyRef {
   ReplyRef(
     topic: String,
@@ -189,6 +190,12 @@ pub type Effect {
   ReplyOk(ref: ReplyRef, payload: Json)
   /// Reply with an error to a client message ref.
   ReplyError(ref: ReplyRef, payload: Json)
+  /// Discard a client message ref without sending a reply.
+  ///
+  /// Use this when the application intentionally will not answer a referenced
+  /// message. It releases the retained socket capacity and permits later reuse
+  /// of the same wire ref. A completed or stale ref has no effect.
+  DiscardReply(ref: ReplyRef)
   /// Push a server-initiated message to this socket on a joined topic.
   /// The runtime drops pushes to topics that this socket has not joined and
   /// logs a warning. Put a `Push` after its topic's `AcceptJoin`.

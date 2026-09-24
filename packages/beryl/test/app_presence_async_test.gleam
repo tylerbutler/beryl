@@ -32,12 +32,12 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
-import gleeunit
 import gleeunit/should
 import test_helper
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 type LoopMessage {
@@ -1427,6 +1427,7 @@ pub fn stale_ack_during_newer_pending_op_does_not_corrupt_it_test() -> Nil {
 /// could coexist — so the retrack must supersede the stale ref in the same
 /// actor turn that adds its own, leaving the compensation a no-op.
 pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() -> Nil {
+  use <- unitest.tag("serial")
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let diffs = process.new_subject()
@@ -1538,6 +1539,7 @@ pub fn same_key_retrack_while_stale_track_is_in_flight_keeps_one_entry_test() ->
 /// compensation must remove only the runtime-owned CRDT tag, survive normal
 /// topic cleanup, and leave neither ref capable of deleting a later entry.
 pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() -> Nil {
+  use <- unitest.tag("serial")
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let diffs = process.new_subject()
@@ -1641,6 +1643,7 @@ pub fn stale_runtime_ack_preserves_newer_public_same_key_track_test() -> Nil {
 /// runtime-owned session sweep behind the in-flight mutation. A public track
 /// already queued for the same tuple must survive that cleanup.
 pub fn shutdown_stale_track_cleanup_preserves_newer_public_track_test() -> Nil {
+  use <- unitest.tag("serial")
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let diffs = process.new_subject()
@@ -1925,6 +1928,7 @@ pub fn shutdown_while_untrack_pending_emits_leave_and_cleans_ref_test() -> Nil {
 /// runtime left to receive one. That is not a failure and must not be
 /// logged as one.
 pub fn graceful_shutdown_cleanup_is_not_logged_as_a_failure_test() -> Nil {
+  use <- unitest.tag("serial")
   let assert Ok(handle) = presence.start(presence.default_config("node1"))
   let events = process.new_subject()
   let channels =

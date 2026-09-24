@@ -265,9 +265,10 @@ function and sends it to the worker process of that join. Only that join can
 read the value during delivery. No mailbox stores the typed value between
 turns.
 
-Admission reserves worker capacity before publication. A sealed function's
-environment does not have a retained-byte guarantee; bound application
-payloads as well as item counts.
+Because `notify` admits work to the channel's worker queue, it reserves worker
+capacity before publication. Gleam does not guarantee how many bytes a sealed
+function retains, so limit application payload sizes as well as queue item
+counts.
 
 ### Senders from closed or rejoined channels
 
@@ -297,6 +298,7 @@ observe them:
 | `broadcast_from(event, payload)` | To every subscriber except this socket |
 | `reply_ok(reply, payload)` | Success reply when `Message.reply` is `Some`; no effect for `None` |
 | `reply_error(reply, payload)` | Error reply with the same optional-ref behavior |
+| `discard_reply(reply)` | Release an intentionally unanswered reply handle without a wire reply |
 | `presence_track(key, meta)` | Track this socket under `key` and emit the `presence_diff` join |
 | `presence_untrack(key)` | Untrack and emit the `presence_diff` leave |
 | `push_presence(event, encode)` | Presence snapshot for this topic, to this socket |
@@ -480,7 +482,9 @@ nothing. If the worker stops unexpectedly instead, the runtime closes the
 topic with `phx_error` without running `on_terminate` (it held the channel
 state), and the client must rejoin; the runtime also kills a worker that does
 not finish its queued work and `on_terminate` within five seconds, then
-completes the close without the termination actions.
+completes the close without the termination actions. During a graceful
+`beryl.stop`, this bound is one second per worker. Several blocked workers
+on one socket can still exceed the total stop budget.
 
 Crash isolation stops at the socket for other faults: a fault in the socket
 actor loses only that socket and its workers, while a router crash loses every

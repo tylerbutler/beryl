@@ -1,9 +1,9 @@
 import collab_docs_client as client
-import gleeunit
 import gleeunit/should
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 fn add_block(document: client.Document, encoded: String) -> client.Document {
