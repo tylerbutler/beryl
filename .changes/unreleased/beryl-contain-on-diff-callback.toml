@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Contain on_diff callback failures so successful presence mutations and remote merges still publish state and acknowledge while preserving synchronous ordering."

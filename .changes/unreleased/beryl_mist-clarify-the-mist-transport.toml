@@ -1,3 +1,0 @@
-package = "beryl_mist"
-kind = "Fixed"
-body = "Clarify the Mist transport API documentation."

@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Dependencies"
-body = "Use rasa for monotonic clocks instead of beryl-owned Erlang adapters."

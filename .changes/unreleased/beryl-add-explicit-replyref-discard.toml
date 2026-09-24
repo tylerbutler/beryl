@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Add explicit ReplyRef discard effects that release socket capacity without sending a reply or expiring deferred replies."

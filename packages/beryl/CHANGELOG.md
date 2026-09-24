@@ -1,5 +1,59 @@
 # beryl changelog
 
+## v0.5.0 - 2026-09-24
+
+### Added
+
+- Add channel.on_presence callbacks with an initial topic roster, ordered presence changes, and topic-scoped cleanup and failure handling.
+- Add channel.with_presence to track a joined connection, send its Phoenix presence_state snapshot, and reuse automatic presence cleanup.
+
+### Changed
+
+- A join to an unmatched topic is now refused before the runtime starts a worker process.
+- Bound local runtime and presence work with finite item and byte limits, callback-result limits, and queue snapshots. Notifications, broadcasts, and presence mutations now return typed errors; handle admission rejection and timeouts that may leave running work.
+- Each accepted channel topic now runs in its own supervised process. A slow callback or callback panic affects only that topic. An `on_info` panic closes its topic instead of the socket. beryl does not define an order between different topics on one socket.
+- Presence replica identities now use the dependency's incarnation format, a retired incarnation keeps a high-water clock, and a snapshot that claims the local replica identity is dropped with an error log and a telemetry event.
+- Make wire.encode return Result(String, Nil). Rename beryl/stats.snapshot to beryl/snapshot.get, JoinContext.params to parameters, socket msg_ref labels to message_ref, reply_ref_msg_ref to reply_ref_message_ref, presence op_id to operation_id, SyncPayload.v to version, and transport AuthRejected/vsn_supported to AuthenticationRejected/version_supported. Document exhaustive public error matching.
+- Return group, presence update, and binary encoding errors with the offending name, ref, or metadata component.
+
+### Fixed
+
+- A graceful stop now bounds each worker's on_terminate to fit inside the shutdown drain. A slow on_terminate no longer makes beryl.stop fail or skip the remaining topics' cleanup. Closes outside beryl.stop keep the five-second bound.
+- Add explicit ReplyRef discard effects that release socket capacity without sending a reply or expiring deferred replies.
+- Apply committed worker reports before closing a topic whose worker has exited.
+- Bound crash diagnostic formatting and retained memory for large exception reasons.
+- Bound each connection's outbound queue by frames and bytes, and close slow clients before enqueueing beyond the configured budget.
+- Clarify that with_max_connections applies independently to each beryl system on each BEAM node.
+- Clean runtime-owned presence entries when sockets disconnect or their router exits.
+- Contain on_diff callback failures so successful presence mutations and remote merges still publish state and acknowledge while preserving synchronous ordering.
+- Correct public API documentation for terminal frames, PubSub startup, presence replication, and log preview limits.
+- Corrected documentation examples to follow Gleam naming and exhaustive matching conventions.
+- Ensure untrack_all removes and reports only locally owned presence entries.
+- Fence stale presence incarnations and compact unavailable replica history safely after 60 seconds using fresh owner-only snapshots.
+- Give each reply handle a unique request identity so stale replies cannot consume requests that reuse wire identifiers, including after a topic closes and rejoins.
+- Handle read-model publication failures without panicking.
+- Hide unavailable presence replicas after actor, node, or membership loss. Keep replica-view diffs node-local while preserving cluster-wide application diffs and causal state for reconnect.
+- Make repeated and concurrent PubSub topic joins idempotent per owner process and scope, including multiple handles. Deliver and count each owner once, and remove membership with one leave.
+- Preserve abnormal worker startup reasons and distinguish runtime stop acceptance from completion with typed outcomes.
+- Reclaim abandoned and timed-out connection reservations.
+- Repair quiet presence replication with initial and periodic snapshots. All replicas in a presence scope must use sync version 2.
+- Restore live PubSub subscriptions after supervised pg scope restarts, preserve idempotent membership, and report startup or invalid-handle failures instead of silently losing delivery.
+- Return to the actor selector between resumed inbox items so sustained work cannot starve shutdown, heartbeats, or monitor messages.
+- Scope connection-limit checkpoints to each supervised app incarnation so replacement subtrees cannot inherit or lose admission state from predecessors.
+- Stop connection-limit checkpoint heirs when their supervising subtree exits during checkpoint initialization.
+- Stop heartbeat-evicted socket actors after lifecycle teardown completes.
+- Suppress late connection-limit acquire and bind replies after callers time out or the limiter exits.
+- Surface presence read-model deletion failures instead of treating them as successful publication.
+
+### Removed
+
+- The channel API no longer exposes handler pattern introspection, duplicate message topics, socket-wide stops, or raw binary callbacks. Use the join context or channel state for topics. Use raw dispatch for socket-wide control and raw binary frames.
+
+### Dependencies
+
+- Require lattice_presence 2.0, which adds youid as a transitive dependency.
+- Use rasa for monotonic clocks instead of beryl-owned Erlang adapters.
+
 ## v0.4.1 - 2026-08-25
 
 ### Fixed

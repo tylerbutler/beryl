@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = "Add channel.on_presence callbacks with an initial topic roster, ordered presence changes, and topic-scoped cleanup and failure handling."
