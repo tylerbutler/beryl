@@ -12,10 +12,16 @@
 ////
 //// All three are checked atomically inside `handle_message` on acquire, so
 //// concurrent opens cannot race past either ceiling. A single `Permit` tracks
-//// both dimensions and the same process monitor reclaims both when the holder
-//// dies without releasing. Counts and rate buckets are checkpointed to an ETS
-//// table with a supervisor-scoped heir, so they survive reconnects and worker
-//// restarts, then expire once idle long enough to have fully refilled.
+//// concurrency dimensions and the same process monitor reclaims both when the
+//// holder dies without releasing. Counts and rate buckets are checkpointed
+//// to an ETS table with an heir, so a replacement limiter worker can recover
+//// live holders and per-IP rate history. Disconnects release concurrency
+//// capacity without resetting the IP's rate bucket. Idle rate buckets expire
+//// once their allowance has fully refilled.
+////
+//// The heir stops with the enclosing beryl supervisor. This state survives
+//// router and limiter-worker restarts, but not shutdown or replacement of
+//// that supervisor, or a node restart.
 
 import beryl/atomic_token
 import beryl/log

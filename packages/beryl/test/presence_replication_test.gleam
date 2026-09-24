@@ -402,6 +402,10 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
 
 // ── Resilience: exception raised by a remote-merge callback ───────────
 
+/// A valid remote sync can trigger an `on_diff` callback exception. The
+/// callback boundary reports the failure, but the merge and publication
+/// complete and the presence actor stays alive. This does not test protection
+/// against a hostile distribution peer.
 pub fn remote_callback_panic_is_reported_and_merge_is_published_test() -> Nil {
   let pubsub_instance = test_pubsub("processing_crash")
   let selector = test_helper.begin_capture()

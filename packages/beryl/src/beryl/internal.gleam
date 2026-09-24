@@ -49,18 +49,23 @@ pub fn result_error(error: e) -> Result(a, e) {
 }
 
 // nolint: stringly_typed_error -- the error is the formatted BEAM crash description; callers wrap or log it at use sites
-/// Crash boundary for work that runs inside a shared actor.
+/// Capture exceptions within an explicitly selected operation.
 ///
-/// Run a callback, converting any BEAM crash (error/exit/throw) into an
-/// `Error(description)`. This is deliberately not left to OTP supervision:
-/// restarting the runtime or presence actor would discard every socket's or
-/// subscriber's state to recover from one scoped failure. Callers must discard
-/// the failed result and preserve or tear down only the affected scope; they
-/// must never continue with a partial result. Faults outside an explicit
-/// boundary still crash the actor and are handled by supervision.
+/// Convert synchronous `error`, `exit`, and `throw` exceptions from the
+/// callback into `Error(description)`. Use typed results and effects for
+/// expected failures rather than raising exceptions.
 ///
-/// The description is depth-limited and truncated by the FFI so a
-/// client-triggered crash cannot bloat log metadata.
+/// Runtime and channel call sites use the error path to reject a join or close
+/// the affected topic or socket, and complete protocol cleanup. Presence uses
+/// it to retain its previous actor state if remote sync processing fails.
+/// Callers must handle the error; this function does not undo side effects,
+/// including ETS writes, that completed before the exception.
+///
+/// Faults outside the supplied callback still terminate the actor and follow
+/// its supervision policy.
+///
+/// The FFI limits diagnostic depth and length to keep each crash description
+/// bounded.
 @external(erlang, "beryl_ffi", "rescue")
 pub fn rescue(callback: fn() -> value) -> Result(value, String)
 
