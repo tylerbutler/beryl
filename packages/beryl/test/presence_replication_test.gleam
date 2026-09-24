@@ -356,13 +356,10 @@ pub fn untrack_all_reports_only_removed_local_entries_test() -> Nil {
 
 // ── Resilience: malformed sync messages ──────────────────────────────
 //
-// The sync payload is now a native, typed `SyncPayload` term rather than a
-// JSON string, so the previous "malformed JSON string" and "wrong schema"
-// scenarios can no longer be constructed through the public API at all —
-// the compiler rejects them. The one still-reachable failure mode is an
-// envelope whose version this node does not recognise (e.g. a peer running
-// a newer/older presence build), which `handle_sync_payload` discards
-// rather than attempting to interpret.
+// A correctly typed handle prevents malformed payload construction, but
+// independently started same-scope handles still have a caller obligation
+// to use compatible types. The version check below is not a general decoder
+// for arbitrary BEAM terms.
 
 pub fn survives_unknown_envelope_version_test() -> Nil {
   let pubsub_instance = test_pubsub("malform_version")
@@ -378,26 +375,41 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
   |> should.equal(1)
 
   // Send a sync envelope with a version this node does not understand
+  let other_handle = test_pubsub("malform_version")
+  let replies = process.new_subject()
   pubsub.broadcast(
-    pubsub_instance,
+    other_handle,
     "beryl:presence:sync",
     "presence_sync",
     presence.SyncPayload(
       version: 99,
       request: reference.new(),
-      reply: process.new_subject(),
+      reply: replies,
       request_back: False,
     ),
   )
 
-  // Give the actor time to process (and discard) the unknown version
-  process.sleep(50)
+  // A valid request on the same ingress confirms the earlier request was handled.
+  let barrier = reference.new()
+  pubsub.broadcast(
+    other_handle,
+    "beryl:presence:sync",
+    "presence_sync",
+    presence.SyncPayload(
+      version: 2,
+      request: barrier,
+      reply: replies,
+      request_back: False,
+    ),
+  )
+  let assert Ok(reply) = process.receive(replies, 1000)
+  reply.request |> should.equal(barrier)
 
-  // Track another entry and verify the actor is still alive
   let assert Ok(_) =
     presence.track(tracker, "room:lobby", "user:2", "s2", json.null())
   list.length(presence_entries(tracker, "room:lobby"))
   |> should.equal(2)
+  process.receive(replies, 0) |> should.equal(Error(Nil))
 }
 
 // ── Resilience: exception raised by a remote-merge callback ───────────

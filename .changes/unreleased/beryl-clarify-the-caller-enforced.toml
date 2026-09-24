@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Clarify the caller-enforced same-scope PubSub payload contract, including distinct fixed scopes for incompatible types and presence replication."
