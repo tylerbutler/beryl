@@ -185,8 +185,8 @@ labels effect execution separately from the recipients' deliveries.
 
 The same rule applies to a join. If one update returns
 `[AcceptJoin(ref, None), Push(topic, "ready", payload)]`, the join
-acknowledgment reaches the wire before the push. This matters. The runtime
-drops a push to a topic that is not joined yet.
+acknowledgment reaches the wire before the push. The runtime drops a push to a
+topic that is not joined yet.
 
 The rule also applies to presence effects. A separate presence actor applies
 presence changes. The runtime can pause the rest of one socket's list while

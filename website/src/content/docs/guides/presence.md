@@ -282,8 +282,8 @@ forward a local-view diff to another node for publication.
 
 Application mutations publish cluster-wide at their source. Replication
 callbacks repair each receiver's local clients; they are not cluster-wide
-relays. Applications that previously used one receiver's callback as the sole
-global publisher must move application-change publishing to the source.
+relays. Publish application changes at their source. Do not use one receiver's
+callback as the sole global publisher.
 
 ## Replicate presence across nodes
 

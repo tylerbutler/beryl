@@ -4,12 +4,12 @@ import gleam/erlang/process
 import gleam/erlang/reference
 import gleam/json
 import gleam/list
-import gleeunit
 import gleeunit/should
 import test_helper
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 // ── Helper ──────────────────────────────────────────────────────────
@@ -28,6 +28,11 @@ fn test_config(
   presence.default_config(replica)
   |> presence.with_pubsub(pubsub_instance)
   |> presence.with_broadcast_interval(interval_ms)
+}
+
+fn stop_presence(tracker: presence.Presence) -> Nil {
+  let assert Ok(owner) = process.subject_owner(presence.subject(tracker))
+  process.kill(owner)
 }
 
 // ── BroadcastTick sends state via PubSub ────────────────────────────
@@ -296,6 +301,59 @@ pub fn untrack_propagates_via_pubsub_test() -> Nil {
   list.length(presence_entries(tracker2, "room:lobby")) |> should.equal(0)
 }
 
+pub fn untrack_all_reports_only_removed_local_entries_test() -> Nil {
+  let pubsub_instance = test_pubsub("untrack_all_local_only")
+  let leaves = process.new_subject()
+  let config1 =
+    test_config(pubsub_instance, "node1", 30)
+    |> presence.with_on_diff(fn(diff) {
+      case presence.diff_leaves(diff, "room:lobby") {
+        [] -> Nil
+        entries -> process.send(leaves, entries)
+      }
+    })
+  let assert Ok(tracker1) = presence.start(config1)
+  let assert Ok(tracker2) =
+    presence.start(test_config(pubsub_instance, "node2", 30))
+
+  let assert Ok(_) =
+    presence.track(
+      tracker2,
+      "room:lobby",
+      "user:remote",
+      "shared-session",
+      json.null(),
+    )
+  test_helper.wait_until(
+    fn() { presence_count(tracker1, "room:lobby") == 1 },
+    2000,
+    20,
+  )
+
+  let assert Ok(_) = presence.untrack_all(tracker1, "shared-session")
+
+  presence_count(tracker1, "room:lobby") |> should.equal(1)
+  process.receive(leaves, 0) |> should.equal(Error(Nil))
+
+  let assert Ok(_) =
+    presence.track(
+      tracker1,
+      "room:lobby",
+      "user:local",
+      "shared-session",
+      json.null(),
+    )
+  presence_count(tracker1, "room:lobby") |> should.equal(2)
+
+  let assert Ok(_) = presence.untrack_all(tracker1, "shared-session")
+
+  let assert [remaining] = presence_entries(tracker1, "room:lobby")
+  remaining.key |> should.equal("user:remote")
+  let assert Ok([left]) = process.receive(leaves, 1000)
+  left.key |> should.equal("user:local")
+  process.receive(leaves, 0) |> should.equal(Error(Nil))
+}
+
 // ── Resilience: malformed sync messages ──────────────────────────────
 //
 // The sync payload is now a native, typed `SyncPayload` term rather than a
@@ -404,6 +462,8 @@ pub fn remote_callback_panic_is_reported_and_merge_is_published_test() -> Nil {
   |> should.equal(Ok(owner_before))
 
   test_helper.stop_capture()
+  stop_presence(tracker1)
+  stop_presence(tracker2)
 }
 
 // ── Helper to drain stray messages ──────────────────────────────────

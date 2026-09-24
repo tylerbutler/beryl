@@ -88,8 +88,8 @@ pub fn start(_replica: String) -> System {
 
 /// Stop the socket runtime and test-only presence publisher.
 pub fn stop(system: System) -> Nil {
-  session_presence.stop(system.presence)
   let assert Ok(Nil) = beryl.stop(system.sockets)
+  session_presence.stop(system.presence)
   Nil
 }
 

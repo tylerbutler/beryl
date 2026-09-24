@@ -40,6 +40,8 @@ Distributed presence tracking with a CRDT
  merge, or prune. Synchronous mutations publish before replying, and
  runtime mutations acknowledge only after publishing, so a later read
  observes the completed mutation without waiting on the actor mailbox.
+ A read-model deletion failure stops publication and enters the mutation or
+ sync processing error path; it is never treated as a successful write.
 
  A read concurrent with a queued or in-progress mutation can observe the
  previous or new complete snapshot. Reads of separate topics do not form
@@ -495,7 +497,11 @@ pub fn untrack_all(
 ) -> Result(Nil, overload.CallError)
 ```
 
-Untrack all presences for a session, such as when a socket disconnects.
+Untrack all presences locally tracked for a session, such as when a socket
+ disconnects.
+
+ Replicated entries owned by another presence actor are not removed, even
+ when they use the same session ID.
 
  Returns a typed call error on admission failure, owner exit, or timeout.
  A timeout cancels pending work, but a running mutation may still complete.

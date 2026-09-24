@@ -16,6 +16,7 @@ glisten = ">= 9.0.1 and < 10.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
+unitest = { git = "https://github.com/jtdowney/unitest.git", ref = "bea4f7cfde1f55ced33e23cc1ac4b2b8aff9b24c" }
 gleam_json = ">= 3.1.0 and < 4.0.0"
 gleam_otp = ">= 1.2.0 and < 2.0.0"
 aquamarine = { git = "https://github.com/tylerbutler/aquamarine.git", ref = "main" }

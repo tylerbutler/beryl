@@ -6,12 +6,25 @@ import gleam/list
 import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/string
-import gleeunit
 import gleeunit/should
 import test_helper
+import unitest
+
+type ReadTableWriteError {
+  ReadTableUnavailable
+}
+
+@external(erlang, "beryl_presence_read_test_ffi", "delete_absent_topic")
+fn delete_absent_topic() -> Result(Nil, ReadTableWriteError)
+
+@external(erlang, "beryl_presence_read_test_ffi", "delete_gone_table")
+fn delete_gone_table() -> Result(Nil, ReadTableWriteError)
+
+@external(erlang, "beryl_presence_read_test_ffi", "delete_unowned_table")
+fn delete_unowned_table() -> Result(Nil, ReadTableWriteError)
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 fn test_config(replica: String) -> presence.Config {
@@ -868,6 +881,15 @@ pub fn configured_call_timeout_is_used_test() -> Nil {
 // checks prove that in practice: several presence actors' reads stay fully
 // isolated from one another, and terminating one actor's table has no
 // effect on the others.
+
+pub fn deleting_absent_topic_from_valid_read_table_succeeds_test() -> Nil {
+  delete_absent_topic() |> should.equal(Ok(Nil))
+}
+
+pub fn invalid_read_table_deletions_return_errors_test() -> Nil {
+  delete_gone_table() |> should.equal(Error(ReadTableUnavailable))
+  delete_unowned_table() |> should.equal(Error(ReadTableUnavailable))
+}
 
 pub fn multiple_presence_actors_have_independent_read_tables_test() -> Nil {
   let assert Ok(tracker1) = presence.start(test_config("node1"))

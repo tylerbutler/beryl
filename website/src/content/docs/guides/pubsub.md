@@ -211,7 +211,7 @@ let assert Ok(#(channels, runtime_specification)) =
 // Add `runtime_specification` to your application supervisor before using
 // `channels`.
 
-// beryl.broadcast() now sends to all nodes automatically
+// beryl.broadcast() sends to all nodes automatically
 beryl.broadcast(channels, "room:lobby", "event", payload)
 ```
 
