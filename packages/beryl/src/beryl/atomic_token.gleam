@@ -1,5 +1,4 @@
-//// Single-use atomic capabilities shared by socket admission and connection
-//// reservations.
+//// Single-use atomic capabilities for socket admission.
 
 import gleam/erlang/process
 import rasa/atomic

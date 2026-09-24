@@ -23,9 +23,10 @@
 //// router and limiter-worker restarts, but not shutdown or replacement of
 //// that supervisor, or a node restart.
 
-import beryl/atomic_token
 import beryl/log
+import beryl/overload
 import beryl/rate_limit
+import beryl/work_queue
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/dynamic/decode
@@ -37,11 +38,14 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import heirloom
+import rasa/atomic
 import rasa/monotonic
 
 const registry_call_timeout_ms = 100
 
 const bucket_sweep_interval_ms = 60_000
+
+const queue_recovery_interval_ms = 100
 
 const one_second_ns = 1_000_000_000
 
@@ -50,38 +54,29 @@ fn monotonic_time_ns() -> Int {
 }
 
 type ReservationToken =
-  atomic_token.Token
+  atomic.Atomic
+
+const pending_token = 0
+
+const accepted_token = 1
+
+const cancelled_token = 2
 
 fn new_reservation_token() -> ReservationToken {
-  atomic_token.new()
+  atomic.new()
 }
 
 fn cancel_reservation_token(token: ReservationToken) -> Bool {
-  atomic_token.cancel(token)
+  atomic.exchange(token, cancelled_token) != cancelled_token
 }
 
-fn reservation_token_pending(token: ReservationToken) -> Bool {
-  atomic_token.pending(token)
+fn reservation_token_active(token: ReservationToken) -> Bool {
+  atomic.get(token) != cancelled_token
 }
-
-type CallError {
-  CallTimedOut
-  CallOwnerUnavailable
-}
-
-@external(erlang, "beryl_ffi", "connection_limit_call")
-fn call(
-  subject: Subject(Message),
-  timeout_ms: Int,
-  request: fn(Subject(reply)) -> Message,
-) -> Result(reply, CallError)
-
-@external(erlang, "beryl_ffi", "connection_limit_send")
-fn send_if_alive(subject: Subject(Message), message: Message) -> Bool
 
 /// Opaque connection limiter registry.
 pub opaque type ConnectionLimiter {
-  ConnectionLimiter(subject: Subject(Message))
+  ConnectionLimiter(subject: Subject(Message), name: process.Name(Message))
 }
 
 /// A checked-out connection slot. Release it when the socket closes.
@@ -133,6 +128,8 @@ pub opaque type CheckpointHeir {
 type State {
   State(
     store_key: process.Name(Message),
+    inbox: work_queue.Queue(Message),
+    draining: Bool,
     checkpoint: Option(CheckpointTable),
     /// Per-IP ceiling; 0 disables the per-IP check.
     max_per_ip: Int,
@@ -162,14 +159,16 @@ pub opaque type Message {
     limiter: ConnectionLimiter,
     owner: Pid,
     token: ReservationToken,
-    reply: Subject(Result(Permit, Nil)),
+    reply: fn(Result(Permit, Nil)) -> Nil,
   )
   Bind(
     reservation: reference.Reference,
     owner: Pid,
-    reply: Subject(Result(Nil, Nil)),
+    reply: fn(Result(Nil, Nil)) -> Nil,
   )
-  Cancel(reservation: reference.Reference)
+  Complete(reservation: reference.Reference, token: ReservationToken)
+  Drain(subject: Subject(Message))
+  RecoverQueue(subject: Subject(Message))
   Release(reservation: reference.Reference)
   HolderDown(down: process.Down)
   Sweep(subject: Subject(Message))
@@ -347,20 +346,47 @@ fn handle_message(
   message: Message,
 ) -> actor.Next(State, Message) {
   case message {
+    RecoverQueue(subject) -> {
+      schedule_queue_recovery(subject)
+      case state.draining {
+        True -> actor.continue(state)
+        False -> handle_message(state, Drain(subject))
+      }
+    }
+    Drain(subject) ->
+      case work_queue.take(state.inbox) {
+        Error(Nil) -> actor.continue(State(..state, draining: False))
+        Ok(#(lease, work)) -> {
+          let next = handle_message(State(..state, draining: True), work)
+          work_queue.release(state.inbox, lease)
+          process.send(subject, Drain(subject))
+          next
+        }
+      }
     Acquire(reservation, ip, limiter, owner, token, reply) -> {
       let #(state, outcome) =
         acquire_slot(state, reservation, ip, limiter, owner, token)
       let state = persist(state)
-      process.send(reply, outcome)
+      reply(outcome)
+      case outcome {
+        Ok(_) -> Nil
+        Error(Nil) -> complete_request(state.inbox, reservation)
+      }
       actor.continue(state)
     }
     Bind(reservation, owner, reply) -> {
       let #(state, outcome) = bind_holder(state, reservation, owner)
       let state = persist(state)
-      process.send(reply, outcome)
+      reply(outcome)
       actor.continue(state)
     }
-    Cancel(reservation) | Release(reservation) ->
+    Complete(reservation, token) ->
+      case reservation_token_active(token) {
+        True -> actor.continue(state)
+        False ->
+          actor.continue(release_reservation(state, reservation) |> persist)
+      }
+    Release(reservation) ->
       actor.continue(release_reservation(state, reservation) |> persist)
     HolderDown(down) ->
       case down {
@@ -394,7 +420,7 @@ fn acquire_slot(
 ) -> #(State, Result(Permit, Nil)) {
   use <- bool.guard(
     when: !process.is_alive(owner)
-      || !reservation_token_pending(reservation_token),
+      || !reservation_token_active(reservation_token),
     return: #(state, Error(Nil)),
   )
   let current =
@@ -409,7 +435,7 @@ fn acquire_slot(
     Error(Nil) -> #(state, Error(Nil))
     Ok(Nil) -> {
       use <- bool.guard(
-        when: !reservation_token_pending(reservation_token),
+        when: !reservation_token_active(reservation_token),
         return: #(state, Error(Nil)),
       )
       let monitor = process.monitor(owner)
@@ -491,7 +517,7 @@ fn bind_holder(
   case dict.get(state.reservations, reservation) {
     Error(Nil) -> #(state, Error(Nil))
     Ok(Reservation(ip, current_owner, current_monitor, token)) ->
-      case reservation_token_pending(token), current_owner == owner {
+      case reservation_token_active(token), current_owner == owner {
         False, _ -> #(release_reservation(state, reservation), Error(Nil))
         True, True -> #(state, Ok(Nil))
         True, False -> {
@@ -523,6 +549,7 @@ fn release_reservation(
   case dict.get(state.reservations, reservation) {
     Error(Nil) -> state
     Ok(Reservation(ip, _owner, monitor, _token)) -> {
+      complete_request(state.inbox, reservation)
       process.demonitor_process(monitor)
       State(
         ..release_slot(state, ip),
@@ -555,7 +582,11 @@ fn recover_holders(state: State) -> State {
   let state = State(..state, reservations: dict.new(), monitors: dict.new())
   list.fold(reservations, state, fn(state, entry) {
     let #(reservation, Reservation(ip, owner, _old_monitor, token)) = entry
-    case process.is_alive(owner) && reservation_token_pending(token) {
+    // A reply from the old worker must not grant a slot after recovery dropped
+    // it. This races atomically with the caller acknowledging that reply.
+    let _cancelled =
+      atomic.compare_exchange(token, pending_token, cancelled_token)
+    case process.is_alive(owner) && reservation_token_active(token) {
       True -> {
         let monitor = process.monitor(owner)
         State(
@@ -573,38 +604,68 @@ fn recover_holders(state: State) -> State {
   })
 }
 
-fn request(
-  limiter: ConnectionLimiter,
-  ip: String,
-  subject: Subject(Message),
-) -> Result(Permit, Nil) {
+fn request(limiter: ConnectionLimiter, ip: String) -> Result(Permit, Nil) {
+  use inbox <- result.try(
+    work_queue.lookup(limiter.name) |> result.replace_error(Nil),
+  )
   let reservation = reference.new()
   let token = new_reservation_token()
-  case
-    call(subject, registry_call_timeout_ms, fn(reply_subject) {
-      Acquire(
-        reservation: reservation,
-        ip: ip,
-        limiter: limiter,
-        owner: process.self(),
-        token: token,
-        reply: reply_subject,
-      )
-    })
+  let outcome = case
+    work_queue.call_with_cleanup(
+      inbox,
+      reservation,
+      registry_call_timeout_ms,
+      fn(reply) {
+        Acquire(
+          reservation: reservation,
+          ip: ip,
+          limiter: limiter,
+          owner: process.self(),
+          token: token,
+          reply: reply,
+        )
+      },
+      Complete(reservation, token),
+    )
   {
-    Ok(value) -> value
-    Error(CallTimedOut) -> {
-      let _cancelled = cancel_reservation_token(token)
-      // Signals from one process arrive in order. If Acquire is still queued,
-      // this cancellation follows it and reclaims any late slot.
-      let _sent = send_if_alive(subject, Cancel(reservation))
-      Error(Nil)
-    }
-    Error(CallOwnerUnavailable) -> {
+    Ok(Ok(permit)) ->
+      case atomic.compare_exchange(token, pending_token, accepted_token) {
+        Ok(Nil) -> Ok(permit)
+        Error(_) -> Error(Nil)
+      }
+    Ok(Error(Nil)) -> Error(Nil)
+    Error(_) -> {
       let _cancelled = cancel_reservation_token(token)
       Error(Nil)
     }
   }
+  complete_request(inbox, reservation)
+  outcome
+}
+
+fn complete_request(
+  inbox: work_queue.Queue(Message),
+  reservation: reference.Reference,
+) -> Nil {
+  case work_queue.activate_cleanup(inbox, reservation) {
+    Ok(Nil) | Error(overload.Unavailable) -> Nil
+    Error(error) ->
+      log.warn(
+        log.new("beryl.connection_limit"),
+        "Connection cleanup activation failed",
+        [#("reason", overload.describe(error))],
+      )
+  }
+}
+
+fn schedule_queue_recovery(subject: Subject(Message)) -> Nil {
+  let _timer =
+    process.send_after(
+      subject,
+      queue_recovery_interval_ms,
+      RecoverQueue(subject),
+    )
+  Nil
 }
 
 fn build(
@@ -612,6 +673,7 @@ fn build(
   max_total: Int,
   connection_rate: Int,
   connection_burst: Int,
+  queue_limits: overload.Limits,
   name: process.Name(Message),
 ) -> actor.Builder(State, Message, Subject(Message)) {
   let rate_config = case connection_rate > 0 {
@@ -626,26 +688,38 @@ fn build(
     0 -> connection_rate
     burst -> burst
   }
-  let state =
-    State(
-      store_key: name,
-      checkpoint: None,
-      max_per_ip: max_per_ip,
-      max_total: max_total,
-      connection_rate: rate_config,
-      bucket_ttl_ns: int.max(
-        bucket_sweep_interval_ms * 1_000_000,
-        effective_burst * one_second_ns / int.max(connection_rate, 1),
-      ),
-      total: 0,
-      counts: dict.new(),
-      rate_buckets: dict.new(),
-      reservations: dict.new(),
-      monitors: dict.new(),
-    )
   actor.new_with_initialiser(1000, fn(subject) {
+    let inbox =
+      work_queue.new(queue_limits, overload.ConnectionQueue, False, fn() {
+        process.send(subject, Drain(subject))
+      })
+    work_queue.name(inbox, name)
+    let state =
+      State(
+        store_key: name,
+        inbox: inbox,
+        draining: False,
+        checkpoint: None,
+        max_per_ip: max_per_ip,
+        max_total: max_total,
+        connection_rate: rate_config,
+        bucket_ttl_ns: int.max(
+          bucket_sweep_interval_ms * 1_000_000,
+          effective_burst * one_second_ns / int.max(connection_rate, 1),
+        ),
+        total: 0,
+        counts: dict.new(),
+        rate_buckets: dict.new(),
+        reservations: dict.new(),
+        monitors: dict.new(),
+      )
     schedule_sweep(subject, rate_config)
-    let state = open_state(name, state) |> recover_holders |> persist
+    schedule_queue_recovery(subject)
+    let state = open_state(name, state)
+    let state =
+      State(..state, inbox: inbox, draining: False)
+      |> recover_holders
+      |> persist
     let selector =
       process.new_selector()
       |> process.select(subject)
@@ -664,16 +738,24 @@ pub fn start_named(
   max_total: Int,
   connection_rate: Int,
   connection_burst: Int,
+  queue_limits: overload.Limits,
   name: process.Name(Message),
 ) -> Result(actor.Started(Subject(Message)), actor.StartError) {
-  build(max_per_ip, max_total, connection_rate, connection_burst, name)
+  build(
+    max_per_ip,
+    max_total,
+    connection_rate,
+    connection_burst,
+    queue_limits,
+    name,
+  )
   |> actor.named(name)
   |> actor.start
 }
 
 @internal
 pub fn from_name(name: process.Name(Message)) -> ConnectionLimiter {
-  ConnectionLimiter(subject: process.named_subject(name))
+  ConnectionLimiter(subject: process.named_subject(name), name: name)
 }
 
 /// The pid of the limiter process, if it is currently running. Used by the
@@ -683,6 +765,15 @@ pub fn pid(limiter: ConnectionLimiter) -> Result(Pid, Nil) {
   process.subject_owner(limiter.subject)
 }
 
+/// Inspect pending admission without sending a message to the limiter.
+@internal
+pub fn queue_snapshot(
+  limiter: ConnectionLimiter,
+) -> Result(overload.Occupancy, overload.AdmissionError) {
+  use inbox <- result.try(work_queue.lookup(limiter.name))
+  work_queue.snapshot(inbox)
+}
+
 @internal
 pub fn enabled(max_per_ip: Int, max_total: Int, connection_rate: Int) -> Bool {
   max_per_ip > 0 || max_total > 0 || connection_rate > 0
@@ -690,7 +781,7 @@ pub fn enabled(max_per_ip: Int, max_total: Int, connection_rate: Int) -> Bool {
 
 /// Acquire a connection slot, failing when the IP already has too many sockets.
 fn acquire(limiter: ConnectionLimiter, ip: String) -> Result(Permit, Nil) {
-  request(limiter, ip, limiter.subject)
+  request(limiter, ip)
 }
 
 /// Acquire from an optional limiter. `None` means unlimited.
@@ -707,13 +798,27 @@ pub fn acquire_optional(
 /// Bind a permit to the calling process (the long-lived connection process),
 /// so its slot is reclaimed if that process dies without releasing.
 fn bind(permit: Permit) -> Result(Nil, Nil) {
+  let outcome = bind_request(permit)
+  case outcome {
+    Ok(Nil) -> Ok(Nil)
+    Error(Nil) -> {
+      release(permit)
+      Error(Nil)
+    }
+  }
+}
+
+fn bind_request(permit: Permit) -> Result(Nil, Nil) {
+  use inbox <- result.try(
+    work_queue.lookup(permit.limiter.name) |> result.replace_error(Nil),
+  )
   case
-    call(permit.limiter.subject, registry_call_timeout_ms, fn(reply) {
+    work_queue.call(inbox, registry_call_timeout_ms, fn(reply) {
       Bind(permit.reservation, process.self(), reply)
     })
   {
     Ok(outcome) -> outcome
-    Error(CallTimedOut) | Error(CallOwnerUnavailable) -> Error(Nil)
+    Error(_) -> Error(Nil)
   }
 }
 
@@ -727,7 +832,7 @@ pub fn bind_optional(permit: Option(Permit)) -> Result(Nil, Nil) {
 
 /// Release a previously acquired slot.
 fn release(permit: Permit) -> Nil {
-  let _cancelled = cancel_reservation_token(permit.token)
+  use <- bool.guard(when: !cancel_reservation_token(permit.token), return: Nil)
   process.send(permit.limiter.subject, Release(permit.reservation))
 }
 

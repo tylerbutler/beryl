@@ -232,7 +232,6 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
   }
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Run the shared upgrade admission pipeline for a request.
 ///
 /// When the request path matches `config.path`, the pipeline:

@@ -481,6 +481,57 @@ evidence in `load/results/admission-bounds.json`. The
 [overload guide](../../website/src/content/docs/guides/overload.md) documents
 configuration and migration.
 
+## Pending connection admission (#437)
+
+The connection limiter has its own owner-scoped ETS work queue, separate from
+the runtime queues in #397. `beryl.with_connection_queue_limits` sets its count
+and accounted-payload budget. The default is 256 items and 8 MiB. The limiter
+exists only when a global/per-IP connection ceiling or per-IP connection rate
+is enabled. Configuring the queue alone does not enable a connection limit.
+
+An acquire reserves two entries in one publication: the request and its
+completion/cancellation obligation. A bind reserves one entry. Counts include
+executing requests and inactive cleanup obligations. Thus, the default admits
+at most 128 queued acquires, or a mixture of requests and cleanup entries that
+totals at most 256. Peer IP strings and their binary backing storage count
+toward the byte budget. Opaque function environments, BEAM process heaps,
+live-holder state, per-IP rate history, and arbitrary system messages do not.
+
+The caller owns cancellation until it acknowledges a successful reply. On
+timeout it cancels its atomic token and activates the cleanup it reserved at
+publication. Acquires stay charged until the limiter drains them, so caller
+death between timeout and cleanup activation cannot orphan the cleanup entry.
+The caller discards late replies through one-shot aliases. If the limiter
+already started an acquire, cleanup removes any resulting holder. A dead
+caller's pending request fails the liveness check; a dead granted caller's
+monitor activates the same cleanup.
+Cleanup activation coalesces and needs no extra admission capacity.
+
+The limiter still serializes global counts, per-IP counts, and rate buckets.
+Only queue work moves out of the mailbox. Producers send coalesced wakes;
+one 100 ms recovery timer covers a producer dying between publication and
+wake. An active drain does not start another drain on each timer tick.
+Explicit holder release bypasses the pending queue and emits at most one
+release signal per permit. Monitor messages and releases therefore depend on
+the live-holder population, not on repeated rejected attempts.
+
+A full queue or oversized request returns the existing transport
+`Error(Nil)` without publishing work. The shared upgrade pipeline returns
+HTTP 429. Calls wait 100 ms after publication. A failed bind cancels its
+permit and requires the transport to close.
+
+A worker restart destroys its pending queue but recovers checkpointed holder
+and rate state. The replacement cancels unacknowledged grants with an atomic
+compare-and-exchange against caller acknowledgement. An old reply cannot
+return a valid permit after recovery discarded that grant. Acknowledged live
+holders survive; dead or cancelled holders release both count dimensions.
+Pending queues do not share a lifetime with the checkpoint heir.
+
+Tests in `connection_limit_ingress_test.gleam` suspend the limiter and exhaust
+small configured budgets with timed-out and killed callers. They check
+occupancy and mailbox bounds, cleanup under saturation, oversized payload
+rejection, and both acknowledged and unacknowledged grants across restart.
+
 ## Sources
 
 - [Issue #228: shared-actor crash boundaries](https://github.com/tylerbutler/beryl/issues/228)
