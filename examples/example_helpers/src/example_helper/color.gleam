@@ -3,6 +3,7 @@
 
 import gleam/int
 import gleam/list
+import gleam/string
 
 /// Generate a deterministic pastel HSL color string from a seed.
 ///
@@ -16,9 +17,8 @@ pub fn pastel_for(seed: String) -> String {
 
 fn charcode_sum(value: String) -> Int {
   value
-  |> string_to_codepoints
-  |> list.fold(0, fn(accumulator, codepoint) { accumulator + codepoint })
+  |> string.to_utf_codepoints
+  |> list.fold(0, fn(accumulator, codepoint) {
+    accumulator + string.utf_codepoint_to_int(codepoint)
+  })
 }
-
-@external(erlang, "example_helpers_ffi", "string_to_codepoints")
-fn string_to_codepoints(value: String) -> List(Int)
