@@ -715,6 +715,10 @@ pub type ConfigError {
   /// disable heartbeat eviction. The wrapped `Int` is the
   /// smallest accepted timeout.
   HeartbeatTimeoutTooLow(minimum: Int)
+  /// A configured per-second rate was above the largest value that can still
+  /// consume at least one token. The wrapped `Int` is the maximum accepted
+  /// rate.
+  RateLimitTooHigh(maximum: Int)
   /// A per-topic-pattern rate limit used a pattern string that is not a valid
   /// topic pattern. `pattern` is the offending pattern and `reason` is the
   /// [`beryl/topic`](https://beryl.tylerbutler.com/reference/api/beryl-topic/)
@@ -741,18 +745,41 @@ pub type StopError {
 
 /// Validate a [`Config`](#config) without starting any process.
 ///
-/// This checks that `heartbeat_timeout_ms` is at least 2 and that every
-/// per-topic rate-limit pattern is valid.
+/// This checks that `heartbeat_timeout_ms` is at least 2, that every
+/// configured rate limit is representable, and that every per-topic
+/// rate-limit pattern is valid.
 pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
   use <- bool.guard(
     when: config.heartbeat_timeout_ms < 2,
     return: internal.result_error(HeartbeatTimeoutTooLow(2)),
   )
-  list.try_each(config.topic_rates, fn(entry) {
-    let #(pattern, _limits) = entry
-    topic.validate_pattern(pattern)
-    |> result.map_error(fn(error) { InvalidTopicPattern(pattern, error) })
+  use _ <- result.try(validate_rate_limit(config.connection_rate_per_ip))
+  use _ <- result.try(validate_rate_limit(config.frame_rate))
+  use _ <- result.try(validate_rate_limit(config.message_rate))
+  use _ <- result.try(validate_rate_limit(config.join_rate))
+  use _ <- result.try(validate_rate_limit(config.channel_rate))
+  list.try_each(config.topic_rates, validate_topic_rate)
+}
+
+fn validate_rate_limit(rate: Int) -> Result(Nil, ConfigError) {
+  use <- bool.guard(
+    when: rate > 1_000_000_000,
+    return: internal.result_error(RateLimitTooHigh(1_000_000_000)),
+  )
+  Ok(Nil)
+}
+
+fn validate_topic_rate(
+  entry: #(String, Option(rate_limit.RateLimitConfig)),
+) -> Result(Nil, ConfigError) {
+  let #(pattern, limits) = entry
+  use _ <- result.try(case limits {
+    None -> Ok(Nil)
+    Some(limit) -> validate_rate_limit(limit.per_second)
   })
+  topic.validate_pattern(pattern)
+  |> result.map_error(fn(error) { InvalidTopicPattern(pattern, error) })
+  |> result.replace(Nil)
 }
 
 /// Stop a beryl system.
