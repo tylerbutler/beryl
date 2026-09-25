@@ -56,6 +56,9 @@ fn drain_messages(
   from: pubsub.PubSubFrom,
 ) -> Int
 
+@external(erlang, "beryl_pubsub_test_ffi", "with_malformed_messages")
+fn with_malformed_messages(scope: atom.Atom, receive: fn() -> Nil) -> Bool
+
 pub fn pubsub_membership_ready_cost_is_bounded_test() -> Nil {
   let reductions =
     healthy_ready_reductions(
@@ -510,6 +513,61 @@ pub fn pubsub_broadcast_uses_scope_tagged_wire_shape_test() -> Nil {
   is_scoped_wire_message(atom.create(scope), topic, event, payload, 100)
   |> should.be_true
 
+  pubsub.leave(subscriber, topic)
+}
+
+pub fn pubsub_same_scope_handles_share_typed_delivery_test() -> Nil {
+  let config = pubsub.config_with_scope("test_pubsub_same_scope_contract")
+  let first: pubsub.PubSub(String) = pubsub.start(config)
+  let second: pubsub.PubSub(String) = pubsub.start(config)
+  let first_subscriber = pubsub.subscriber(first)
+  let second_subscriber = pubsub.subscriber(second)
+  let topic = "scope:shared-handles"
+  pubsub.join(first_subscriber, topic)
+  pubsub.join(second_subscriber, topic)
+
+  let first_selector =
+    process.new_selector()
+    |> pubsub.selecting(first_subscriber, fn(message) { message })
+  let second_selector =
+    process.new_selector()
+    |> pubsub.selecting(second_subscriber, fn(message) { message })
+
+  pubsub.broadcast(first, topic, "first", "from first")
+  process.selector_receive(second_selector, 100)
+  |> should.equal(
+    Ok(pubsub.Message(topic, "first", "from first", pubsub.System)),
+  )
+  pubsub.broadcast(second, topic, "second", "from second")
+  process.selector_receive(first_selector, 100)
+  |> should.equal(
+    Ok(pubsub.Message(topic, "second", "from second", pubsub.System)),
+  )
+  process.selector_receive(first_selector, 0) |> should.equal(Error(Nil))
+  pubsub.leave(second_subscriber, topic)
+  pubsub.subscriber_count(first, topic) |> should.equal(0)
+}
+
+pub fn pubsub_selecting_ignores_malformed_outer_tuples_test() -> Nil {
+  let scope = atom.create("test_pubsub_malformed_outer_tuples")
+  let instance: pubsub.PubSub(String) =
+    pubsub.start(pubsub.config_with_scope(atom.to_string(scope)))
+  let subscriber = pubsub.subscriber(instance)
+  let topic = "scope:malformed"
+  pubsub.join(subscriber, topic)
+  let selector =
+    process.new_selector()
+    |> pubsub.selecting(subscriber, fn(message) { message })
+
+  with_malformed_messages(scope, fn() {
+    pubsub.broadcast(instance, topic, "valid", "still delivered")
+    process.selector_receive(selector, 100)
+    |> should.equal(
+      Ok(pubsub.Message(topic, "valid", "still delivered", pubsub.System)),
+    )
+    process.selector_receive(selector, 0) |> should.equal(Error(Nil))
+  })
+  |> should.be_true
   pubsub.leave(subscriber, topic)
 }
 
