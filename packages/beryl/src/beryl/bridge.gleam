@@ -58,7 +58,8 @@ import gleam/erlang/process.{type Pid, type Subject}
 
 /// How long `start` waits for the forwarder process to report its subjects
 /// before giving up. The handshake is local and effectively instant; the
-/// timeout only guards against a forwarder that failed to spawn.
+/// timeout guards against a forwarder that failed to spawn or stalled before
+/// readiness.
 const handshake_timeout_ms = 5000
 
 /// A handle to a running bridge forwarder.
@@ -73,7 +74,8 @@ pub opaque type Bridge(message) {
 /// Why a bridge failed to start.
 pub type StartError {
   /// The forwarder did not report its subjects within
-  /// `handshake_timeout_ms`. It failed to spawn or start.
+  /// `handshake_timeout_ms`. It failed to spawn or reach readiness, and any
+  /// timed-out child is cleaned up before `start` returns.
   ForwarderUnavailable
 }
 
@@ -108,6 +110,21 @@ pub fn start(
   to sender: Sender(info),
   with transform: fn(message) -> info,
 ) -> Result(Bridge(message), StartError) {
+  start_with_handshake(
+    to: sender,
+    with: transform,
+    handshake_timeout_ms: handshake_timeout_ms,
+    before_ready: fn() { Nil },
+  )
+}
+
+@internal
+pub fn start_with_handshake(
+  to sender: Sender(info),
+  with transform: fn(message) -> info,
+  handshake_timeout_ms handshake_timeout_ms: Int,
+  before_ready before_ready: fn() -> Nil,
+) -> Result(Bridge(message), StartError) {
   let ready = process.new_subject()
   let owner = process.self()
 
@@ -125,14 +142,48 @@ pub fn start(
         |> process.select_map(control, fn(_) { Stopped })
         |> process.select_specific_monitor(monitor, fn(_) { OwnerDown })
 
+      before_ready()
       process.send(ready, #(data, control))
       forward_loop(selector, sender, transform)
     })
+  let startup_monitor = process.monitor(pid)
 
   case process.receive(ready, handshake_timeout_ms) {
-    Ok(#(data, control)) ->
+    Ok(#(data, control)) -> {
+      let demonitor_result = process.demonitor_process(startup_monitor)
+      let _demonitor_result = demonitor_result
       Ok(Bridge(pid: pid, subject: data, control: control))
-    Error(Nil) -> Error(ForwarderUnavailable)
+    }
+    Error(Nil) -> {
+      cleanup_timed_out_startup(
+        pid: pid,
+        ready: ready,
+        startup_monitor: startup_monitor,
+      )
+      Error(ForwarderUnavailable)
+    }
+  }
+}
+
+fn cleanup_timed_out_startup(
+  pid pid: Pid,
+  ready ready: Subject(#(Subject(message), Subject(Control))),
+  startup_monitor startup_monitor: process.Monitor,
+) -> Nil {
+  process.kill(pid)
+  let _down =
+    process.new_selector()
+    |> process.select_specific_monitor(startup_monitor, fn(down) { down })
+    |> process.selector_receive_forever
+  let demonitor_result = process.demonitor_process(startup_monitor)
+  let _demonitor_result = demonitor_result
+  drain_ready(ready)
+}
+
+fn drain_ready(ready: Subject(message)) -> Nil {
+  case process.receive(ready, 0) {
+    Ok(_) -> drain_ready(ready)
+    Error(Nil) -> Nil
   }
 }
 

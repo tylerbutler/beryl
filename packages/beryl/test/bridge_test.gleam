@@ -77,6 +77,35 @@ pub fn bridge_stop_tears_down_forwarder_test() -> Nil {
   process.is_alive(pid) |> should.be_false
 }
 
+pub fn bridge_timeout_cleans_up_stalled_forwarder_test() -> Nil {
+  let received = process.new_subject()
+  let mailbox_before = test_helper.mailbox_length(process.self())
+  let monitor_count_before = test_helper.monitor_count(process.self())
+  let monitors_before = test_helper.monitored_by_count(process.self())
+
+  bridge.start_with_handshake(
+    to: capturing_sender(into: received),
+    with: fn(x: String) { x },
+    handshake_timeout_ms: 0,
+    before_ready: process.sleep_forever,
+  )
+  |> should.equal(Error(bridge.ForwarderUnavailable))
+
+  test_helper.wait_until(
+    fn() {
+      test_helper.monitor_count(process.self()) == monitor_count_before
+      && test_helper.monitored_by_count(process.self()) == monitors_before
+    },
+    1000,
+    10,
+  )
+  test_helper.monitor_count(process.self())
+  |> should.equal(monitor_count_before)
+  test_helper.monitored_by_count(process.self())
+  |> should.equal(monitors_before)
+  test_helper.mailbox_length(process.self()) |> should.equal(mailbox_before)
+}
+
 pub fn bridge_cleans_up_when_owner_dies_test() -> Nil {
   let received = process.new_subject()
   let pid_back = process.new_subject()
