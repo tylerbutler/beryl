@@ -58,7 +58,8 @@ import gleam/erlang/process.{type Pid, type Subject}
 
 /// How long `start` waits for the forwarder process to report its subjects
 /// before giving up. The handshake is local and effectively instant; the
-/// timeout only guards against a forwarder that failed to spawn.
+/// timeout guards against a forwarder that failed to spawn or stalled before
+/// readiness.
 const handshake_timeout_ms = 5000
 
 const handshake_cleanup_timeout_ms = 1000
@@ -75,8 +76,8 @@ pub opaque type Bridge(message) {
 /// Why a bridge failed to start.
 pub type StartError {
   /// The forwarder did not report its subjects within
-  /// `handshake_timeout_ms`. It failed to spawn or start, and any timed-out
-  /// child is cleaned up before `start` returns.
+  /// `handshake_timeout_ms`. It failed to spawn or reach readiness, and any
+  /// timed-out child is cleaned up before `start` returns.
   ForwarderUnavailable
 }
 
@@ -172,11 +173,10 @@ fn cleanup_timed_out_startup(
   startup_monitor startup_monitor: process.Monitor,
 ) -> Nil {
   process.kill(pid)
-  let wait_result =
+  let assert Ok(process.ProcessDown(..)) =
     process.new_selector()
-    |> process.select_specific_monitor(startup_monitor, fn(_) { Nil })
+    |> process.select_specific_monitor(startup_monitor, fn(down) { down })
     |> process.selector_receive(handshake_cleanup_timeout_ms)
-  let _wait_result = wait_result
   let demonitor_result = process.demonitor_process(startup_monitor)
   let _demonitor_result = demonitor_result
   drain_ready(ready)

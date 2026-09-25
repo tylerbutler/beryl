@@ -80,6 +80,7 @@ pub fn bridge_stop_tears_down_forwarder_test() -> Nil {
 pub fn bridge_timeout_cleans_up_stalled_forwarder_test() -> Nil {
   let received = process.new_subject()
   let mailbox_before = test_helper.mailbox_length(process.self())
+  let monitor_count_before = test_helper.monitor_count(process.self())
   let monitors_before = test_helper.monitored_by_count(process.self())
 
   bridge.start_with_handshake(
@@ -91,10 +92,17 @@ pub fn bridge_timeout_cleans_up_stalled_forwarder_test() -> Nil {
   |> should.equal(Error(bridge.ForwarderUnavailable))
 
   test_helper.wait_until(
-    fn() { test_helper.monitored_by_count(process.self()) == monitors_before },
+    fn() {
+      test_helper.monitor_count(process.self()) == monitor_count_before
+      && test_helper.monitored_by_count(process.self()) == monitors_before
+    },
     1000,
     10,
   )
+  test_helper.monitor_count(process.self())
+  |> should.equal(monitor_count_before)
+  test_helper.monitored_by_count(process.self())
+  |> should.equal(monitors_before)
   test_helper.mailbox_length(process.self()) |> should.equal(mailbox_before)
 }
 
