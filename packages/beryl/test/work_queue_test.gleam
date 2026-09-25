@@ -292,6 +292,42 @@ pub fn cleanup_is_reserved_and_coalesced_under_saturation_test() -> Nil {
   work_queue.release(queue, cleanup)
 }
 
+pub fn timeout_then_caller_exit_keeps_cleanup_discoverable_test() -> Nil {
+  let assert Ok(limits) = overload.limits(items: 2, bytes: 1024)
+  let queue =
+    work_queue.new(limits, overload.ConnectionQueue, False, fn() { Nil })
+  let outcome = process.new_subject()
+  let caller =
+    process.spawn_unlinked(fn() {
+      let result: Result(Nil, overload.CallError) =
+        work_queue.call_with_cleanup(
+          queue,
+          "reservation",
+          10,
+          fn(_) { "request" },
+          "cleanup",
+        )
+      process.send(outcome, result)
+      // Exit in the gap before the caller activates cleanup.
+    })
+  let monitor = process.monitor(caller)
+  process.receive(outcome, 500)
+  |> should.equal(Ok(Error(overload.RequestTimedOut)))
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(500)
+  let assert Ok(full) = work_queue.snapshot(queue)
+  full.items |> should.equal(2)
+  let assert Ok(#(request, "request")) = work_queue.take(queue)
+  work_queue.activate_cleanup(queue, "reservation") |> should.equal(Ok(Nil))
+  work_queue.release(queue, request)
+  let assert Ok(#(cleanup, "cleanup")) = work_queue.take(queue)
+  work_queue.release(queue, cleanup)
+  let assert Ok(empty) = work_queue.snapshot(queue)
+  empty.items |> should.equal(0)
+}
+
 pub fn abandoned_provisional_resource_is_cleaned_once_test() -> Nil {
   let ready = process.new_subject()
   let cleaned = process.new_subject()

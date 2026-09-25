@@ -189,6 +189,7 @@ pub opaque type Config {
     /// before the runtime gives up on it (app-dispatch systems only).
     presence_op_timeout_ms: Int,
     router_queue_limits: overload.Limits,
+    connection_queue_limits: overload.Limits,
     socket_queue_limits: overload.Limits,
     worker_queue_limits: overload.Limits,
     effect_limits: overload.Limits,
@@ -243,6 +244,7 @@ pub fn config(codec: codec.Codec) -> Config {
     presence: None,
     presence_op_timeout_ms: 5000,
     router_queue_limits: overload.shared_limits(),
+    connection_queue_limits: overload.worker_limits(),
     socket_queue_limits: overload.socket_limits(),
     worker_queue_limits: overload.worker_limits(),
     effect_limits: overload.worker_limits(),
@@ -255,6 +257,24 @@ pub fn with_router_queue_limits(
   limits: overload.Limits,
 ) -> Config {
   Config(..config, router_queue_limits: limits)
+}
+
+/// Bound pending connection-limiter work independently of live connections.
+///
+/// Defaults to 256 items and 8 MiB of accounted payload, including executing
+/// work. Each acquire reserves two items: its request and its completion or
+/// cancellation. Binds reserve one item. Use at least two items to admit an
+/// acquire. Cleanup uses its reserved capacity even when the queue is full.
+///
+/// This applies when a connection ceiling or per-IP connection rate is enabled.
+/// Saturation, an oversized peer IP, timeout, or limiter unavailability returns
+/// `Error(Nil)` from `transport.acquire_connection_slot`; transports reject the
+/// upgrade with HTTP 429. Byte accounting is structural, not a BEAM heap limit.
+pub fn with_connection_queue_limits(
+  config: Config,
+  limits: overload.Limits,
+) -> Config {
+  Config(..config, connection_queue_limits: limits)
 }
 
 /// Bound outstanding socket work, including presence-suspended continuations.
@@ -1091,6 +1111,7 @@ fn child_spec_supervisor(
             config.max_connections,
             config.connection_rate_per_ip,
             config.connection_burst_per_ip,
+            config.connection_queue_limits,
             name,
           )
         }),

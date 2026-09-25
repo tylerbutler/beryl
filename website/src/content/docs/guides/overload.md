@@ -16,6 +16,7 @@ into a callback or a suspended effect list does not release its capacity.
 | Each topic worker | 256 | 8 MiB |
 | Each presence actor | 4096 | 32 MiB |
 | Each callback result | 256 effects | 8 MiB |
+| Connection limiter | 256 | 8 MiB |
 
 The socket limit includes input, pending worker reports, active effect lists,
 and unanswered reply refs. Callback completion does not release an unanswered
@@ -41,6 +42,11 @@ The supervisor admits one stop request at a time. Repeated disconnects and
 terminal stop requests do not create repeated socket control work. A timeout
 or caller exit stops a connection initializer that has not committed.
 
+The connection limiter has a separate pending-work budget. An acquire reserves
+two items: its request and its completion or cancellation. A bind uses one
+item. Pending, executing, and reserved cleanup work all count. Saturation does
+not prevent the caller or limiter from activating reserved cleanup.
+
 ## Configure limits
 
 Use `overload.limits` to validate positive item and byte limits. Zero does not
@@ -64,11 +70,29 @@ let config =
   |> beryl.with_socket_queue_limits(socket_limit)
   |> beryl.with_worker_queue_limits(worker_limit)
   |> beryl.with_effect_limits(worker_limit)
+  |> beryl.with_connection_queue_limits(worker_limit)
 ```
 
 Use `presence.with_queue_limits(config, limit)` for a presence actor. These
 limits are safety defaults, not measured throughput recommendations. Keep room
 for input, results, reply refs, and cleanup at the same time.
+
+Connection queue limits apply only when you enable a connection ceiling or
+per-IP connection rate. Use at least two items to admit an acquire. Full or
+oversized requests fail before publication. `transport.acquire_connection_slot`
+returns `Error(Nil)` on rejection, timeout, or limiter unavailability; Mist
+and Ewe return HTTP 429 for the upgrade. A failed bind cancels its permit and
+requires the connection to close.
+
+The limiter waits up to 100 ms after publishing a request. Timed-out queued
+requests cannot acquire a slot later. Cleanup reclaims a slot if the limiter
+already started the request. Caller death also reclaims pending work and
+holders when the limiter resumes. Every 100 ms, the limiter checks holder
+tokens to reclaim cancelled permits, even if a failed-bind caller dies before
+sending its release notification. The original owner need not exit or retry.
+After a worker restart, acknowledged live holders survive; pending requests
+and unacknowledged grants do not. The queue does not limit live-holder state
+or per-IP rate history.
 
 ## Handle send results
 

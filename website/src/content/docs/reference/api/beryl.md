@@ -103,6 +103,7 @@ beryl: type-safe real-time communication
 <li><a href="#api-function-validate_config"><code>validate_config</code></a></li>
 <li><a href="#api-function-with_channel_rate"><code>with_channel_rate</code></a></li>
 <li><a href="#api-function-with_channel_rate_max_keys_per_socket"><code>with_channel_rate_max_keys_per_socket</code></a></li>
+<li><a href="#api-function-with_connection_queue_limits"><code>with_connection_queue_limits</code></a></li>
 <li><a href="#api-function-with_connection_rate_per_ip"><code>with_connection_rate_per_ip</code></a></li>
 <li><a href="#api-function-with_effect_limits"><code>with_effect_limits</code></a></li>
 <li><a href="#api-function-with_frame_rate"><code>with_frame_rate</code></a></li>
@@ -515,6 +516,29 @@ pub fn with_channel_rate_max_keys_per_socket(
 Configure the maximum active per-channel rate-limit buckets per socket.
 
  Values <= 0 disable the cap. The default is 1000.
+
+<div class="api-entry-anchor" id="api-function-with_connection_queue_limits" aria-hidden="true"></div>
+
+### `with_connection_queue_limits`
+
+```gleam
+pub fn with_connection_queue_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound pending connection-limiter work independently of live connections.
+
+ Defaults to 256 items and 8 MiB of accounted payload, including executing
+ work. Each acquire reserves two items: its request and its completion or
+ cancellation. Binds reserve one item. Use at least two items to admit an
+ acquire. Cleanup uses its reserved capacity even when the queue is full.
+
+ This applies when a connection ceiling or per-IP connection rate is enabled.
+ Saturation, an oversized peer IP, timeout, or limiter unavailability returns
+ `Error(Nil)` from `transport.acquire_connection_slot`; transports reject the
+ upgrade with HTTP 429. Byte accounting is structural, not a BEAM heap limit.
 
 <div class="api-entry-anchor" id="api-function-with_connection_rate_per_ip" aria-hidden="true"></div>
 
