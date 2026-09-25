@@ -8,8 +8,8 @@
 
 packages = [
   { name = "argv", version = "1.1.0", build_tools = ["gleam"], requirements = [], otp_app = "argv", source = "hex", outer_checksum = "3277D100448BDB4A29B6D58C0F36F631CBC349E8BDD09766C6309DF202831140" },
-  { name = "beryl", version = "0.5.0", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "telemetry", "rasa"], source = "local", path = "../../packages/beryl" },
-  { name = "beryl_mist", version = "0.4.0", build_tools = ["gleam"], requirements = ["beryl", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_stdlib", "glisten", "mist"], source = "local", path = "../../packages/beryl_mist" },
+  { name = "beryl", version = "0.5.0", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "rasa", "telemetry"], source = "local", path = "../../packages/beryl" },
+  { name = "beryl_mist", version = "0.4.0", build_tools = ["gleam"], requirements = ["beryl", "gleam_erlang", "gleam_http", "gleam_stdlib", "glisten", "mist"], source = "local", path = "../../packages/beryl_mist" },
   { name = "clip", version = "1.2.2", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "clip", source = "hex", outer_checksum = "12A01D12B289C078506B1C383F65A916381A2596C7F2CA7051E8A44BF4FC6FC3" },
   { name = "envoy", version = "1.2.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "envoy", source = "hex", outer_checksum = "9C6FBB6BFA02A52798BEEC5977A738CAD6E4A057F4B67FD0C8061AD2502C191A" },
   { name = "example_helper", version = "0.1.0", build_tools = ["gleam"], requirements = ["beryl", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "mist"], source = "local", path = "../example_helpers" },
@@ -37,7 +37,7 @@ packages = [
   { name = "logging", version = "1.5.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "logging", source = "hex", outer_checksum = "BC5F18CE5DD9686100229FE5409BDC3DD5C46D5A7DF2F804AD2D8F0DD6C5060E" },
   { name = "mist", version = "6.0.3", build_tools = ["gleam"], requirements = ["exception", "gleam_erlang", "gleam_http", "gleam_otp", "gleam_stdlib", "glisten", "gramps", "hpack_erl", "logging"], otp_app = "mist", source = "hex", outer_checksum = "1B07F321D5FA0CB162D81496F2DE96AEB6EF8980F4F38230A4CC3F849497E020" },
   { name = "palabres", version = "1.0.4", build_tools = ["gleam"], requirements = ["envoy", "gleam_stdlib"], otp_app = "palabres", source = "hex", outer_checksum = "2809B7C10AE929E82454B4A6A0FB7D02073C5A509F9A63EE9F7B268A75D98965" },
-  { name = "prng", version = "5.1.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "prng", source = "hex", outer_checksum = "29DA88BCFB54D06DD1472951DF101E9524878056D139DA2616B04350B403CE10" },
+  { name = "prng", version = "6.0.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "prng", source = "hex", outer_checksum = "7FE3879E13150248BD370469205ED07B9404DD90670FEBB8CD0E7643707C420E" },
   { name = "rasa", version = "2.1.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_stdlib"], otp_app = "rasa", source = "hex", outer_checksum = "AE8DE720268FD3D106C970A321C9077D301D392FFF47061C8BFC05D63F8BD12F" },
   { name = "repeatedly", version = "2.1.2", build_tools = ["gleam"], requirements = [], otp_app = "repeatedly", source = "hex", outer_checksum = "93AE1938DDE0DC0F7034F32C1BF0D4E89ACEBA82198A1FE21F604E849DA5F589" },
   { name = "simplifile", version = "2.7.0", build_tools = ["gleam"], requirements = ["filepath", "gleam_stdlib"], otp_app = "simplifile", source = "hex", outer_checksum = "A2727627B063E87351934C7F7F008F2D1FDB16F6DE0B8C79F9E46459CFC9C164" },
@@ -46,7 +46,7 @@ packages = [
   { name = "string_width", version = "3.4.3", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "string_width", source = "hex", outer_checksum = "EC2D012CC99CAE1395776BBDF1CD6E45CA4E08210F7AADD7C40D0E1222EFBE4A" },
   { name = "telemetry", version = "1.4.2", build_tools = ["rebar3"], requirements = [], otp_app = "telemetry", source = "hex", outer_checksum = "928F6495066506077862C0D1646609EED891A4326BEE3126BA54B60AF61FEBB1" },
   { name = "tobble", version = "2.0.2", build_tools = ["gleam"], requirements = ["gleam_stdlib", "gleam_yielder", "string_width"], otp_app = "tobble", source = "hex", outer_checksum = "95E7656A560964E4627ADD148675FB5808F8F5D262CAB1DF0F6375B85487CDBA" },
-  { name = "unitest", version = "1.6.0", build_tools = ["gleam"], requirements = ["argv", "clip", "envoy", "glance", "gleam_community_ansi", "gleam_stdlib", "gleam_time", "prng", "simplifile", "spinner", "tobble"], source = "git", repo = "https://github.com/jtdowney/unitest.git", commit = "bea4f7cfde1f55ced33e23cc1ac4b2b8aff9b24c" },
+  { name = "unitest", version = "1.6.1", build_tools = ["gleam"], requirements = ["argv", "clip", "envoy", "glance", "gleam_community_ansi", "gleam_stdlib", "gleam_time", "prng", "simplifile", "spinner", "tobble"], otp_app = "unitest", source = "hex", outer_checksum = "73AE41203E418B7B4D77C130B4F71968A59E491DEB24CCFEC85D6B9A629D09C6" },
   { name = "youid", version = "1.6.0", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_stdlib", "gleam_time"], otp_app = "youid", source = "hex", outer_checksum = "7A3ABA44B1B38BC2BDCB5474C5317AA372BE58DFBC649815EE08B03526DDA18D" },
 ]
 
@@ -62,4 +62,4 @@ gleam_otp = { version = ">= 1.2.0 and < 2.0.0" }
 gleam_stdlib = { version = ">= 1.0.0 and < 2.0.0" }
 gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
 mist = { version = ">= 6.0.0 and < 7.0.0" }
-unitest = { git = "https://github.com/jtdowney/unitest.git", ref = "bea4f7cfde1f55ced33e23cc1ac4b2b8aff9b24c" }
+unitest = { version = ">= 1.6.1 and < 2.0.0" }
