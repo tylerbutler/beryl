@@ -1,5 +1,15 @@
 # beryl changelog
 
+## v0.5.1 - 2026-09-25
+
+### Fixed
+
+- Clarify the caller-enforced same-scope PubSub payload contract, including distinct fixed scopes for incompatible types and presence replication.
+
+### Dependencies
+
+- use the Hex release of unitest
+
 ## v0.5.0 - 2026-09-24
 
 ### Added
