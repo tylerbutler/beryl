@@ -79,6 +79,17 @@ second = { path = "../second_directory" }
 	}
 	prepareDependencies(project, 2);
 	assertNoResolution(project, ["check"]);
+	writeFileSync(
+		path.join(directory, "first_directory", "gleam.toml"),
+		'name = "first"\nversion = "1.0.1"\n',
+	);
+	prepareDependencies(project, 2);
+	assert.match(
+		readFileSync(path.join(project, "manifest.toml"), "utf8"),
+		/1\.0\.1/,
+	);
+	assertNoResolution(project, ["check"]);
+
 	const fingerprints = ["first", "second"].map((name) =>
 		path.join(project, "build/packages", `${name}.config_fingerprint`),
 	);
