@@ -1,5 +1,12 @@
 # beryl_ewe changelog
 
+## v0.2.4 - 2026-09-25
+
+### Dependencies
+
+- use the Hex release of unitest
+- Updated beryl to 0.5.1
+
 ## v0.2.3 - 2026-09-24
 
 ### Fixed

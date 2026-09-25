@@ -1,5 +1,12 @@
 # beryl_mist changelog
 
+## v0.4.1 - 2026-09-25
+
+### Dependencies
+
+- use the Hex release of unitest
+- Updated beryl to 0.5.1
+
 ## v0.4.0 - 2026-09-24
 
 ### Changed
