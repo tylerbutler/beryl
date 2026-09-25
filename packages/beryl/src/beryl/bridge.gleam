@@ -62,8 +62,6 @@ import gleam/erlang/process.{type Pid, type Subject}
 /// readiness.
 const handshake_timeout_ms = 5000
 
-const handshake_cleanup_timeout_ms = 1000
-
 /// A handle to a running bridge forwarder.
 ///
 /// `message` is the type that the external actor sends to the bridge's
@@ -173,10 +171,10 @@ fn cleanup_timed_out_startup(
   startup_monitor startup_monitor: process.Monitor,
 ) -> Nil {
   process.kill(pid)
-  let assert Ok(process.ProcessDown(..)) =
+  let _down =
     process.new_selector()
     |> process.select_specific_monitor(startup_monitor, fn(down) { down })
-    |> process.selector_receive(handshake_cleanup_timeout_ms)
+    |> process.selector_receive_forever
   let demonitor_result = process.demonitor_process(startup_monitor)
   let _demonitor_result = demonitor_result
   drain_ready(ready)
