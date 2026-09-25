@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { globSync, readFileSync } from "node:fs";
+import { globSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const HEX_RATE_LIMIT = /rate limit .* exceeded|too many requests/i;
+const INCOMPATIBLE_LOCK = /incompatible locked version/i;
 const RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
 
 function sleep(milliseconds) {
@@ -28,19 +29,29 @@ export function retryHexRateLimits(operation, retryDelays = RETRY_DELAYS_MS) {
 }
 
 function downloadDependencies(directory) {
-	retryHexRateLimits(() => {
-		try {
-			const output = execFileSync("gleam", ["deps", "download"], {
-				cwd: directory,
-				encoding: "utf8",
-			});
-			process.stdout.write(output);
-		} catch (error) {
-			if (error?.stdout) process.stdout.write(error.stdout);
-			if (error?.stderr) process.stderr.write(error.stderr);
-			throw error;
-		}
-	});
+	function download() {
+		return retryHexRateLimits(() => {
+			try {
+				const output = execFileSync("gleam", ["deps", "download"], {
+					cwd: directory,
+					encoding: "utf8",
+				});
+				process.stdout.write(output);
+			} catch (error) {
+				if (error?.stdout) process.stdout.write(error.stdout);
+				if (error?.stderr) process.stderr.write(error.stderr);
+				throw error;
+			}
+		});
+	}
+	try {
+		download();
+	} catch (error) {
+		const output = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}\n${error}`;
+		if (!INCOMPATIBLE_LOCK.test(output)) throw error;
+		rmSync(path.join(directory, "manifest.toml"), { force: true });
+		download();
+	}
 }
 
 function dependencyState(directory) {
