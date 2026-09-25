@@ -348,6 +348,7 @@ fn handle_message(
   case message {
     RecoverQueue(subject) -> {
       schedule_queue_recovery(subject)
+      let state = reclaim_cancelled_holders(state)
       case state.draining {
         True -> actor.continue(state)
         False -> handle_message(state, Drain(subject))
@@ -558,6 +559,16 @@ fn release_reservation(
       )
     }
   }
+}
+
+fn reclaim_cancelled_holders(state: State) -> State {
+  // A releasing caller can die after cancelling, before sending Release.
+  dict.fold(state.reservations, state, fn(state, reservation, holder) {
+    case reservation_token_active(holder.token) {
+      True -> state
+      False -> release_reservation(state, reservation) |> persist
+    }
+  })
 }
 
 /// Reclaim a slot in both dimensions: decrement the per-system total and the
@@ -797,12 +808,12 @@ pub fn acquire_optional(
 
 /// Bind a permit to the calling process (the long-lived connection process),
 /// so its slot is reclaimed if that process dies without releasing.
-fn bind(permit: Permit) -> Result(Nil, Nil) {
+fn bind(permit: Permit, after_cancel: fn() -> Nil) -> Result(Nil, Nil) {
   let outcome = bind_request(permit)
   case outcome {
     Ok(Nil) -> Ok(Nil)
     Error(Nil) -> {
-      release(permit)
+      release(permit, after_cancel)
       Error(Nil)
     }
   }
@@ -824,8 +835,17 @@ fn bind_request(permit: Permit) -> Result(Nil, Nil) {
 
 /// Bind a slot to the calling process if one was acquired.
 pub fn bind_optional(permit: Option(Permit)) -> Result(Nil, Nil) {
+  bind_optional_with_cancel_hook(permit, fn() { Nil })
+}
+
+/// Test seam for interruption after failed-bind cancellation, before notification.
+@internal
+pub fn bind_optional_with_cancel_hook(
+  permit: Option(Permit),
+  after_cancel: fn() -> Nil,
+) -> Result(Nil, Nil) {
   case permit {
-    Some(permit) -> bind(permit)
+    Some(permit) -> bind(permit, after_cancel)
     None -> Ok(Nil)
   }
 }
@@ -836,9 +856,10 @@ fn pin_subject(
 ) -> Result(#(Subject(message), Pid), Nil)
 
 /// Release a previously acquired slot.
-fn release(permit: Permit) -> Nil {
+fn release(permit: Permit, after_cancel: fn() -> Nil) -> Nil {
   use <- bool.guard(when: !cancel_reservation_token(permit.token), return: Nil)
-  // Cancel before resolving the owner so restart recovery can reclaim the slot.
+  after_cancel()
+  // Cancel before resolving the owner so live and restart recovery can reclaim it.
   case pin_subject(permit.limiter.subject) {
     Ok(#(subject, _owner)) -> process.send(subject, Release(permit.reservation))
     Error(Nil) -> Nil
@@ -848,7 +869,7 @@ fn release(permit: Permit) -> Nil {
 /// Release a slot if one was acquired.
 pub fn release_optional(permit: Option(Permit)) -> Nil {
   case permit {
-    Some(permit) -> release(permit)
+    Some(permit) -> release(permit, fn() { Nil })
     None -> Nil
   }
 }

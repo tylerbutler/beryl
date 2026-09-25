@@ -87,9 +87,12 @@ requires the connection to close.
 The limiter waits up to 100 ms after publishing a request. Timed-out queued
 requests cannot acquire a slot later. Cleanup reclaims a slot if the limiter
 already started the request. Caller death also reclaims pending work and
-holders when the limiter resumes. After a worker restart, acknowledged live
-holders survive; pending requests and unacknowledged grants do not. The queue
-does not limit live-holder state or per-IP rate history.
+holders when the limiter resumes. Every 100 ms, the limiter checks holder
+tokens to reclaim cancelled permits, even if a failed-bind caller dies before
+sending its release notification. The original owner need not exit or retry.
+After a worker restart, acknowledged live holders survive; pending requests
+and unacknowledged grants do not. The queue does not limit live-holder state
+or per-IP rate history.
 
 ## Handle send results
 

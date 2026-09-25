@@ -514,6 +514,12 @@ wake. An active drain does not start another drain on each timer tick.
 Explicit holder release bypasses the pending queue and emits at most one
 release signal per permit. Monitor messages and releases therefore depend on
 the live-holder population, not on repeated rejected attempts.
+The same recovery timer scans holder tokens for cancellation and reclaims both
+count dimensions, even if a releasing caller dies before sending its signal.
+This scan takes work proportional to the holder population every 100 ms; it
+adds no timer or per-release queue entry. The original acquiring owner need
+not exit or retry release. A stalled limiter reclaims these holders when it
+resumes.
 
 A full queue or oversized request returns the existing transport
 `Error(Nil)` without publishing work. The shared upgrade pipeline returns
@@ -531,6 +537,8 @@ Tests in `connection_limit_ingress_test.gleam` suspend the limiter and exhaust
 small configured budgets with timed-out and killed callers. They check
 occupancy and mailbox bounds, cleanup under saturation, oversized payload
 rejection, and both acknowledged and unacknowledged grants across restart.
+They also kill a failed-bind caller between cancellation and notification
+while its original acquiring owner remains alive, then check both ceilings.
 
 ## Sources
 

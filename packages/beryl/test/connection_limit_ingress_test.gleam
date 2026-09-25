@@ -183,6 +183,71 @@ pub fn bind_and_release_tolerate_unavailable_limiter_test() -> Nil {
   transport.release_connection_slot(second)
 }
 
+pub fn failed_bind_caller_dies_after_cancellation_test() -> Nil {
+  use <- unitest.tag("serial")
+  let sockets = start(4, 4096)
+  let assert option.Some(handle) = beryl.configured_connection_limiter(sockets)
+  let assert Ok(first) =
+    connection_limit.acquire_optional(option.Some(handle), "192.0.2.1")
+  let assert Ok(second) =
+    transport.acquire_connection_slot(sockets, "192.0.2.2")
+  wait_empty(sockets)
+  let assert Ok(limiter) = beryl.app_limiter_pid(sockets)
+  test_helper.suspend_process(limiter)
+  abandon_request(sockets, 2)
+  abandon_request(sockets, 4)
+  let cancelled = process.new_subject()
+  let blocked = process.new_subject()
+  let binder =
+    process.spawn_unlinked(fn() {
+      connection_limit.bind_optional_with_cancel_hook(first, fn() {
+        process.send(cancelled, Nil)
+        let _ = process.receive(blocked, 5000)
+        panic as "Cancelled binder must be killed before notification"
+      })
+      |> should.equal(Error(Nil))
+    })
+  process.receive(cancelled, 1000) |> should.equal(Ok(Nil))
+  process.kill(binder)
+  test_helper.wait_until(fn() { !process.is_alive(binder) }, 500, 1)
+  // The acquiring owner (this process) stays alive. Duplicate releases cannot
+  // supply the missing notification, and must not grow the stalled mailbox.
+  list.each(list.repeat(Nil, 20), fn(_) {
+    connection_limit.release_optional(first)
+  })
+  should.be_true(test_helper.mailbox_length(limiter) <= 2)
+  test_helper.resume_process(limiter)
+  wait_empty(sockets)
+  let recovered = process.new_subject()
+  test_helper.wait_until(
+    fn() {
+      case transport.acquire_connection_slot(sockets, "192.0.2.1") {
+        Ok(permit) -> {
+          process.send(recovered, permit)
+          True
+        }
+        Error(Nil) -> False
+      }
+    },
+    1000,
+    1,
+  )
+  let assert Ok(replacement) = process.receive(recovered, 0)
+  // Recovery restores both ceilings, without releasing the unaffected holder
+  // or decrementing the cancelled reservation more than once.
+  transport.acquire_connection_slot(sockets, "192.0.2.1")
+  |> should.equal(Error(Nil))
+  transport.acquire_connection_slot(sockets, "192.0.2.3")
+  |> should.equal(Error(Nil))
+  transport.release_connection_slot(second)
+  transport.acquire_connection_slot(sockets, "192.0.2.1")
+  |> should.equal(Error(Nil))
+  let assert Ok(other) = transport.acquire_connection_slot(sockets, "192.0.2.2")
+  transport.release_connection_slot(other)
+  transport.release_connection_slot(replacement)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
 pub fn replacement_discards_pending_work_but_preserves_holders_test() -> Nil {
   use <- unitest.tag("serial")
   let sockets = start(4, 4096)
