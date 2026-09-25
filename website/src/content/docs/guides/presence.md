@@ -157,6 +157,23 @@ replacement actor and read model after a supervised restart. Presence entries
 and tracking refs are in-memory state and reset on restart; connected clients
 must re-track their presence.
 
+## Use presence for online state, not ownership
+
+Presence tracks who is online now. It does not lock anything. Do not use it as
+an authorization source, a durable membership record, or an atomic capacity
+limiter. A `count` read followed by `track` can race with another join.
+
+If you need a hard room limit or another shared invariant, serialize that
+decision in application-owned state. The
+[`session_presence.track_if_below`](https://github.com/tylerbutler/beryl/blob/main/examples/example_helpers/src/example_helper/session_presence.gleam)
+helper checks the count and inserts the session in one tracker call. The
+showcase test
+[`a_full_room_rejects_the_next_join_test`](https://github.com/tylerbutler/beryl/blob/main/examples/showcase/test/channels_test.gleam#L438-L465)
+starts 21 concurrent joins and admits exactly 20.
+
+Use the tracker, or another domain owner, only for invariants that must be
+shared. Keep per-join data in channel state.
+
 ## Handle presence changes
 
 Use `on_diff` to receive presence changes.
@@ -185,6 +202,8 @@ admitted local mutation while its callback runs. These controls do not set a
 callback deadline, apply to remote sync, or bound an application worker's
 mailbox. See [Handle overload](/guides/overload/#observe-capacity) and the
 [queue contract in #397](https://github.com/tylerbutler/beryl/issues/397).
+For the exact `on_diff` latency and failure contract, track
+[#398](https://github.com/tylerbutler/beryl/issues/398).
 
 ```gleam
 let config =

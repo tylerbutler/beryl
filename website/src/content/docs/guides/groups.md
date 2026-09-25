@@ -129,6 +129,9 @@ entered the router before rejection. Those admissions remain valid. An empty
 group returns `Ok(Nil)`. The synchronous group lookup still panics if the
 groups actor is unavailable or exceeds its configured call timeout.
 See [overload handling](/guides/overload/).
+
+If you want a Result-returning `group.broadcast` variant for unavailable-actor
+failures, track [#167](https://github.com/tylerbutler/beryl/issues/167).
 :::
 
 ## Group errors

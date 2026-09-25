@@ -230,6 +230,35 @@ The layer keeps **one instance per joined topic**. A socket joined to
 the layer prunes an instance when its topic closes. You do not write
 cleanup code for the state itself.
 
+## Keep room-wide state in your app
+
+Channel state is private to one accepted join, not shared by the room. Two
+clients on `room:general` get two `State` values, even when they join the same
+topic. Use channel state for per-join data such as the current user, transient
+UI state, or a typed sender for that join.
+
+When several joins must share one mutable value or one writer, move that state
+into an application-owned process or store and capture its handle in the
+handler closure. Add a room-wide or domain owner only when you have a real
+shared invariant to protect.
+
+The examples show two common choices.
+[`live_poll/store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/store.gleam)
+keeps one in-memory actor that serializes `get`, `vote`, and `close` calls with
+`join` and `leave` updates. Callers that use `get`, `vote`, or `close` wait for
+that actor before they continue.
+[`collab_document/document_store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/collab_docs/src/collab_document/document_store.gleam)
+also keeps one in-memory actor, but `merge_state` only enqueues a merge and
+returns. OR-Map merges still converge, but another process can read before that
+merge runs, so there is no cross-process read-after-write guarantee.
+
+Do not shard these example stores unless measurement shows real contention.
+Start with one owner for the invariant you need.
+
+Presence is not that owner. Use presence for ephemeral online state, not for
+locks, authorization, durable membership, or atomic capacity checks. See
+[Presence](/guides/presence/#use-presence-for-online-state-not-ownership).
+
 ## Read `JoinContext` and use its typed sender
 
 The `join` callback receives a `channel.JoinContext(info)`:
