@@ -2,7 +2,22 @@
 -export([is_scoped_wire_message/5, drain_messages/5,
          kill_scope/1, recovered/4, unmanaged_scope_rejected/1,
          during_outage/2, unavailable/1, kill_registry/1, scope_pid/1,
-         healthy_ready_reductions/2, timeout_call_cleans_up/1]).
+         healthy_ready_reductions/2, timeout_call_cleans_up/1,
+         with_malformed_messages/2]).
+
+with_malformed_messages(Scope, Receive) ->
+    Messages = [
+        {Scope},
+        {Scope, <<"scope:malformed">>, <<"short">>, <<"payload">>},
+        {Scope, <<"scope:malformed">>, <<"long">>, <<"payload">>, system, extra},
+        {message, <<"scope:malformed">>, <<"legacy">>, <<"payload">>, system},
+        {test_pubsub_other_ingress_scope, <<"scope:malformed">>,
+         <<"wrong_scope">>, 42, system}
+    ],
+    lists:foreach(fun(Message) -> self() ! Message end, Messages),
+    Receive(),
+    Remaining = [receive Message -> true after 0 -> false end || Message <- Messages],
+    lists:all(fun(Found) -> Found end, Remaining).
 
 scope_pid(Scope) -> whereis(Scope).
 

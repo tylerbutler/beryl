@@ -29,6 +29,28 @@ Distributed PubSub with Erlang `pg`
  browser); payloads that never leave the cluster are cheaper and safer as
  plain Gleam types.
 
+ ## Same-scope payload contract
+
+ Payload compatibility is a caller obligation, not a runtime check. Every
+ handle and subscriber for one scope, on every connected node, must use the
+ same payload type and compatible native term representation. Repeated
+ `start` calls for one scope do not create isolated instances. Different
+ topics in that scope do not provide type isolation either.
+
+ Give incompatible payload types distinct, fixed configuration scopes:
+
+ ```gleam
+ let numbers: pubsub.PubSub(Int) =
+   pubsub.start(pubsub.config_with_scope("my_app_numbers"))
+ let text: pubsub.PubSub(String) =
+   pubsub.start(pubsub.config_with_scope("my_app_text"))
+ ```
+
+ These names are a bounded set of deployment constants, not names derived
+ from requests or tenants. A type annotation on a handle does not register
+ or validate a schema. Violating this contract can deliver a value of the
+ wrong type or crash a subscriber. Only trusted BEAM peers may participate.
+
  ## Scope recovery and delivery
 
  Each node runs a shared beryl PubSub supervisor. Each scope has its own
@@ -130,8 +152,9 @@ A PubSub message delivered to subscribers.
  JSON. A change to the *shape* of your `payload` type is therefore a wire
  change. Add your own version, for example an explicit `v` field, if the
  shape must change during a rolling upgrade. Receive broadcasts with
- `selecting`. It safely adds the subscriber's raw mailbox messages to a
- typed `Selector`. Do not match the raw process message yourself.
+ `selecting`. It adds the subscriber's raw mailbox messages to a typed
+ `Selector` under the same-scope payload contract. It does not validate
+ field types or payloads. Do not match the raw process message yourself.
 
 <div class="api-entry-anchor" id="api-type-pubsub" aria-hidden="true"></div>
 
@@ -146,7 +169,9 @@ A running PubSub instance.
  This handle is opaque. Callers cannot forge pg scopes or depend on the
  runtime representation. `payload` sets the Gleam type for every `Message`
  sent through this instance. The scope identifies the runtime instance.
- All handles for one scope must use the same payload type.
+ All handles for one scope, across all connected nodes, must use the same
+ payload type and compatible native term representation. This is a caller
+ obligation, not a runtime-enforced guarantee.
 
 <div class="api-entry-anchor" id="api-type-pubsubconfig" aria-hidden="true"></div>
 
@@ -397,8 +422,9 @@ Add a subscriber's PubSub message delivery to a `Selector`, alongside a
 
  `pg` tracks bare pids, so broadcasts arrive as raw process messages.
  `selecting` validates the subscriber's scope tag and four-field arity
- before it recovers the compile-time payload type. Add it once. Every
- joined topic uses the same mailbox.
+ before it recovers the compile-time payload type. It does not validate
+ topic, event, sender, or payload field types. Add it once. Every joined
+ topic uses the same mailbox.
 
  Subscribers for different scopes may safely use different payload types in
  one process. All subscribers for the same scope must use the same payload
@@ -443,6 +469,8 @@ Start a PubSub instance.
  call site. For example: `pubsub.start(config) : PubSub(MySyncPayload)`.
  Starting the same scope again returns another handle to the same runtime
  instance, so every use of that scope must choose the same payload type.
+ These calls do not create isolated instances or check payload compatibility.
+ Use distinct, fixed scopes for incompatible types, as in the module example.
 
 <div class="api-entry-anchor" id="api-function-subscriber" aria-hidden="true"></div>
 
