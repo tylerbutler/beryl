@@ -662,6 +662,12 @@ pub fn with_pubsub(
 
 Enable PubSub replication for presence.
 
+ Use a fixed scope reserved for presence sync payloads on every node.
+ Do not reuse the scope used by `beryl.with_pubsub`, which carries JSON
+ broadcasts. Different topics do not isolate incompatible payload types.
+ The PubSub same-scope caller obligation also applies to presence; its
+ envelope version is not runtime validation of arbitrary BEAM terms.
+
  Remote visibility follows monitored actor ownership and the local `pg`
  membership view. Actor exit, node disconnection, or membership loss hides
  that replica and emits leaves. Its causal state remains available for repair.

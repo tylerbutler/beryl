@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
@@ -55,6 +55,12 @@ jobs:
           restore-keys: |
             gleam-deps-v2-${{ runner.os }}-
 
+      - name: Clean stale Gleam dependency state
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          trellis run clean
+          rm -rf build/snippet-check
+
       - name: Install Gleam dependencies
         run: just deps-gleam
 
@@ -63,7 +69,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/save@v4
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages

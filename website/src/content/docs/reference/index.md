@@ -149,7 +149,6 @@ can use any compatible WebSocket client:
 | Client | Notes |
 |---|---|
 | [`phoenix.js`](https://hexdocs.pm/phoenix/js/) | Official JS client; full support |
-| [`phx`](https://github.com/nmbr73/phx) | Gleam client; designed for beryl |
 | Phoenix Swift / Kotlin clients | Community Phoenix clients; wire-compatible |
 | Plain WebSocket | Use the JSON array format directly; no reconnect logic |
 
