@@ -1,6 +1,9 @@
 -module(beryl_diagnostic_test_ffi).
 -export([rescue_description/2, abnormal_exit_description/1,
-         referenced_byte_size/1]).
+         referenced_byte_size/1, retained_slice/0]).
+
+retained_slice() ->
+    binary:part(binary:copy(<<$x>>, 8 * 1024 * 1024), 0, 128).
 
 rescue_description(<<"error">>, Shape) ->
     rescue(fun() -> erlang:error(reason(Shape)) end);

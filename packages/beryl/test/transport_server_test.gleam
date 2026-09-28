@@ -158,7 +158,7 @@ pub fn outbound_frame_budget_evicts_before_enqueue_test() -> Nil {
 pub fn outbound_byte_budget_releases_after_write_test() -> Nil {
   let assert Ok(config) =
     server.default_config("/socket")
-    |> server.with_outbound_limits(max_frames: 10, max_bytes: 64)
+    |> server.with_outbound_limits(max_frames: 1, max_bytes: 1024)
   let #(state, selector) = start_connection(config, fn() { Ok(Nil) })
 
   send_heartbeat(state, "one")

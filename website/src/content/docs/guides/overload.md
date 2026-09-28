@@ -182,7 +182,9 @@ outside the ledger protocol. Do not infer a bound for an externally suspended
 socket factory from the router's admission limit.
 
 Transport connection queues have their own per-connection outbound budget.
-That budget limits queued frames and payload bytes, but it does not bound
-transport buffering before a complete inbound frame reaches beryl. Per-owner
-limits also need finite connection and topic populations before they can support
+That budget limits queued and writing frames and their referenced BEAM binary
+bytes, independently of runtime work reservations. It is not a total-memory
+cap and does not bound transport buffering before a complete inbound frame
+reaches beryl. Per-owner limits also need finite connection and topic
+populations before they can support
 a node-wide memory estimate. See [deployment hardening](/guides/production-hardening/).

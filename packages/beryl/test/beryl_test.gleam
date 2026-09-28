@@ -41,9 +41,11 @@ pub fn main() -> Nil {
     Ok("1") -> {
       // unitest parallelizes both modules and tests within each module.
       limit_schedulers(parallel_scheduler_limit)
-      unitest.defaults()
-      |> unitest.ignored_tags(["serial"])
-      |> unitest.execution_mode(unitest.RunParallelAuto)
+      unitest.Options(
+        ..unitest.default_options(),
+        ignored_tags: ["serial"],
+        execution_mode: unitest.RunParallelAuto,
+      )
       |> unitest.run
     }
     _ -> unitest.main()

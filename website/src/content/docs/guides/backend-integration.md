@@ -158,6 +158,11 @@ For typed updates from a long-lived application actor, use the socket's
 `socket.Sender(message)` with `beryl/bridge`. The bridge forwards messages from
 the actor to `socket.Info(message)`.
 
+The bridge forwarder follows the lifetime of the process that started it. That
+monitor is only a backstop. When you start a bridge for one socket or one
+joined topic, keep the handle and call `bridge.stop` when that socket or topic
+ends. If you skip `stop`, the forwarder keeps running until the owner exits.
+
 ## Why publish from the backend
 
 Your backend remains the source of truth for authentication and database
