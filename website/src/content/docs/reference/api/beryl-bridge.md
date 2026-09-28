@@ -122,7 +122,8 @@ ForwarderUnavailable
 ```
 
 The forwarder did not report its subjects within
- `handshake_timeout_ms`. It failed to spawn or start.
+ `handshake_timeout_ms`. It failed to spawn or reach readiness, and any
+ timed-out child is cleaned up before `start` returns.
 
 ## Functions
 
