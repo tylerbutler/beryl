@@ -74,6 +74,7 @@ pub fn send(
   }
 }
 
-/// Convert a validated raw PubSub tuple to its typed message representation.
+/// Convert a scope-and-arity-matched PubSub tuple to its message representation.
+/// Field types rely on the same-scope caller obligation; they are not decoded.
 @external(erlang, "beryl_pubsub_ffi", "scoped_to_message")
 pub fn coerce_scoped_message(value: Dynamic) -> message

@@ -39,6 +39,39 @@ names. A deployment-controlled value is safe only when you validate it or
 select it from a fixed set.
 :::
 
+### Same-scope payload contract
+
+Payload compatibility is a **caller obligation**, not a runtime-enforced
+guarantee. All handles and subscribers for one scope on all connected nodes
+must use the same payload type and compatible native term representation.
+Repeated `start` calls for one scope do not create isolated instances.
+Different topics in that scope do not provide type isolation.
+
+Give incompatible payload types distinct, bounded configuration scopes:
+
+```gleam
+let numbers: pubsub.PubSub(Int) =
+  pubsub.start(pubsub.config_with_scope("my_app_numbers"))
+let text: pubsub.PubSub(String) =
+  pubsub.start(pubsub.config_with_scope("my_app_text"))
+```
+
+These names are fixed deployment constants. A type annotation does not
+register a schema or check other handles. An incompatible same-scope handle
+can deliver a value of the wrong type or crash a subscriber. Only trusted
+BEAM peers may participate.
+
+Use a separate fixed scope for presence replication: `presence.with_pubsub`
+carries presence sync payloads, while `beryl.with_pubsub` carries JSON
+broadcasts. Presence's versioned sync requests reject unknown versions; they
+do not validate arbitrary BEAM terms or snapshot state.
+
+This contract retains the existing five-element wire tuple and same-scope
+sharing. It introduces no wire migration. Applications that mix incompatible
+payload types must move them to distinct fixed scopes on every participating
+node; coordinate that configuration change because different scopes cannot
+communicate.
+
 ## Subscribing
 
 Create one typed subscriber in the process that owns the mailbox. Join the
@@ -57,9 +90,11 @@ let selector =
 pubsub.leave(subscriber, "room:lobby")
 ```
 
-PubSub records arrive as raw BEAM messages. `selecting` validates their types
-and matches the subscriber scope. One process can select subscribers with
-different payload types if their scopes differ.
+PubSub records arrive as raw BEAM messages. `selecting` checks only the scope
+tag and tuple arity, not the topic, event, sender, or payload field types.
+Malformed outer tuples do not match the selector and remain in the mailbox.
+One process can select subscribers with different payload types if their
+scopes differ.
 
 Repeated or concurrent joins to the same topic create one membership per
 owner process and scope, even when you use multiple subscriber handles.
