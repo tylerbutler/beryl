@@ -211,7 +211,9 @@ pub type SendRequest {
 Outbound requests from the runtime to a connection process.
 
  Transports receive these as custom or user WebSocket messages. They send
- the frame or close the connection.
+ the frame or close the connection. `bytes` is the retained binary charge,
+ not necessarily the frame's logical length. Pass it unchanged to
+ `finish_outbound_write`.
 
 #### Constructors
 
@@ -286,7 +288,8 @@ Create a default transport config with no connect hook.
  upgrades before the handshake as CSWSH protection. Same-origin upgrades and
  non-browser clients (no `Origin` header) are admitted without
  configuration. Each connection also has an outbound budget of 256 frames
- and 1 MiB of payload data. A connection that exceeds either limit is closed.
+ and 1 MiB of retained payload binaries. A connection that exceeds either
+ limit is closed.
 
  Add `with_on_connect` to authenticate connections and/or seed connect
  metadata. Use `with_allowed_origins` to set an explicit allow-list. Use
@@ -309,6 +312,8 @@ Complete one outbound write.
  On success, this releases the frame and byte reservation and keeps the
  connection open. On error, it releases the reservation, records the
  connection as closed, logs the failure, and tells the transport to stop.
+ Pass the `bytes` from the corresponding `SendRequest` unchanged; do not
+ recompute it from the logical frame size.
 
 <div class="api-entry-anchor" id="api-function-handle_binary_frame" aria-hidden="true"></div>
 
@@ -553,11 +558,17 @@ pub fn with_outbound_limits(
 ) -> Result(TransportConfig(a), OutboundConfigError)
 ```
 
-Set the per-connection outbound frame and payload-byte limits.
+Set the per-connection outbound frame and retained-payload-byte limits.
 
  `max_frames` must be from 1 through 8,388,607. `max_bytes` must be from 1
  through 1,099,511,627,775 (one byte less than 1 TiB). Before beryl enqueues
- a text or binary frame, it reserves one frame and the payload's byte size.
+ a text or binary frame, it reserves one frame and the payload's referenced
+ BEAM binary size. A sub-binary is charged for its full backing allocation,
+ not only its logical length. Shared backing allocations are charged once
+ per frame; beryl does not copy or deduplicate them.
+
  If either limit would be exceeded, the frame is rejected and the slow
- connection is closed. Capacity is released after a successful write, a
- write error, or connection close.
+ connection is closed. This transport reservation is independent of runtime
+ work reservations and lasts until a successful write, a write error, or
+ connection close. It is not a total-memory cap: process heaps, WebSocket
+ framing, and transport or kernel buffers are outside this budget.
