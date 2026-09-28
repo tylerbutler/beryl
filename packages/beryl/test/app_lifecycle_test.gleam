@@ -34,6 +34,20 @@ pub fn validate_config_rejects_low_heartbeat_test() -> Nil {
   |> should.equal(Error(beryl.HeartbeatTimeoutTooLow(2)))
 }
 
+pub fn validate_config_accepts_max_rate_test() -> Nil {
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_message_rate(per_second: 1_000_000_000, burst: 1)
+  |> beryl.validate_config
+  |> should.equal(Ok(Nil))
+}
+
+pub fn validate_config_rejects_rate_rounding_to_zero_test() -> Nil {
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_message_rate(per_second: 1_000_000_001, burst: 1)
+  |> beryl.validate_config
+  |> should.equal(Error(beryl.RateLimitTooHigh(1_000_000_000)))
+}
+
 pub fn validate_config_accepts_valid_topic_pattern_test() -> Nil {
   beryl.config(wire.phoenix_codec())
   |> beryl.with_topic_rate(pattern: "room:*", per_second: 5, burst: 10)
