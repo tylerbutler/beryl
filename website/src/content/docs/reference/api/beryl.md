@@ -151,6 +151,7 @@ Configuration for an app-side socket runtime.
 ```gleam
 pub type ConfigError {
   HeartbeatTimeoutTooLow(minimum: Int)
+  RateLimitTooHigh(maximum: Int)
   InvalidTopicPattern(
     pattern: String,
     reason: topic.TopicError
@@ -177,6 +178,16 @@ HeartbeatTimeoutTooLow(minimum: Int)
  division). A timeout of 1 would round down to a check interval of 0 and
  disable heartbeat eviction. The wrapped `Int` is the
  smallest accepted timeout.
+
+##### `RateLimitTooHigh`
+
+```gleam
+RateLimitTooHigh(maximum: Int)
+```
+
+A configured per-second rate was above the largest value that can still
+ consume at least one token. The wrapped `Int` is the maximum accepted
+ rate.
 
 ##### `InvalidTopicPattern`
 
@@ -480,8 +491,9 @@ pub fn validate_config(Config) -> Result(Nil, ConfigError)
 
 Validate a [`Config`](#config) without starting any process.
 
- This checks that `heartbeat_timeout_ms` is at least 2 and that every
- per-topic rate-limit pattern is valid.
+ This checks that `heartbeat_timeout_ms` is at least 2, that every
+ configured rate limit is representable, and that every per-topic
+ rate-limit pattern is valid.
 
 <div class="api-entry-anchor" id="api-function-with_channel_rate" aria-hidden="true"></div>
 
