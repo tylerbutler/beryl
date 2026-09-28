@@ -86,16 +86,26 @@ but leaves no heartbeat capacity can evict healthy clients during ordinary
 bursts.
 
 The outbound budget is enforced before a frame enters the connection
-mailbox. `Ok` from the runtime send callback means that the frame was
+mailbox. For both text and binary codec output, it charges the referenced BEAM
+binary size, not only the logical frame length. For example, a 128-byte slice
+of an 8 MiB binary uses 8 MiB of the budget. Each frame is charged separately,
+even if frames share a backing binary. beryl does not copy these slices.
+
+`Ok` from the runtime send callback means that the frame was
 enqueued; it does not mean that the transport wrote it or that the peer
-received it. Successful writes release their frame and byte reservations.
-Write errors and connection close release all remaining reservations. If a
-connection exceeds either limit, beryl closes it so the client can reconnect
+received it. Releasing a runtime work reservation does not release the
+transport reservation. Successful writes release their frame and byte
+reservations. Write errors and connection close release all remaining
+reservations. If a connection exceeds either limit, beryl closes it so the client can reconnect
 and resynchronize instead of receiving a stream with silently dropped frames.
 
-Set the byte budget above the largest legitimate encoded outbound frame. Size
-the frame budget for short write stalls, not sustained client outages. The
-current defaults allow 256 frames and 1 MiB per connection. Validate whether
+This is not a total-memory cap. Process heaps, WebSocket framing, and transport
+or kernel buffers are outside this budget.
+
+Set the byte budget above the largest legitimate encoded frame's referenced
+binary size, or copy small slices in your codec to avoid retaining large
+backing binaries. Size the frame budget for short write stalls, not sustained
+client outages. The current defaults allow 256 frames and 1 MiB per connection. Validate whether
 those defaults fit your workload.
 
 Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
