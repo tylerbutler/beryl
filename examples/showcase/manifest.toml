@@ -8,8 +8,8 @@
 
 packages = [
   { name = "argv", version = "1.1.0", build_tools = ["gleam"], requirements = [], otp_app = "argv", source = "hex", outer_checksum = "3277D100448BDB4A29B6D58C0F36F631CBC349E8BDD09766C6309DF202831140" },
-  { name = "beryl", version = "0.5.0", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "rasa", "telemetry"], source = "local", path = "../../packages/beryl" },
-  { name = "beryl_mist", version = "0.4.0", build_tools = ["gleam"], requirements = ["beryl", "gleam_erlang", "gleam_http", "gleam_stdlib", "glisten", "mist"], source = "local", path = "../../packages/beryl_mist" },
+  { name = "beryl", version = "0.5.1", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "rasa", "telemetry"], source = "local", path = "../../packages/beryl" },
+  { name = "beryl_mist", version = "0.4.1", build_tools = ["gleam"], requirements = ["beryl", "gleam_erlang", "gleam_http", "gleam_stdlib", "glisten", "mist"], source = "local", path = "../../packages/beryl_mist" },
   { name = "chatroom", version = "0.1.0", build_tools = ["gleam"], requirements = ["beryl", "beryl_mist", "example_helper", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "mist"], source = "local", path = "../chatrooms" },
   { name = "clip", version = "1.2.2", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "clip", source = "hex", outer_checksum = "12A01D12B289C078506B1C383F65A916381A2596C7F2CA7051E8A44BF4FC6FC3" },
   { name = "collab_document", version = "0.1.0", build_tools = ["gleam"], requirements = ["beryl", "beryl_mist", "example_helper", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_core", "lattice_maps", "mist"], source = "local", path = "../collab_docs" },
