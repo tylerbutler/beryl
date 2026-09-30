@@ -254,15 +254,10 @@ untracked artifacts — clean before staging.
 
 ### Tool Versions
 
-`.tool-versions` sets the floor and is what CI's version-file resolution uses:
-- Erlang 27.2.1, Gleam 1.16.0, just 1.50.0
+`.mise.toml` pins Erlang 28, Gleam 1.18.1, just 1.50.0, trellis, rebar3, and
+licence_audit for local development and CI.
 
 CI additionally matrix-tests Erlang **27 and 28** (see `.github/workflows/ci.yml`).
-
-`.mise.toml` pins trellis (0.4.1) and rebar for local development, and
-deliberately pins `erlang = "28"` so local dev runs on the newer of the two
-matrix versions. That pin intentionally overrides `.tool-versions` for mise
-users; keep everything else in `.mise.toml` limited to mise-only helper tools.
 
 ### Dependency Rules
 
