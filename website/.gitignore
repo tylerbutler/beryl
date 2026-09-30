@@ -1,6 +1,7 @@
 dist/
 .astro/
 .netlify/
+.wrangler/
 node_modules/
 *.tsbuildinfo
 *.done.build.log
