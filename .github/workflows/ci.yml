@@ -89,6 +89,7 @@ jobs:
         if: needs.changes.outputs.relevant == 'true'
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          erlang-version: "28"
           run-deps: false
           cache: false
 
@@ -239,6 +240,7 @@ jobs:
         if: needs.changes.outputs.docs == 'true'
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          erlang-version: "28"
           run-deps: false
           cache: false
 
@@ -331,6 +333,7 @@ jobs:
         if: needs.changes.outputs.examples == 'true'
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          erlang-version: "28"
           run-deps: false
           cache: false
 
