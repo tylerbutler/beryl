@@ -4,7 +4,7 @@
          attach_cleanup/3, recover/1, call_reserved/4,
          is_open/1, close_with_error/2, close_reason/1,
          register_target/3, remove_target/2, close_target/2,
-         publish_with_cleanup/4, activate_cleanup/2,
+         publish_with_cleanup/4, activate_cleanup/2, call_with_cleanup/5,
          close/1, close_once/1, snapshot/1]).
 
 new(MaxItems, MaxBytes, Boundary, Telemetry, Wake)
@@ -74,11 +74,23 @@ close_target({Table, _, _, _, _, _, _}, Key) ->
 call(Queue, Timeout, Request) ->
     bounded_call(Queue, Timeout, Request, fun(Message) -> publish_value(Queue, Message) end).
 
+call_with_cleanup(Queue, Key, Timeout, Request, Cleanup) ->
+    %% Keep the request discoverable until the owner drains it. If its caller
+    %% dies after timing out, the owner still sees the request and can activate
+    %% the reserved cleanup; removing only the request would orphan cleanup.
+    bounded_call(Queue, Timeout, Request,
+                 fun(Message) -> publish_with_cleanup(Queue, Key, Message, Cleanup) end,
+                 fun(_Id) -> nil end).
+
 call_reserved(Queue, Reservation, Timeout, Request) ->
     bounded_call(Queue, Timeout, Request,
                  fun(Message) -> publish_reserved(Queue, Reservation, Message) end).
 
-bounded_call(Queue = {_, Owner, _, _, _, _, _}, Timeout, Request, Publish) ->
+bounded_call(Queue, Timeout, Request, Publish) ->
+    bounded_call(Queue, Timeout, Request, Publish,
+                 fun(Id) -> cancel_pending(Queue, Id) end).
+
+bounded_call({_, Owner, _, _, _, _, _}, Timeout, Request, Publish, CancelPending) ->
     Alias = erlang:alias([reply]),
     Tag = make_ref(),
     Reply = fun(Value) -> Alias ! {Tag, Value}, nil end,
@@ -92,7 +104,7 @@ bounded_call(Queue = {_, Owner, _, _, _, _, _}, Timeout, Request, Publish) ->
                         {Tag, Value} -> {ok, Value};
                         {'DOWN', Monitor, process, Owner, _} -> {error, owner_unavailable}
                     after max(0, Timeout) ->
-                        cancel_pending(Queue, Id),
+                        CancelPending(Id),
                         {error, request_timed_out}
                     end
                 after

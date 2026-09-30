@@ -7,10 +7,12 @@
 
 import app_test_helper
 import beryl
+import beryl/connection_limit
 import beryl/socket
 import beryl/transport
 import beryl/wire
 import gleam/erlang/process
+import gleam/option
 import gleeunit/should
 import test_helper
 import unitest
@@ -153,8 +155,8 @@ pub fn slot_reclaimed_when_requester_dies_before_bind_test() -> Nil {
   Nil
 }
 
-// A timed-out request suppresses its late reply and sends a cancellation
-// behind its queued acquire, so no mailbox message or reservation remains.
+// A timed-out request suppresses its late reply and activates reserved cleanup,
+// so no mailbox message or reservation remains.
 pub fn timed_out_queued_acquire_is_cancelled_test() -> Nil {
   let channels = start_with_limit(1)
   let assert Ok(limiter) = beryl.app_limiter_pid(channels)
@@ -259,8 +261,13 @@ pub fn acquire_returns_error_when_limiter_dies_while_waiting_test() -> Nil {
         test_helper.mailbox_length(process.self()),
       ))
     })
+  let assert option.Some(registry) =
+    beryl.configured_connection_limiter(channels)
   test_helper.wait_until(
-    fn() { test_helper.mailbox_length(limiter) == 1 },
+    fn() {
+      let assert Ok(snapshot) = connection_limit.queue_snapshot(registry)
+      snapshot.items == 2
+    },
     500,
     10,
   )
