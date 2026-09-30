@@ -13,7 +13,9 @@ Ensure you have the following installed:
 | just | 1.50.0+ | Task runner |
 | [trellis](https://trellis.tylerbutler.com) | 0.10.3+ | Gleam workspace manager (tasks, versions, publishing) |
 
-**Recommended:** Use [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/) with the provided `.tool-versions` file. trellis is pinned in `.mise.toml` (mise's GitHub backend); it can also be installed via its shell installer or Homebrew. Note that `.mise.toml` also pins `erlang = "28"`, so mise users build on Erlang 28 while `.tool-versions` sets the 27.2.1 floor; CI matrix-tests both.
+**Recommended:** Use [mise](https://mise.jdx.dev/) with the provided
+`.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
+licence_audit. CI matrix-tests Erlang 27 and 28.
 
 This repository is a trellis-managed workspace: three packages live under
 `packages/` — `beryl`, `beryl_mist`, and `beryl_ewe` — with
@@ -23,11 +25,7 @@ excluded from release via the `@release` key, so the other two packages are
 publishable. `just` recipes fan out across the workspace through `trellis run`.
 
 ```bash
-# With mise
 mise install
-
-# With asdf
-asdf install
 ```
 
 ## Getting Started
