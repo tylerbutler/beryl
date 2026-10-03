@@ -45,7 +45,6 @@ jobs:
               - '**/gleam.toml'
               - '**/manifest.toml'
               - '.mise.toml'
-              - '.tool-versions'
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
               - 'scripts/check-ffi-*.sh'
@@ -55,7 +54,6 @@ jobs:
               - '**/gleam.toml'
               - '**/manifest.toml'
               - '.mise.toml'
-              - '.tool-versions'
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
             examples:
@@ -64,7 +62,6 @@ jobs:
               - '**/gleam.toml'
               - '**/manifest.toml'
               - '.mise.toml'
-              - '.tool-versions'
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
             load:
@@ -74,7 +71,6 @@ jobs:
               - '**/gleam.toml'
               - '**/manifest.toml'
               - '.mise.toml'
-              - '.tool-versions'
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
 
@@ -93,6 +89,7 @@ jobs:
         if: needs.changes.outputs.relevant == 'true'
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          erlang-version: "28"
           run-deps: false
           cache: false
 
@@ -120,7 +117,7 @@ jobs:
             examples/*/client/build/packages
             build/snippet-check/manifest.toml
             build/snippet-check/build/packages
-          key: gleam-deps-v2-${{ runner.os }}-${{ hashFiles('.tool-versions', '.mise.toml', '**/gleam.toml', '**/manifest.toml', 'scripts/prepare-gleam-deps.mjs', 'website/scripts/check-snippets.mjs', '!**/build/**', '!**/node_modules/**') }}
+          key: gleam-deps-v2-${{ runner.os }}-${{ hashFiles('.mise.toml', '**/gleam.toml', '**/manifest.toml', 'scripts/prepare-gleam-deps.mjs', 'website/scripts/check-snippets.mjs', '!**/build/**', '!**/node_modules/**') }}
           restore-keys: |
             gleam-deps-v2-${{ runner.os }}-
 
@@ -190,7 +187,7 @@ jobs:
         with:
           # Providing erlang-version makes the action ignore version-file and
           # skip installing Gleam (gleam-version is left unset). Setup mise
-          # tools (below) installs the Gleam pinned in .tool-versions, which
+          # tools (below) installs the Gleam pinned in .mise.toml, which
           # is what actually ends up on PATH and is what we want: one Gleam
           # version, matching local dev, regardless of the Erlang matrix leg.
           erlang-version: ${{ matrix.erlang }}
@@ -243,6 +240,7 @@ jobs:
         if: needs.changes.outputs.docs == 'true'
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          erlang-version: "28"
           run-deps: false
           cache: false
 
@@ -335,6 +333,7 @@ jobs:
         if: needs.changes.outputs.examples == 'true'
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          erlang-version: "28"
           run-deps: false
           cache: false
 
@@ -400,7 +399,7 @@ jobs:
         uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           # gleam-version intentionally omitted: Setup mise tools (below)
-          # installs the Gleam pinned in .tool-versions, which is what
+          # installs the Gleam pinned in .mise.toml, which is what
           # ends up on PATH. See the Test job for the full rationale.
           erlang-version: ${{ matrix.erlang }}
           run-deps: false

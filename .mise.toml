@@ -1,4 +1,7 @@
 [tools]
+erlang = "28"
+gleam = "1.18.1"
+just = "1.50.0"
 "github:tylerbutler/trellis" = "1.0.0"
 "github:erlang/rebar3" = "3.24.0"
 # Auto-select the platform archive with bundled Erlang, not the OTP 28 escript.

@@ -142,14 +142,12 @@ cd packages/beryl && gleam test   # Directly
 
 ## Tool Versions
 
-Managed via `.tool-versions` (the floor, and what CI's version-file
-resolution uses):
-- Erlang 27.2.1
-- Gleam 1.16.0
+Managed via `.mise.toml`:
+- Erlang 28
+- Gleam 1.18.1
 - just 1.50.0
 
-CI matrix-tests Erlang 27 and 28. `.mise.toml` pins `erlang = "28"` for local
-development, deliberately overriding `.tool-versions` for mise users.
+CI matrix-tests Erlang 27 and 28.
 
 trellis (0.10.3) is pinned in `.mise.toml` for local development and
 installed in CI via `.github/actions/mise`.
