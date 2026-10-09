@@ -188,6 +188,21 @@ it.
   `prefer_guard_clause`, `error_context_lost`, `unqualified_import`,
   `stringly_typed_error`, `short_variable_name`, `string_inspect`
 
+## BEAM code reviews
+
+For code reviews that include Gleam (`.gleam`) or Erlang (`.erl`, `.hrl`),
+delegate the BEAM-specific review to `beam-vm-reviewer`, unless you are
+already running as that agent. Include every changed Gleam and Erlang file
+in the review scope, including tests and examples. This review supplements
+normal correctness and API review; it does not replace them.
+
+Edit `.apm/agents/beam-vm-reviewer.agent.md`, then run
+`apm install --frozen --only apm` to deploy it. `apm.yml` selects both Claude
+and Copilot. APM generates `.github/agents/beam-vm-reviewer.agent.md` and
+`.claude/agents/beam-vm-reviewer.md`; do not edit those copies directly.
+To request a review in either tool, ask:
+`Use beam-vm-reviewer to review the current diff.`
+
 ## Commit and Release Workflow
 
 Required GitHub Actions jobs must always start and report success. When

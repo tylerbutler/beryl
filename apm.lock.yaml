@@ -1,5 +1,5 @@
 lockfile_version: '1'
-generated_at: '2026-09-18T16:46:57.744767+00:00'
+generated_at: '2026-10-09T23:11:16.760509+00:00'
 apm_version: 0.31.0
 dependencies:
 - repo_url: tylerbutler/agent-marketplace
@@ -273,6 +273,15 @@ dependencies:
   content_hash: sha256:7c94127de659fdbd56cdfb87ef988251dc6e9505d8ee45b7685c1aa075219291
   is_dev: true
 deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/agents/beam-vm-reviewer.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:ac71fee93fa8a8caa2cca9248fbd06a3666726c59de93b53feb346df8ce2512c
 - kind: project-relative
   target: claude
   value: .claude/commands/create-pr.md
@@ -1157,6 +1166,15 @@ deployments:
   content_hash: sha256:f1cb066815ecb07dbfdaefe4947c3177dfe0e09eaa689451724fbf3470109e91
 - kind: project-relative
   target: copilot
+  value: .github/agents/beam-vm-reviewer.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:ac71fee93fa8a8caa2cca9248fbd06a3666726c59de93b53feb346df8ce2512c
+- kind: project-relative
+  target: copilot
   value: .github/hooks/ponytail-copilot-hooks.json
   runtime: null
   scope: project
@@ -1298,3 +1316,9 @@ lsp_target_servers:
   - gleam
 lsp_config_provenance:
   gleam: project:.
+local_deployed_files:
+- .claude/agents/beam-vm-reviewer.md
+- .github/agents/beam-vm-reviewer.agent.md
+local_deployed_file_hashes:
+  .claude/agents/beam-vm-reviewer.md: sha256:ac71fee93fa8a8caa2cca9248fbd06a3666726c59de93b53feb346df8ce2512c
+  .github/agents/beam-vm-reviewer.agent.md: sha256:ac71fee93fa8a8caa2cca9248fbd06a3666726c59de93b53feb346df8ce2512c
