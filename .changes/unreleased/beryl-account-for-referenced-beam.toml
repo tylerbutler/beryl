@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Account for referenced BEAM binary size in text and binary outbound queues until transport write completion or close."
