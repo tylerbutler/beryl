@@ -270,7 +270,7 @@ type State(model, message) {
     /// Typed PubSub subscription owned by this runtime actor, present
     /// whenever `pubsub` is. Joins/leaves topics and folds broadcast
     /// delivery into the actor's selector.
-    subscriber: Option(pubsub.Subscriber(Json)),
+    subscriber: Option(pubsub.AsyncSubscriber(Json)),
     logger: Logger,
     self_subject: Subject(Message(message)),
     inbox: work_queue.Queue(Message(message)),
@@ -768,11 +768,11 @@ pub fn start_named(
       |> process.select_monitors(SocketActorDown)
     case pubsub_option {
       Some(pubsub_instance) -> {
-        let subscriber = pubsub.subscriber(pubsub_instance)
+        let subscriber = pubsub.async_subscriber(pubsub_instance)
         let state = State(..base, subscriber: Some(subscriber))
         actor.initialised(state)
         |> actor.returning(subject)
-        |> actor.selecting(pubsub.selecting(
+        |> actor.selecting(pubsub.selecting_async(
           selector,
           subscriber,
           RemoteBroadcast,
@@ -4412,7 +4412,12 @@ fn remove_topic_subscriber(
   case set.is_empty(subscribers) {
     True -> {
       case state.subscriber {
-        Some(subscriber) -> pubsub.leave(subscriber, topic_name)
+        Some(subscriber) ->
+          log_membership_admission(
+            state,
+            topic_name,
+            pubsub.leave_async(subscriber, topic_name),
+          )
         None -> Nil
       }
       State(..state, topics: dict.delete(state.topics, topic_name))
@@ -4428,9 +4433,11 @@ fn remove_topic_subscriber(
 /// In a socket actor the set only ever holds that one socket, and the
 /// router is told so it can keep the global index and the pg
 /// subscription. That notification is a cast, not a call — neither side
-/// may ever block on the other. It is sent from `subscribe_socket`, before the join
-/// reply frame leaves this turn, so a client that acts on its own reply
-/// cannot beat its index entry to the router. A broadcast from a third
+/// may ever block on the other. The router also casts membership intent to
+/// the registry, which reconciles `pg` independently. The index notification
+/// is sent from `subscribe_socket`, before the join reply frame leaves this
+/// turn, so a client that acts on its own reply cannot beat its index entry
+/// to the router. A broadcast from a third
 /// process that races the cast still misses the socket: that is decision
 /// 2's cast option and its documented window.
 fn add_topic_subscriber(
@@ -4445,7 +4452,12 @@ fn add_topic_subscriber(
     SocketActorRole(..) -> Nil
     RouterRole(..) ->
       case state.subscriber, set.is_empty(existing) {
-        Some(subscriber), True -> pubsub.join(subscriber, topic_name)
+        Some(subscriber), True ->
+          log_membership_admission(
+            state,
+            topic_name,
+            pubsub.join_async(subscriber, topic_name),
+          )
         Some(_), False | None, True | None, False -> Nil
       }
   }
@@ -4457,6 +4469,25 @@ fn add_topic_subscriber(
       set.insert(existing, socket_id),
     ),
   )
+}
+
+fn log_membership_admission(
+  state: State(model, message),
+  topic_name: String,
+  result: Result(Nil, Nil),
+) -> Nil {
+  case result {
+    Ok(Nil) -> Nil
+    Error(Nil) ->
+      state.logger
+      |> log.warn("PubSub membership unavailable", [
+        #("topic", topic_name),
+        #(
+          "reason",
+          "membership registry unavailable; recreate the PubSub handle",
+        ),
+      ])
+  }
 }
 
 fn admit_index(
@@ -6076,13 +6107,15 @@ fn broadcast_locally(
   emit_broadcast(state, topic_name, event_name, payload, None, telemetry.Local)
   case state.pubsub {
     Some(pubsub_instance) ->
-      pubsub.local_broadcast_from(
-        pubsub_instance,
-        process.self(),
-        topic_name,
-        event_name,
-        payload,
-      )
+      forward_pubsub(state, topic_name, fn() {
+        pubsub.local_broadcast_from(
+          pubsub_instance,
+          process.self(),
+          topic_name,
+          event_name,
+          payload,
+        )
+      })
     None -> Nil
   }
 }
@@ -6143,28 +6176,62 @@ fn broadcast_with_pubsub(
       )
       case state.pubsub {
         Some(pubsub_instance) ->
-          case except {
-            None ->
-              pubsub.broadcast_from(
-                pubsub_instance,
-                process.self(),
-                topic_name,
-                event_name,
-                payload,
-              )
-            Some(socket_id) ->
-              pubsub.broadcast_from_socket(
-                pubsub_instance,
-                process.self(),
-                socket_id,
-                topic_name,
-                event_name,
-                payload,
-              )
-          }
+          forward_pubsub(state, topic_name, fn() {
+            publish_broadcast(
+              pubsub_instance,
+              topic_name,
+              event_name,
+              payload,
+              except,
+            )
+          })
         None -> Nil
       }
     }
+  }
+}
+
+fn publish_broadcast(
+  instance: PubSub(Json),
+  topic_name: String,
+  event_name: String,
+  payload: Json,
+  except: Option(String),
+) -> Nil {
+  case except {
+    None ->
+      pubsub.broadcast_from(
+        instance,
+        process.self(),
+        topic_name,
+        event_name,
+        payload,
+      )
+    Some(socket_id) ->
+      pubsub.broadcast_from_socket(
+        instance,
+        process.self(),
+        socket_id,
+        topic_name,
+        event_name,
+        payload,
+      )
+  }
+}
+
+fn forward_pubsub(
+  state: State(model, message),
+  topic_name: String,
+  send: fn() -> Nil,
+) -> Nil {
+  case internal.rescue(send) {
+    Ok(Nil) -> Nil
+    Error(crash) ->
+      state.logger
+      |> log.warn("PubSub forwarding failed; local delivery preserved", [
+        #("topic", topic_name),
+        #("crash", crash),
+      ])
   }
 }
 

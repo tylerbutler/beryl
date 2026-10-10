@@ -24,7 +24,8 @@ Thumbs.db
 # Local settings
 .claude/settings.local.json
 .claude/worktrees
-.claude
+.claude/*
+!.claude/agents/
 /.worktrees/
 docs/architecture-deck.html
 

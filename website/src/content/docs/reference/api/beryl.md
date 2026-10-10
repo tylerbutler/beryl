@@ -477,8 +477,8 @@ Stop a beryl system.
 
  You can call `stop` more than once or use a handle whose system never
  started. In these cases, it returns `Error(NotRunning)` and does not crash.
- It returns `Error(StopTimeout)` if the app runtime does not
- acknowledge the stop within the shutdown window. After a successful stop
+ It returns `Error(StopTimeout)` if the runtime does not drain or the
+ subtree does not terminate within the shutdown window. After a successful stop
  the handle should no longer be used.
 
 <div class="api-entry-anchor" id="api-function-validate_config" aria-hidden="true"></div>
@@ -851,6 +851,12 @@ pub fn with_pubsub(
 ```
 
 Add PubSub to a configuration for distributed broadcasts.
+
+ Runtime topic memberships reconcile asynchronously. A `pg` restart does
+ not block local routing; distributed delivery remains best-effort during
+ recovery. Reconciliation uses the latest active topics, not a backlog of
+ join and leave operations. Registry loss invalidates this handle: start
+ PubSub again and rebuild the beryl system with the replacement handle.
 
 <div class="api-entry-anchor" id="api-function-with_router_queue_limits" aria-hidden="true"></div>
 

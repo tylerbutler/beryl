@@ -101,7 +101,8 @@ pub fn default_config() -> Config {
 ///
 /// This applies to `create`, `delete`, `add`, `remove`, `topics`, and
 /// `list_groups`. These functions panic if the actor does not reply within
-/// this timeout.
+/// this timeout. If the panic is caught, the caller retains no call monitor
+/// and receives no late reply. A timed-out mutation may still be applied.
 pub fn with_call_timeout(_config: Config, timeout_ms: Int) -> Config {
   Config(call_timeout_ms: timeout_ms)
 }
@@ -163,14 +164,19 @@ fn build_groups() -> actor.Builder(State, Message, Subject(Message)) {
   |> actor.on_message(handle_message)
 }
 
+@external(erlang, "beryl_ffi", "actor_call")
+fn call(
+  subject: Subject(Message),
+  timeout_ms: Int,
+  request: fn(Subject(reply)) -> Message,
+) -> reply
+
 /// Create a named group.
 ///
 /// Panics if the groups actor is unavailable or does not reply within the
 /// configured call timeout (5 seconds by default).
 pub fn create(groups: Groups, name: String) -> Result(Nil, GroupError) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
-    Create(name, reply)
-  })
+  call(groups.subject, groups.call_timeout_ms, fn(reply) { Create(name, reply) })
 }
 
 /// Delete a group.
@@ -178,9 +184,7 @@ pub fn create(groups: Groups, name: String) -> Result(Nil, GroupError) {
 /// Panics if the groups actor is unavailable or does not reply within the
 /// configured call timeout (5 seconds by default).
 pub fn delete(groups: Groups, name: String) -> Result(Nil, GroupError) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
-    Delete(name, reply)
-  })
+  call(groups.subject, groups.call_timeout_ms, fn(reply) { Delete(name, reply) })
 }
 
 /// Add a topic to a group.
@@ -192,7 +196,7 @@ pub fn add(
   group_name: String,
   topic: String,
 ) -> Result(Nil, GroupError) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+  call(groups.subject, groups.call_timeout_ms, fn(reply) {
     Add(group_name, topic, reply)
   })
 }
@@ -206,7 +210,7 @@ pub fn remove(
   group_name: String,
   topic: String,
 ) -> Result(Nil, GroupError) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+  call(groups.subject, groups.call_timeout_ms, fn(reply) {
     Remove(group_name, topic, reply)
   })
 }
@@ -219,7 +223,7 @@ pub fn topics(
   groups: Groups,
   group_name: String,
 ) -> Result(Set(String), GroupError) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+  call(groups.subject, groups.call_timeout_ms, fn(reply) {
     GetTopics(group_name, reply)
   })
 }
@@ -229,9 +233,7 @@ pub fn topics(
 /// Panics if the groups actor is unavailable or does not reply within the
 /// configured call timeout (5 seconds by default).
 pub fn list_groups(groups: Groups) -> List(String) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
-    ListGroups(reply)
-  })
+  call(groups.subject, groups.call_timeout_ms, fn(reply) { ListGroups(reply) })
 }
 
 /// Broadcast a message to all topics in a group.

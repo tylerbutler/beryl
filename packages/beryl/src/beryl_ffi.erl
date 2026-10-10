@@ -1,7 +1,7 @@
 -module(beryl_ffi).
 -export([identity/1,
          string_starts_with/2, stop_supervisor/1, rescue/1,
-         connection_limit_call/3, connection_limit_send/2,
+         actor_call/3, connection_limit_call/3, connection_limit_send/2,
          connection_limit_checkpoint_supervisor/0,
          connection_limit_checkpoint_registry_key/2,
          connection_limit_checkpoint_registry_get/1,
@@ -63,6 +63,12 @@ connection_limit_call(Subject, Timeout, Request) ->
                 erlang:unalias(Alias),
                 receive {Tag, _} -> ok after 0 -> ok end
             end
+    end.
+
+actor_call(Subject, Timeout, Request) ->
+    case connection_limit_call(Subject, Timeout, Request) of
+        {ok, Reply} -> Reply;
+        {error, Reason} -> erlang:error(Reason)
     end.
 
 connection_limit_send(Subject, Message) ->

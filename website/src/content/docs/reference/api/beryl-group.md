@@ -342,4 +342,5 @@ Set the timeout for synchronous group operations, in milliseconds.
 
  This applies to `create`, `delete`, `add`, `remove`, `topics`, and
  `list_groups`. These functions panic if the actor does not reply within
- this timeout.
+ this timeout. If the panic is caught, the caller retains no call monitor
+ and receives no late reply. A timed-out mutation may still be applied.

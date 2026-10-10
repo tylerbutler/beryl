@@ -303,6 +303,12 @@ pub fn with_topic_rate(
 }
 
 /// Add PubSub to a configuration for distributed broadcasts.
+///
+/// Runtime topic memberships reconcile asynchronously. A `pg` restart does
+/// not block local routing; distributed delivery remains best-effort during
+/// recovery. Reconciliation uses the latest active topics, not a backlog of
+/// join and leave operations. Registry loss invalidates this handle: start
+/// PubSub again and rebuild the beryl system with the replacement handle.
 pub fn with_pubsub(config: Config, pubsub: PubSub(json.Json)) -> Config {
   Config(..config, pubsub: Some(pubsub))
 }
@@ -792,76 +798,11 @@ fn validate_topic_rate(
 ///
 /// You can call `stop` more than once or use a handle whose system never
 /// started. In these cases, it returns `Error(NotRunning)` and does not crash.
-/// It returns `Error(StopTimeout)` if the app runtime does not
-/// acknowledge the stop within the shutdown window. After a successful stop
+/// It returns `Error(StopTimeout)` if the runtime does not drain or the
+/// subtree does not terminate within the shutdown window. After a successful stop
 /// the handle should no longer be used.
 pub fn stop(sockets: Sockets) -> Result(Nil, StopError) {
-  // The app-side dispatch limiter is supervised inside the beryl subtree,
-  // so it is not stopped directly here; it is torn down with the subtree.
-  stop_app_subtree(sockets.app, sockets.connection_limiter)
-}
-
-/// Gracefully stop only the nested beryl subtree and wait for it to
-/// terminate.
-///
-/// The runtime is the subtree's significant transient child, so draining and
-/// stopping it (normal termination) auto-shuts down the subtree supervisor and
-/// its sibling limiter. To honour "wait for only the beryl subtree to
-/// terminate", their pids are captured before the drain and monitored after
-/// admission succeeds. A monitor also reports an already-exited pid; the
-/// application's parent supervisor and sibling children are never touched.
-///
-/// Idempotent: `Error(NotRunning)` when the runtime is already down (pre-start,
-/// a restart window, or a prior stop); `Error(StopTimeout)` if the runtime does
-/// not acknowledge the drain or the subtree does not terminate in time.
-fn stop_app_subtree(
-  app: AppHandle,
-  connection_limiter: Option(connection_limit.ConnectionLimiter),
-) -> Result(Nil, StopError) {
-  case app.runtime_owner() {
-    Error(Nil) -> internal.result_error(NotRunning)
-    Ok(runtime_pid) -> {
-      let limiter_owner =
-        option.from_result(app_limiter_owner(connection_limiter))
-      use _ <- result.try(app.stop())
-      let runtime_monitor = process.monitor(runtime_pid)
-      let limiter_monitor = option.map(limiter_owner, process.monitor)
-      await_subtree_down(runtime_monitor, limiter_monitor)
-    }
-  }
-}
-
-/// Release subtree monitors after waiting, including when a wait times out.
-fn drop_subtree_monitors(
-  runtime_monitor: process.Monitor,
-  limiter_monitor: Option(process.Monitor),
-) -> Nil {
-  process.demonitor_process(runtime_monitor)
-  case limiter_monitor {
-    Some(monitor) -> process.demonitor_process(monitor)
-    None -> Nil
-  }
-}
-
-/// Wait for the runtime and, when one is supervised, the sibling limiter to
-/// terminate. `Error(StopTimeout)` when either is still alive at the deadline.
-fn await_subtree_down(
-  runtime_monitor: process.Monitor,
-  limiter_monitor: Option(process.Monitor),
-) -> Result(Nil, StopError) {
-  let awaited =
-    await_down(runtime_monitor)
-    |> result.try(fn(_) {
-      case limiter_monitor {
-        Some(monitor) -> await_down(monitor)
-        None -> Ok(Nil)
-      }
-    })
-  drop_subtree_monitors(runtime_monitor, limiter_monitor)
-  case awaited {
-    Ok(Nil) -> Ok(Nil)
-    Error(Nil) -> internal.result_error(StopTimeout)
-  }
+  sockets.app.stop()
 }
 
 /// The pid of the app subtree's optional limiter, if it is running.
@@ -1310,16 +1251,21 @@ fn request_runtime_stop(
   let finished = process.new_subject()
 
   case app_supervisor.request_stop(supervisor, finished) {
-    Ok(app_supervisor.StopRejected) -> internal.result_error(NotRunning)
+    Ok(#(app_supervisor.StopRejected, _)) -> internal.result_error(NotRunning)
     Error(overload.AdmissionRejected(_)) | Error(overload.OwnerUnavailable) ->
       internal.result_error(NotRunning)
     Error(overload.RequestTimedOut) -> internal.result_error(StopTimeout)
-    Ok(app_supervisor.StopAccepted) ->
-      case process.receive(finished, 5000) {
-        Ok(app_supervisor.StopCompleted) -> Ok(Nil)
+    Ok(#(app_supervisor.StopAccepted, owner)) -> {
+      let monitor = process.monitor(owner)
+      let completion = case process.receive(finished, 5000) {
+        Ok(app_supervisor.StopCompleted) ->
+          await_down(monitor) |> result.replace_error(StopTimeout)
         Ok(app_supervisor.StopIncomplete) -> internal.result_error(StopTimeout)
         Error(Nil) -> internal.result_error(StopTimeout)
       }
+      process.demonitor_process(monitor)
+      completion
+    }
   }
 }
 
