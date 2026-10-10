@@ -1,5 +1,19 @@
 # beryl changelog
 
+## v0.5.1 - 2026-10-10
+
+### Fixed
+
+- Account for referenced BEAM binary size in text and binary outbound queues until transport write completion or close.
+- Clarify the caller-enforced same-scope PubSub payload contract, including distinct fixed scopes for incompatible types and presence replication.
+- Clean up bridge forwarders when startup times out.
+- Keep local socket routing active during PubSub recovery, wait for the full beryl subtree to exit before reporting a successful stop, and prevent caught group-call timeouts from retaining monitors or late replies.
+- Reject rate limits whose token cost rounds to zero during config validation.
+
+### Dependencies
+
+- use the Hex release of unitest
+
 ## v0.5.0 - 2026-09-24
 
 ### Added
