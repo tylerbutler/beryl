@@ -146,6 +146,8 @@ pub fn without_heir(spec: Spec(previous_data)) -> Spec(Nil) {
 }
 
 /// Create an ETS table owned by the calling process.
+///
+/// Names longer than 255 Unicode code points return `InvalidName`.
 pub fn create(spec: Spec(heir_data)) -> Result(Table(key, value), CreateError) {
   create_ffi(
     spec.name,
