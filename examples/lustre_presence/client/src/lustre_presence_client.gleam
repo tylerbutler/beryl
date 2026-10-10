@@ -98,8 +98,8 @@ fn handle_channel_event(
       Model(..model, connection: Disconnected, error: Some(reason)),
       effect.none(),
     )
-    channel.DecodeFailed(_) -> #(
-      Model(..model, error: Some("The server sent invalid presence data.")),
+    channel.DecodeFailed(error) -> #(
+      Model(..model, error: Some(presence.error_to_string(error))),
       effect.none(),
     )
     channel.Presence(event) ->
@@ -108,8 +108,8 @@ fn handle_channel_event(
           Model(..model, presence: updated, error: None),
           effect.none(),
         )
-        Error(_) -> #(
-          Model(..model, error: Some("The presence update was invalid.")),
+        Error(error) -> #(
+          Model(..model, error: Some(presence.error_to_string(error))),
           effect.none(),
         )
       }
