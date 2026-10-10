@@ -146,10 +146,15 @@ validate_transfer(_) ->
     {error, invalid_transfer_message}.
 
 table_name(Name) when is_binary(Name) ->
-    try binary_to_atom(Name, utf8) of
-        Atom -> {ok, Atom}
-    catch
-        error:badarg -> {error, invalid_name}
+    case unicode:characters_to_list(Name, utf8) of
+        Characters when is_list(Characters), length(Characters) =< 255 ->
+            try binary_to_atom(Name, utf8) of
+                Atom -> {ok, Atom}
+            catch
+                error:badarg -> {error, invalid_name}
+            end;
+        _ ->
+            {error, invalid_name}
     end;
 table_name(_) ->
     {error, invalid_name}.

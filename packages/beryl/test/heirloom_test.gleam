@@ -39,6 +39,31 @@ pub fn heirloom_creates_each_table_type_test() -> Nil {
   Nil
 }
 
+pub fn heirloom_accepts_255_code_point_names_test() -> Nil {
+  ["x", "\u{00e9}", "\u{1f600}"]
+  |> list.each(fn(character) {
+    let assert Ok(table): Result(heirloom.Table(String, String), _) =
+      heirloom.spec(string.repeat(character, 255), heirloom.Set)
+      |> heirloom.create
+    heirloom.delete(table) |> should.equal(Ok(Nil))
+    heirloom.exists(table) |> should.be_false
+  })
+}
+
+pub fn heirloom_rejects_256_code_point_names_test() -> Nil {
+  [
+    string.repeat("x", 256),
+    string.repeat("\u{00e9}", 256),
+    string.repeat("\u{1f600}", 256),
+    string.repeat("e\u{0301}", 128),
+  ]
+  |> list.each(fn(name) {
+    heirloom.spec(name, heirloom.Set)
+    |> heirloom.create
+    |> should.equal(Error(heirloom.InvalidName))
+  })
+}
+
 pub fn heirloom_supports_access_and_data_operations_test() -> Nil {
   let table =
     heirloom.spec("heirloom_data", heirloom.Set)
