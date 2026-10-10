@@ -47,6 +47,12 @@ fn connection_limit_checkpoint_heir(
   limiter: process.Pid,
 ) -> Result(process.Pid, Nil)
 
+@external(erlang, "beryl_supervisor_test_ffi", "with_suspended_subtree")
+fn with_suspended_subtree(
+  factory: process.Pid,
+  action: fn(process.Pid, process.Pid) -> value,
+) -> value
+
 // ── A trivial named sibling worker used to prove parent/sibling survival ────
 
 fn start_sibling(
@@ -146,6 +152,42 @@ pub fn stop_waits_for_subtree_teardown_test() -> Nil {
   // stop returned only once both subtree workers were down.
   process.is_alive(runtime) |> should.be_false
   process.is_alive(limiter) |> should.be_false
+}
+
+pub fn stop_waits_for_socket_factory_and_lifecycle_owner_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each([False, True], fn(with_limiter) {
+    let config = beryl.config(wire.phoenix_codec())
+    let config = case with_limiter {
+      True -> beryl.with_max_connections(config, 5)
+      False -> config
+    }
+    let assert Ok(sockets) =
+      app_test_helper.start_app(
+        config,
+        init: app_test_helper.accepting_init,
+        update: app_test_helper.accepting_update,
+      )
+    let runtime = app_test_helper.runtime_pid(sockets)
+    let assert Ok(factory) = beryl.app_socket_factory_pid(sockets)
+    let stopped = process.new_subject()
+    let #(supervisor, owner) =
+      with_suspended_subtree(factory, fn(supervisor, owner) {
+        let _stopper =
+          process.spawn_unlinked(fn() {
+            process.send(stopped, beryl.stop(sockets))
+          })
+        test_helper.wait_until(fn() { !process.is_alive(runtime) }, 2000, 5)
+        process.receive(stopped, 200) |> should.be_error
+        process.is_alive(factory) |> should.be_true
+        process.is_alive(owner) |> should.be_true
+        #(supervisor, owner)
+      })
+    process.receive(stopped, 5000) |> should.equal(Ok(Ok(Nil)))
+    process.is_alive(factory) |> should.be_false
+    process.is_alive(supervisor) |> should.be_false
+    process.is_alive(owner) |> should.be_false
+  })
 }
 
 // ── the limiter survives a runtime crash but stops with the subtree ─────────

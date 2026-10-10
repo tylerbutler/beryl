@@ -59,6 +59,15 @@ fn drain_messages(
 @external(erlang, "beryl_pubsub_test_ffi", "with_malformed_messages")
 fn with_malformed_messages(scope: atom.Atom, receive: fn() -> Nil) -> Bool
 
+@external(erlang, "beryl_pubsub_test_ffi", "nonlocal_leave_preserves_registry")
+fn nonlocal_leave_preserves_registry(scope: atom.Atom) -> Bool
+
+pub fn nonlocal_leave_does_not_restart_registry_test() -> Nil {
+  use <- unitest.tag("serial")
+  nonlocal_leave_preserves_registry(atom.create("test_pubsub_nonlocal_leave"))
+  |> should.be_true
+}
+
 pub fn pubsub_membership_ready_cost_is_bounded_test() -> Nil {
   let reductions =
     healthy_ready_reductions(

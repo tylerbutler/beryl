@@ -255,6 +255,31 @@ pub opaque type Subscriber(payload) {
   Subscriber(scope: atom.Atom, registry: pubsub_membership.Registry, owner: Pid)
 }
 
+/// A router's coalesced membership state.
+@internal
+pub opaque type AsyncSubscriber(payload) {
+  AsyncSubscriber(
+    subscriber: Subscriber(payload),
+    intent: pubsub_membership.Intent,
+  )
+}
+
+/// Create a router-owned subscriber with coalesced membership publication.
+@internal
+pub fn async_subscriber(instance: PubSub(payload)) -> AsyncSubscriber(payload) {
+  AsyncSubscriber(subscriber(instance), pubsub_membership.new_intent())
+}
+
+/// Select messages for a router's asynchronous subscriber.
+@internal
+pub fn selecting_async(
+  selector: Selector(message),
+  subscriber: AsyncSubscriber(payload),
+  transform: fn(Message(payload)) -> message,
+) -> Selector(message) {
+  selecting(selector, subscriber.subscriber, transform)
+}
+
 /// Create a subscription handle owned by the current process.
 ///
 /// Call this function from the process that will receive broadcasts, such as
@@ -303,6 +328,34 @@ pub fn leave(subscriber: Subscriber(payload), topic: String) -> Nil {
     subscriber.registry,
     topic,
     subscriber.owner,
+  )
+}
+
+/// Queue a join for the runtime router. The registry retries reconciliation.
+@internal
+pub fn join_async(
+  subscriber: AsyncSubscriber(payload),
+  topic: String,
+) -> Result(Nil, Nil) {
+  pubsub_membership.set_membership(
+    subscriber.subscriber.registry,
+    subscriber.intent,
+    topic,
+    True,
+  )
+}
+
+/// Queue a leave for the runtime router. The registry retries reconciliation.
+@internal
+pub fn leave_async(
+  subscriber: AsyncSubscriber(payload),
+  topic: String,
+) -> Result(Nil, Nil) {
+  pubsub_membership.set_membership(
+    subscriber.subscriber.registry,
+    subscriber.intent,
+    topic,
+    False,
   )
 }
 
