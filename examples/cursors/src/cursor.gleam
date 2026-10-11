@@ -16,7 +16,7 @@ import mist
 
 pub fn main() -> Nil {
   let assert Ok(static_directory) = static.priv_static("cursor")
-  let presence_tracker = session_presence.start()
+  let assert Ok(presence_tracker) = session_presence.start()
   let context = cursor_app.Context(presence: presence_tracker)
 
   // The frame limit covers every pre-decode frame and sits modestly above
