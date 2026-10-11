@@ -7,7 +7,7 @@ import load_test/mist as http
 import mist
 
 pub fn main() -> Nil {
-  let app.App(channels:) = app.start()
+  let assert Ok(app.App(channels:)) = app.start()
   let port = app.port()
   let interface = app.bind_address()
   let assert Ok(_) =

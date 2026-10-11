@@ -26,6 +26,16 @@ pub type TrackError {
   OwnerExited
 }
 
+pub type StartError {
+  StartTimedOut
+  StartExited(reason: process.ExitReason)
+}
+
+pub type StopError {
+  StopTimedOut
+  StopExited(reason: process.ExitReason)
+}
+
 type Store
 
 type Command {
@@ -39,7 +49,12 @@ type Command {
     reply: Subject(Result(Nil, TrackError)),
   )
   Publish(topic: String)
-  Stop(reply: Subject(Nil))
+  Stop
+}
+
+type StartEvent {
+  Ready(Tracker)
+  Exited(process.ExitReason)
 }
 
 type Event {
@@ -75,7 +90,21 @@ fn store_snapshot(table: Store, topic: String) -> List(#(String, json.Json))
 @external(erlang, "example_session_presence_ffi", "exists")
 fn store_exists(table: Store) -> Bool
 
-pub fn start() -> Tracker {
+/// Start a snapshot publisher whose lifetime belongs to the calling process.
+///
+/// Return an error if the publisher exits or does not become ready within
+/// five seconds. On timeout, terminate it and wait for its ETS store to be
+/// released before returning.
+pub fn start() -> Result(Tracker, StartError) {
+  start_with_initialiser(start_timeout_ms, fn(_) { Nil })
+}
+
+/// Start with a pre-readiness callback and a bounded wait for lifecycle tests.
+@internal
+pub fn start_with_initialiser(
+  timeout_ms: Int,
+  initialise: fn(Tracker) -> Nil,
+) -> Result(Tracker, StartError) {
   let ready = process.new_subject()
   let owner = process.self()
   let pid =
@@ -87,11 +116,33 @@ pub fn start() -> Tracker {
         process.new_selector()
         |> process.select_map(subject, Message)
         |> process.select_specific_monitor(owner_monitor, fn(_) { OwnerDown })
-      process.send(ready, #(subject, table))
+      let tracker = Tracker(process.self(), subject, table)
+      initialise(tracker)
+      process.send(ready, tracker)
       loop(selector, table, State(sockets: None, owners: dict.new()))
     })
-  let assert Ok(#(subject, table)) = process.receive(ready, start_timeout_ms)
-  Tracker(pid, subject, table)
+  let monitor = process.monitor(pid)
+  let selector =
+    process.new_selector()
+    |> process.select_map(ready, Ready)
+    |> process.select_specific_monitor(monitor, fn(down) { Exited(down.reason) })
+  case process.selector_receive(selector, timeout_ms) {
+    Ok(Ready(tracker)) -> {
+      process.demonitor_process(monitor)
+      Ok(tracker)
+    }
+    Ok(Exited(reason)) -> Error(StartExited(reason))
+    Error(Nil) -> {
+      process.kill(pid)
+      process.new_selector()
+      |> process.select_specific_monitor(monitor, fn(_) { Nil })
+      |> process.selector_receive_forever
+      // A readiness message can race with the timeout; remove only that reply.
+      case process.receive(ready, 0) {
+        Ok(_) | Error(Nil) -> Error(StartTimedOut)
+      }
+    }
+  }
 }
 
 pub fn configure(tracker: Tracker, sockets: beryl.Sockets) -> Nil {
@@ -105,16 +156,35 @@ pub fn configure(tracker: Tracker, sockets: beryl.Sockets) -> Nil {
 /// The publisher also monitors the process that called [`start`](#start), so
 /// it cannot outlive an owner that exits without an explicit stop.
 ///
-/// Do not use the tracker after this function returns. Its ETS store is
-/// released with the publisher process.
-pub fn stop(tracker: Tracker) -> Nil {
+/// On success, the publisher has terminated and its ETS store is released.
+/// Do not use the tracker after requesting a stop, including after a timeout:
+/// the request remains queued and the publisher can terminate later.
+///
+/// Return the exit reason if the publisher is unavailable or exits abnormally.
+pub fn stop(tracker: Tracker) -> Result(Nil, StopError) {
+  stop_with_timeout(tracker, call_timeout_ms)
+}
+
+/// Request shutdown with a bounded wait for lifecycle tests.
+@internal
+pub fn stop_with_timeout(
+  tracker: Tracker,
+  timeout_ms: Int,
+) -> Result(Nil, StopError) {
   let monitor = process.monitor(tracker.pid)
-  process.call(tracker.subject, call_timeout_ms, fn(reply) { Stop(reply) })
+  process.send(tracker.subject, Stop)
   let selector =
     process.new_selector()
-    |> process.select_specific_monitor(monitor, fn(_) { Nil })
-  let assert Ok(Nil) = process.selector_receive(selector, call_timeout_ms)
-  Nil
+    |> process.select_specific_monitor(monitor, fn(down) { down.reason })
+  case process.selector_receive(selector, timeout_ms) {
+    Ok(process.Normal) -> Ok(Nil)
+    Ok(process.Killed) -> Error(StopExited(process.Killed))
+    Ok(process.Abnormal(_) as reason) -> Error(StopExited(reason))
+    Error(Nil) -> {
+      process.demonitor_process(monitor)
+      Error(StopTimedOut)
+    }
+  }
 }
 
 /// Whether the snapshot publisher is still running.
@@ -231,9 +301,7 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
       broadcast_snapshot(state.sockets, topic, store_snapshot(table, topic))
       loop(selector, table, state)
     }
-    Message(Stop(reply)) -> {
-      process.send(reply, Nil)
-    }
+    Message(Stop) -> Nil
     OwnerDown -> {
       Nil
     }
