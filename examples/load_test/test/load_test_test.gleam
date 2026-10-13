@@ -31,7 +31,7 @@ pub fn main() -> Nil {
 }
 
 fn start_system() -> beryl.Sockets {
-  let presence_tracker = session_presence.start()
+  let assert Ok(presence_tracker) = session_presence.start()
   let assert Ok(#(sockets, specification)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec()),
@@ -213,7 +213,7 @@ pub fn app_configures_frame_rate_from_environment_test() -> Nil {
       #("BERYL_TELEMETRY", None),
     ],
     fn() {
-      let load_app.App(sockets) = load_app.start()
+      let assert Ok(load_app.App(sockets)) = load_app.start()
       beryl.frame_limits(sockets)
       |> should.equal(
         Some(rate_limit.RateLimitConfig(per_second: 10, burst: 20)),

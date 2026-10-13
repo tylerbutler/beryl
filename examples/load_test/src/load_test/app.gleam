@@ -13,8 +13,9 @@ pub type App {
   App(channels: beryl.Sockets)
 }
 
-pub fn start() -> App {
-  let presence_tracker = session_presence.start()
+/// Start the benchmark app, returning any session-presence startup failure.
+pub fn start() -> Result(App, session_presence.StartError) {
+  use presence_tracker <- result.try(session_presence.start())
   let callback_elapsed_us = bench.callback_elapsed_us()
   let assert Ok(#(channels, specification)) = case bench.use_channel_layer() {
     True ->
@@ -38,7 +39,7 @@ pub fn start() -> App {
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(specification)
     |> static_supervisor.start()
-  App(channels:)
+  Ok(App(channels:))
 }
 
 pub fn port() -> Int {

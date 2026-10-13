@@ -19,7 +19,7 @@ import mist
 
 pub fn main() -> Nil {
   let assert Ok(static_directory) = static.priv_static("chatroom")
-  let presence_tracker = session_presence.start()
+  let assert Ok(presence_tracker) = session_presence.start()
 
   let #(groups, groups_specification) = group.child_spec()
   let assert Ok(hub) = broadcast_hub.start()

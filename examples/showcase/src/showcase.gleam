@@ -85,7 +85,7 @@ pub fn main() -> Nil {
     static.priv_static("collab_document")
   // Shared example-local session presence. Mutations and capacity reads are
   // synchronous ETS operations; snapshots publish asynchronously.
-  let presence_tracker = session_presence.start()
+  let assert Ok(presence_tracker) = session_presence.start()
 
   // Chatrooms-specific state.
   let #(groups, groups_specification) = group.child_spec()
