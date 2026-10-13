@@ -174,12 +174,12 @@ connect_websocket_with_headers(Port, Path, ExtraHeaders) ->
                 ok ->
                     case read_headers(Socket, <<>>) of
                         {ok, Headers} ->
-                            case binary:match(Headers, <<" 101 ">>) of
-                                nomatch ->
-                                    gen_tcp:close(Socket),
-                                    {error, nil};
+                            case parse_status(Headers) of
+                                {ok, 101} ->
+                                    {ok, Socket};
                                 _ ->
-                                    {ok, Socket}
+                                    gen_tcp:close(Socket),
+                                    {error, nil}
                             end;
                         {error, nil} ->
                             gen_tcp:close(Socket),
