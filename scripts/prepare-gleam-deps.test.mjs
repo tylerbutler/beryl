@@ -15,7 +15,38 @@ import test from "node:test";
 import {
 	prepareDependencies,
 	retryHexRateLimits,
+	selectDependencyMembers,
 } from "./prepare-gleam-deps.mjs";
+
+const members = [
+	{ name: "beryl", path: "packages/beryl" },
+	{ name: "load_test", path: "examples/load_test" },
+	{ name: "beryl_codec_bench", path: "benchmarks/codec" },
+];
+
+test("default dependency preparation omits opt-in benchmarks", () => {
+	assert.deepEqual(selectDependencyMembers(members), members.slice(0, 2));
+});
+
+test("explicit dependency selection can include benchmarks", () => {
+	assert.deepEqual(selectDependencyMembers(members, ["beryl_codec_bench"]), [
+		members[2],
+	]);
+});
+
+test("explicit dependency selection preserves workspace order", () => {
+	assert.deepEqual(selectDependencyMembers(members, ["load_test", "beryl"]), [
+		members[0],
+		members[1],
+	]);
+});
+
+test("unknown dependency selections fail before preparing any package", () => {
+	assert.throws(
+		() => selectDependencyMembers(members, ["beryl", "missing"]),
+		/Unknown workspace package: missing/,
+	);
+});
 
 test("retries Hex rate limits and fails fast for other errors", () => {
 	let attempts = 0;

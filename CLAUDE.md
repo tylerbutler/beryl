@@ -50,7 +50,18 @@ just ci           # Run all CI checks (format, check, test, build, examples)
 just pr           # Alias for ci (use before PR)
 just main         # Extended checks for main branch
 just clean        # Remove build artifacts
+just bench-codec-deps  # Install optional mise-managed codec benchmark tools and deps
+just bench-codec-check # Strict benchmark build and fixture checks
+just bench-codec       # Run codec microbenchmarks locally
 ```
+
+## Codec benchmarks
+
+Codec benchmarks use a local mise configuration for Elixir and the root
+BEAM toolchain. Default dependency preparation, build, check, test, lint,
+docs, and release tasks exclude them; formatting and cleanup include them.
+See [benchmarks/codec/README.md](benchmarks/codec/README.md) for setup and
+measurement limits.
 
 ## Project Structure
 
@@ -95,6 +106,8 @@ packages/
     └── test/                      # Transport/handler tests + WS client FFI
 examples/                          # Runnable example apps (workspace members,
                                    # excluded from release) + pnpm/Playwright e2e
+benchmarks/codec/                  # Opt-in codec benchmarks (workspace member,
+                                   # excluded from release)
 website/                           # Astro/Starlight docs site (not a member)
 .changes/unreleased/               # trellis changelog fragments (TOML)
 ```

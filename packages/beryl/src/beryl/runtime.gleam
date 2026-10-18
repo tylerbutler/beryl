@@ -6947,31 +6947,8 @@ fn serve(
         WorkerAvailable | WorkerRecoveryTick | WorkerReportApplied(_) ->
           Ok(state)
         WorkerTerminate(reason) -> terminate_worker(worker, link, reason)
-        WorkerPresence(delivery) -> {
-          case link.reserve_output() {
-            Error(error) -> {
-              link.report(WorkerAdmissionFailed(error, InfoSource(0)), None)
-              Ok(WorkerClosing(worker, link))
-            }
-            Ok(output) -> {
-              link.report(WorkerPresenceReady, None)
-              let next =
-                serve_presence(
-                  worker,
-                  WorkerLink(
-                    ..link,
-                    current: Some(ReportReservation(None, output)),
-                  ),
-                  delivery,
-                )
-              case next {
-                WorkerRunning(worker, link) ->
-                  Ok(WorkerInitialized(worker, link, held))
-                _ -> Ok(next)
-              }
-            }
-          }
-        }
+        WorkerPresence(delivery) ->
+          serve_initial_presence(worker, link, held, delivery)
         WorkerDeliver(..) | WorkerInfo(..) ->
           Ok(WorkerAwaitingPresence(worker, link, [message, ..held]))
       }
@@ -7066,6 +7043,36 @@ fn serve(
           )
         }
       }
+  }
+}
+
+fn serve_initial_presence(
+  worker: Worker,
+  link: WorkerLink,
+  held: List(WorkerMessage),
+  delivery: presence.Delivery,
+) -> Result(WorkerState, Nil) {
+  let next = case link.reserve_output() {
+    Error(error) -> {
+      link.report(WorkerAdmissionFailed(error, InfoSource(0)), None)
+      WorkerClosing(worker, link)
+    }
+    Ok(output) -> {
+      link.report(WorkerPresenceReady, None)
+      serve_presence(
+        worker,
+        WorkerLink(..link, current: Some(ReportReservation(None, output))),
+        delivery,
+      )
+    }
+  }
+  case next {
+    WorkerRunning(worker, link) -> Ok(WorkerInitialized(worker, link, held))
+    WorkerRefusing
+    | WorkerHolding(..)
+    | WorkerAwaitingPresence(..)
+    | WorkerInitialized(..)
+    | WorkerClosing(..) -> Ok(next)
   }
 }
 
@@ -7458,9 +7465,7 @@ fn execute_accepted_worker_join(
               pid:,
               monitor: process.monitor(pid),
               queue:,
-              observer: option.map(events, fn(events) {
-                WorkerObserver(events, None, None)
-              }),
+              observer: option.map(events, WorkerObserver(_, None, None)),
             )
           let state =
             store_socket(
