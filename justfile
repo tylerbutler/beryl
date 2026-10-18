@@ -223,6 +223,25 @@ main: ci docs
 
 # === LOAD TESTING ===
 
+# Install the optional codec benchmark toolchain and package dependencies
+bench-codec-deps:
+    cd benchmarks/codec && mise install elixir
+    cd benchmarks/codec && mise exec -- mix local.hex --force --if-missing
+    cd benchmarks/codec && mise exec -- node ../../scripts/prepare-gleam-deps.mjs beryl_codec_bench
+
+# Check codec benchmark fixtures without running measurements
+bench-codec-check:
+    cd benchmarks/codec && mise exec -- gleam format --check
+    cd benchmarks/codec && mise exec -- gleam build --warnings-as-errors
+    cd benchmarks/codec && mise exec -- gleam test
+
+# Measure codec operations locally; first run bench-codec-deps
+bench-codec:
+    git rev-parse HEAD
+    cd benchmarks/codec && mise exec -- gleam --version
+    cd benchmarks/codec && mise exec -- elixir --version
+    cd benchmarks/codec && mise exec -- gleam run -m beryl_codec_bench
+
 # Parse every local k6 JavaScript file without contacting a target
 load-syntax:
     npm --prefix load/k6 run syntax

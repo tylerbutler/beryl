@@ -22,6 +22,9 @@ just pr                # alias for ci — run before creating/updating PRs
 just main              # just ci plus documentation checks
 just change P K "B"    # create changelog fragment (trellis changelog new)
 just doctor            # validate workspace invariants
+just bench-codec-deps   # install optional codec benchmark tools and package deps
+just bench-codec-check  # strict benchmark build and fixture checks
+just bench-codec        # run codec microbenchmarks locally
 ```
 
 Scope tests to one package with `just test beryl_mist`, or run a package
@@ -50,6 +53,7 @@ packages/
   beryl_mist/      # Mist WebSocket transport (depends on beryl via path)
   beryl_ewe/       # Ewe WebSocket transport (depends on beryl via path)
 examples/          # runnable example apps (workspace members, excluded from release)
+benchmarks/        # opt-in workspace members, excluded from release
 website/           # Astro/Starlight docs site (NOT a workspace member)
 docs/              # ADRs, design docs, architecture deck, security docs
 ```
@@ -242,12 +246,13 @@ bumps a version that nobody sees:
 - `website/` content, components, styles, or generator scripts
 - `docs/` ADRs, design notes, and decks
 - `examples/` (release-excluded workspace members)
+- `benchmarks/` (release-excluded development tools)
 - root config, `justfile`, `.github/` workflows, and audit or lint settings
 - `packages/*/test/`, internal refactors, and formatting that keep the
   consumer-visible behavior the same
 
 All three packages under `packages/` are releasable, so each one takes its own
-fragments. Only `examples/**` is release-excluded.
+fragments. `examples/**` and `benchmarks/**` are release-excluded.
 
 PR CI enforces fragments via `trellis changelog check`. Preview the effect of
 the current fragments with `just version-plan`.
@@ -272,6 +277,10 @@ untracked artifacts — clean before staging.
 `.mise.toml` pins Erlang 28, Gleam 1.18.1, just 1.50.0, trellis, rebar3, and
 licence_audit for local development and CI.
 
+`benchmarks/codec/.mise.toml` additionally pins an OTP-28-compatible Elixir
+build. Install it with `just bench-codec-deps`; do not add Elixir to the root
+toolchain or released-package dependencies.
+
 CI additionally matrix-tests Erlang **27 and 28** (see `.github/workflows/ci.yml`).
 
 ### Dependency Rules
@@ -283,11 +292,18 @@ CI additionally matrix-tests Erlang **27 and 28** (see `.github/workflows/ci.yml
 
 ### Trellis Exclusions
 
-Only `examples/**` is excluded from release (`@release` key in the root
-`gleam.toml`). Examples are built and tested, but they get no changelog,
-version, tag, or fragment. All three packages under `packages/` are
+`examples/**` and `benchmarks/**` are excluded from release (`@release` key
+in the root `gleam.toml`). Examples are built and tested, but they get no
+changelog, version, tag, or fragment. All three packages under `packages/` are
 releasable on the `git_only` lifecycle: they get tags and GitHub releases,
 but Hex.pm publishing is disabled.
+
+Benchmarks are workspace members with opt-in dependencies and execution.
+Default build, check, test, lint, docs, and deps tasks exclude them, while
+format and clean include them. `scripts/prepare-gleam-deps.mjs` also omits
+them unless selected by package name. Use `just bench-codec-deps`,
+`just bench-codec-check`, and `just bench-codec`; see
+`benchmarks/codec/README.md` for scope and measurement limits.
 
 ## Examples
 
