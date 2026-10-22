@@ -295,7 +295,7 @@ fn raw_binary_codec() -> codec.Codec {
 pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
   use <- unitest.tag("serial")
   let handler = attach()
-  let pubsub_instance = pubsub.start(pubsub.default_config())
+  let assert Ok(pubsub_instance) = pubsub.start(pubsub.default_config())
   let senders = process.new_subject()
   let assert Ok(sockets) =
     app_test_helper.start_app(
@@ -326,6 +326,7 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
   expect_broadcast(handler, "local", 1) |> should.be_true
 
   pubsub.broadcast(pubsub_instance, "room:lobby", "remote", json.object([]))
+  |> should.equal(Ok(Nil))
   let _remote = app_test_helper.recv(frames)
   expect_broadcast(handler, "remote", 1) |> should.be_true
 

@@ -3,6 +3,32 @@
 import gleam/erlang/process
 import gleam/otp/actor
 
+/// A synchronous actor call could not obtain a reply.
+pub type CallError {
+  CallUnavailable
+  CallDown(reason: process.ExitReason)
+  CallTimedOut
+}
+
+/// An underlying native operation failure, retained without lossy conversion.
+///
+/// Only native operation boundaries construct this value. Format it on demand
+/// with `describe_operation_failure`; the original reason remains intact.
+pub type OperationFailure
+
+/// Describe a native failure with bounded nesting and output length.
+@external(erlang, "beryl_error_ffi", "describe_operation_failure")
+pub fn describe_operation_failure(failure: OperationFailure) -> String
+
+/// Describe an actor-call failure, including its original exit reason.
+pub fn describe_call_error(error: CallError) -> String {
+  case error {
+    CallUnavailable -> "actor unavailable"
+    CallDown(reason) -> "actor exited: " <> exit_reason_to_string(reason)
+    CallTimedOut -> "actor call timed out"
+  }
+}
+
 /// A stable description of an internal beryl actor startup failure.
 ///
 /// This type hides OTP's `actor.StartError` so public APIs do not expose

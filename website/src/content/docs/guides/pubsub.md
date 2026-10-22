@@ -12,10 +12,11 @@ to a topic, and each process subscribed to that topic receives them.
 import beryl/pubsub
 
 // Default scope ("beryl_pubsub")
-let pubsub_handle = pubsub.start(pubsub.default_config())
+let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 
 // Custom scope (isolates process groups)
-let pubsub_handle = pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
+let assert Ok(pubsub_handle) =
+  pubsub.start(pubsub.config_with_scope("my_app_pubsub"))
 ```
 
 The scope maps to a `pg` scope atom and identifies the PubSub instance.
@@ -27,7 +28,7 @@ The subtree owns a membership registry and the `pg` process. Repeated `start`
 calls share that registry; the service outlives its first caller. Start the
 scope on each participating node rather than sending a handle between nodes.
 
-Startup errors cause an OTP exit. beryl rejects a scope name already owned by
+Startup errors return `Error(StartupFailed(reason))`. beryl rejects a scope name already owned by
 an external `pg` process; it does not adopt or stop that process.
 
 :::danger[Use a fixed scope name]
@@ -50,9 +51,9 @@ Different topics in that scope do not provide type isolation.
 Give incompatible payload types distinct, bounded configuration scopes:
 
 ```gleam
-let numbers: pubsub.PubSub(Int) =
+let assert Ok(numbers): Result(pubsub.PubSub(Int), pubsub.PubSubError) =
   pubsub.start(pubsub.config_with_scope("my_app_numbers"))
-let text: pubsub.PubSub(String) =
+let assert Ok(text): Result(pubsub.PubSub(String), pubsub.PubSubError) =
   pubsub.start(pubsub.config_with_scope("my_app_text"))
 ```
 
@@ -79,7 +80,7 @@ required topics. Add PubSub delivery to the process selector:
 
 ```gleam
 let subscriber = pubsub.subscriber(pubsub_handle)
-pubsub.join(subscriber, "room:lobby")
+let assert Ok(Nil) = pubsub.join(subscriber, "room:lobby")
 
 let selector =
   process.new_selector()
@@ -87,7 +88,7 @@ let selector =
   |> pubsub.selecting(subscriber, RemoteBroadcast)
 
 // Later:
-pubsub.leave(subscriber, "room:lobby")
+let assert Ok(Nil) = pubsub.leave(subscriber, "room:lobby")
 ```
 
 PubSub records arrive as raw BEAM messages. `selecting` checks only the scope
@@ -111,20 +112,22 @@ registry, and one leave removes the owner's membership and recovery intent.
 The registry monitors subscriber owners and drops their topics when they exit.
 An ordinary `pg` crash does not restart another scope.
 
-During recovery, a broadcast or subscriber query can see empty or partial
-membership. A broadcast returns `Nil` without confirming delivery. beryl does
+During local scope recovery, broadcasts and subscriber queries return
+`Error(ScopeRecovering)` until the registry restores local memberships.
+After local recovery, the node can still have a partial cluster membership
+view. A broadcast returns `Ok(Nil)` without confirming delivery. beryl does
 not buffer or replay broadcasts, and local recovery does not wait for
 cluster-wide convergence.
 
-Startup, joins, and leaves can exit with an OTP error during recovery or
-service failure. Membership calls use a five-second registry timeout.
+Startup, joins, and leaves return typed errors during recovery or service
+failure. Membership calls use a five-second registry timeout.
 A failed or timed-out join or leave may have recorded its intent; failure does
-not roll it back. Retrying the operation is idempotent. Handle these exits at
-your application's OTP supervision boundary.
+not roll it back. Retrying the operation is idempotent. Match the `Result`
+at the call site; use `pubsub.describe_error` for diagnostics.
 
 The registry is in-memory state. If the registry itself is lost, including
 when repeated failures exhaust the supervisor's restart budget, old handles
-become invalid. Their membership, broadcast, and subscriber-query calls exit
+become invalid. Their membership, broadcast, and subscriber-query calls return errors
 instead of silently using a replacement with no subscriptions. Call `start`
 again, create new subscribers, and rejoin. Selector-only receivers do not get a
 separate recovery notification. Service and node failures do not preserve
@@ -168,7 +171,7 @@ runtimes do not send the message to that socket. Thus,
 import gleam/json
 
 // Broadcast to all subscribers (all nodes)
-pubsub.broadcast(
+let assert Ok(Nil) = pubsub.broadcast(
   pubsub_handle,
   "room:lobby",
   "new_message",
@@ -176,7 +179,7 @@ pubsub.broadcast(
 )
 
 // Broadcast to all except the sender process
-pubsub.broadcast_from(
+let assert Ok(Nil) = pubsub.broadcast_from(
   pubsub_handle,
   process.self(),
   "room:lobby",
@@ -185,7 +188,7 @@ pubsub.broadcast_from(
 )
 
 // Broadcast to all except a specific socket ID (clustered "broadcast except this socket")
-pubsub.broadcast_from_socket(
+let assert Ok(Nil) = pubsub.broadcast_from_socket(
   pubsub_handle,
   process.self(),   // sending runtime process
   socket_id,        // socket ID to exclude on receiving runtimes
@@ -195,7 +198,7 @@ pubsub.broadcast_from_socket(
 )
 
 // Broadcast to local node only
-pubsub.local_broadcast(
+let assert Ok(Nil) = pubsub.local_broadcast(
   pubsub_handle,
   "room:lobby",
   "new_message",
@@ -211,10 +214,10 @@ function.
 
 ```gleam
 // All subscribers across all nodes
-let pids = pubsub.subscribers(pubsub_handle, "room:lobby")
+let assert Ok(pids) = pubsub.subscribers(pubsub_handle, "room:lobby")
 
 // Count subscribers
-let count = pubsub.subscriber_count(pubsub_handle, "room:lobby")
+let assert Ok(count) = pubsub.subscriber_count(pubsub_handle, "room:lobby")
 ```
 
 ## Use PubSub across Erlang nodes
@@ -237,7 +240,7 @@ The channel system uses PubSub internally for distributed broadcasts when config
 import beryl
 import beryl/wire
 
-let pubsub_handle = pubsub.start(pubsub.default_config())
+let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 let config =
   beryl.config(wire.phoenix_codec())
   |> beryl.with_pubsub(pubsub_handle)

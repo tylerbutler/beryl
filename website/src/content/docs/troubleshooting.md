@@ -170,7 +170,7 @@ receive the event.
 
 3. **Single-node vs. multi-node.** Without PubSub, broadcasts are local to the node. If your deployment runs multiple BEAM nodes, configure PubSub:
    ```gleam
-   let pubsub_handle = pubsub.start(pubsub.default_config())
+   let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
    let config =
      beryl.config(wire.phoenix_codec())
      |> beryl.with_pubsub(pubsub_handle)

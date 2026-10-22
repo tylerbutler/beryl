@@ -213,21 +213,41 @@ implement application-level tracking in `update` and return an explicit
 
 ## Group operation errors
 
-Group operations (`create`, `delete`, `add`, `remove`, `topics`) return `Result(_, GroupError)`:
+Group operations (`create`, `delete`, `add`, `remove`, `topics`, and
+`list_groups`) return `Result(_, GroupError)`:
 
 ```gleam
 case group.create(groups, name) {
   Ok(Nil) -> Nil
   Error(group.GroupAlreadyExists(_)) -> Nil  // idempotent: treat as success if desired
   Error(group.GroupNotFound(_)) -> Nil       // shouldn't happen for create
+  Error(group.GroupCallFailed(reason)) -> handle_call_failure(reason)
 }
 ```
 
-`group.broadcast` returns lookup or partial-admission errors. Like other group
-operations, its topic lookup still panics if the groups actor is unavailable
-or exceeds its configured call timeout. Notification and broadcast APIs
+`GroupCallFailed` distinguishes an unavailable actor, an actor exit during the
+call, and a timeout. `group.broadcast` wraps these errors in
+`GroupLookupFailed`; it also reports partial-admission errors. A timed-out
+group mutation may still complete. Notification and broadcast APIs
 return admission Results; presence mutations also report timeouts and owner
 exit. See [overload handling](/guides/overload/) for migration and close behavior.
+
+## PubSub operation errors
+
+PubSub startup, membership operations, broadcasts, and subscriber queries
+return `Result(_, PubSubError)`. Match the error at the call site.
+`pubsub.describe_error` formats the cause for a log message.
+
+```gleam
+case pubsub.join(subscriber, "room:lobby") {
+  Ok(Nil) -> Nil
+  Error(reason) -> io.println_error(pubsub.describe_error(reason))
+}
+```
+
+A successful broadcast does not confirm delivery. A failed or timed-out join
+or leave may still take effect; retrying either operation is idempotent.
+After registry loss, start PubSub again and rejoin with new subscribers.
 
 ## Startup configuration errors
 

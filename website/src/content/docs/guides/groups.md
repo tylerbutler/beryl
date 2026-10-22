@@ -42,8 +42,10 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
-`create`, `delete`, `add`, `remove`, `topics`, and `list_groups` panic if the
-actor is unavailable or does not reply within this timeout. `broadcast` first
+`create`, `delete`, `add`, `remove`, `topics`, and `list_groups` return
+`Error(GroupCallFailed(reason))` if the actor is unavailable, exits during the
+call, or does not reply within this timeout. A timed-out mutation may still
+take effect. `broadcast` first
 performs the same synchronous topic lookup, then sends each topic broadcast
 without waiting for delivery.
 
@@ -58,6 +60,7 @@ case group.create(groups, "team:engineering") {
   Ok(Nil) -> Nil
   Error(group.GroupAlreadyExists(name)) -> Nil
   Error(group.GroupNotFound(_)) -> Nil  // cannot occur for create
+  Error(group.GroupCallFailed(reason)) -> handle_call_failure(reason)
 }
 
 // Delete a group (removes it and all its topic memberships)
@@ -68,6 +71,7 @@ case group.delete(groups, "team:gone") {
   Ok(Nil) -> Nil
   Error(group.GroupNotFound(name)) -> Nil
   Error(group.GroupAlreadyExists(_)) -> Nil  // cannot occur for delete
+  Error(group.GroupCallFailed(reason)) -> handle_call_failure(reason)
 }
 ```
 
@@ -97,10 +101,11 @@ case group.topics(groups, "team:engineering") {
   Ok(topic_set) -> set.to_list(topic_set)  // ["room:frontend", "room:backend"]
   Error(group.GroupNotFound(_)) -> []
   Error(group.GroupAlreadyExists(_)) -> []  // cannot occur for topics
+  Error(group.GroupCallFailed(reason)) -> handle_lookup_failure(reason)
 }
 
 // List all group names
-let names = group.list_groups(groups)  // ["team:engineering", "team:design"]
+let assert Ok(names) = group.list_groups(groups)  // ["team:engineering", "team:design"]
 ```
 
 ## Send an event to every topic in a group
@@ -126,12 +131,9 @@ This has the same effect as one `beryl.broadcast` call for each group topic.
 :::note[Fan-out can be partial]
 `BroadcastRejected(admitted_topics, reason)` reports how many earlier topics
 entered the router before rejection. Those admissions remain valid. An empty
-group returns `Ok(Nil)`. The synchronous group lookup still panics if the
-groups actor is unavailable or exceeds its configured call timeout.
+group returns `Ok(Nil)`. An actor-call failure returns
+`GroupLookupFailed(GroupCallFailed(reason))`.
 See [overload handling](/guides/overload/).
-
-If you want a Result-returning `group.broadcast` variant for unavailable-actor
-failures, track [#167](https://github.com/tylerbutler/beryl/issues/167).
 :::
 
 ## Group errors
@@ -140,6 +142,10 @@ failures, track [#167](https://github.com/tylerbutler/beryl/issues/167).
 |-------|------|
 | `GroupAlreadyExists(name)` | `create` called for a name already in use |
 | `GroupNotFound(name)` | `delete`, `add`, `remove`, or `topics` called for an unknown group name |
+| `GroupCallFailed(reason)` | The actor is unavailable, exits during a call, or exceeds the call timeout |
+
+`beryl/error.CallError` distinguishes `CallUnavailable`, `CallDown(reason)`,
+and `CallTimedOut`. The actor-down error retains its exit reason.
 
 ## Complete example: team rooms
 
@@ -184,8 +190,8 @@ clears them.
 
 The registered name is node-local. Keep a `Groups` handle on the node where its
 child specification runs. From another BEAM node, synchronous operations cannot
-reach the owning actor and panic as unavailable. `broadcast` also panics during
-its synchronous topic lookup. Group definitions and memberships are not
+reach the owning actor and return a call error. `broadcast` wraps that error in
+`GroupLookupFailed`. Group definitions and memberships are not
 replicated between nodes.
 
 See the [Supervision guide](/guides/supervision) for the overall startup pattern.

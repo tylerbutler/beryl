@@ -17,7 +17,8 @@ pub fn main() -> Nil {
 /// Create a unique PubSub scope per test to avoid cross-test interference
 fn test_pubsub(name: String) -> pubsub.PubSub(presence.SyncPayload) {
   let config = pubsub.config_with_scope("test_presence_repl_" <> name)
-  pubsub.start(config)
+  let assert Ok(instance) = pubsub.start(config)
+  instance
 }
 
 fn test_config(
@@ -57,7 +58,7 @@ pub fn broadcast_tick_requests_state_test() -> Nil {
 
   // Subscribe to the sync topic to observe broadcasts
   let subscriber = pubsub.subscriber(pubsub_instance)
-  pubsub.join(subscriber, "beryl:presence:sync")
+  pubsub.join(subscriber, "beryl:presence:sync") |> should.equal(Ok(Nil))
 
   // Poll until a PubSub message arrives from the broadcast tick
   let selector =
@@ -81,7 +82,7 @@ pub fn broadcast_tick_requests_state_test() -> Nil {
   )
 
   // Clean up: leave to avoid polluting other tests
-  pubsub.leave(subscriber, "beryl:presence:sync")
+  pubsub.leave(subscriber, "beryl:presence:sync") |> should.equal(Ok(Nil))
 
   // Drain any remaining messages from the mailbox
   drain_sync(subscriber)
@@ -388,6 +389,7 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
       request_back: False,
     ),
   )
+  |> should.equal(Ok(Nil))
 
   // A valid request on the same ingress confirms the earlier request was handled.
   let barrier = reference.new()
@@ -402,6 +404,7 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
       request_back: False,
     ),
   )
+  |> should.equal(Ok(Nil))
   let assert Ok(reply) = process.receive(replies, 1000)
   reply.request |> should.equal(barrier)
 
