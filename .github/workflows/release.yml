@@ -30,7 +30,7 @@ jobs:
       # Toolchain needed to regenerate the website API reference after the
       # version bump (mirrors the Docs job in ci.yml).
       - name: Setup environment
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           erlang-version: "28"
           run-deps: false

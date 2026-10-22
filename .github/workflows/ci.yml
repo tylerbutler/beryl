@@ -87,7 +87,7 @@ jobs:
 
       - name: Setup environment
         if: needs.changes.outputs.relevant == 'true'
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           erlang-version: "28"
           run-deps: false
@@ -183,7 +183,7 @@ jobs:
 
       - name: Setup environment
         if: needs.changes.outputs.source == 'true'
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           # Providing erlang-version makes the action ignore version-file and
           # skip installing Gleam (gleam-version is left unset). Setup mise
@@ -238,7 +238,7 @@ jobs:
 
       - name: Setup environment
         if: needs.changes.outputs.docs == 'true'
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           erlang-version: "28"
           run-deps: false
@@ -331,7 +331,7 @@ jobs:
 
       - name: Setup environment
         if: needs.changes.outputs.examples == 'true'
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           erlang-version: "28"
           run-deps: false
@@ -396,7 +396,7 @@ jobs:
 
       - name: Setup environment
         if: needs.changes.outputs.load == 'true'
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           # gleam-version intentionally omitted: Setup mise tools (below)
           # installs the Gleam pinned in .mise.toml, which is what
