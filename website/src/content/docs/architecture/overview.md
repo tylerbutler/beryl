@@ -65,7 +65,7 @@ flowchart TB
 | `beryl/topic` | Topic pattern matching: exact strings, `"ns:*"` prefix wildcards, and segment wildcards (`"document:*:ops"`) | (none) |
 | `beryl/error` | Opaque `StartFailure` type that hides OTP's `actor.StartError` from public APIs | (none) |
 | `beryl/rate_limit` | Token-bucket rate limiter; keyed per socket, per socket+topic, or per topic pattern | (none) |
-| `beryl/log` | Internal named loggers built on `palabres`; not public API | (none) |
+| `beryl/log` | Internal named loggers with local thresholds over `palabres`; the application owns OTP Logger setup | (none) |
 | `beryl/internal` | Shared internal utilities (logging config, crash rescue); not public API | (none) |
 
 ## Process ownership and restart behavior

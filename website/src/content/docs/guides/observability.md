@@ -12,6 +12,39 @@ beryl provides these sources of monitoring data:
 beryl does not include a Prometheus or OpenTelemetry exporter. Your application
 must aggregate, label, and export the data.
 
+## Configure logging
+
+Your application owns OTP Logger configuration. beryl emits structured
+Palabres reports through OTP Logger, but does not install handlers or change
+the primary level, filters, metadata, or formatter during startup or restart.
+Existing application logging setup stays in effect.
+
+`beryl.with_logging` sets a local minimum level for one socket system's
+runtime and transport diagnostics. The default is `InfoLevel`. Two systems
+can use different thresholds without changing each other. Independently
+started presence, PubSub, and other support processes use the host's policy.
+
+The host level and handler filters can further restrict output. For example,
+`DebugLevel` in beryl does not enable debug output if OTP Logger's primary
+level is `info` or `notice`. A release can set the host level in `sys.config`:
+
+```erlang
+[{kernel, [{logger_level, info}]}].
+```
+
+Use `debug` there and `beryl.DebugLevel` for debug diagnostics. Keep existing
+application handlers and filters unless you intend to change them.
+
+Earlier beryl versions called `palabres.configure` during runtime startup.
+Applications that relied on that setup must now configure their desired
+output at application startup. `palabres.configure` is optional and changes
+node-wide logger policy, including primary filters and default-handler
+formatting. If you use it, review its treatment of OTP crash and supervisor
+reports and preserve your intended policy. beryl does not require it.
+
+See [debug logging](/troubleshooting/#turn-on-debug-logs) for the per-system
+configuration.
+
 ## Enable telemetry events
 
 Telemetry is disabled by default:
