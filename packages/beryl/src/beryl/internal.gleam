@@ -4,17 +4,10 @@
 import beryl/log.{type Logger}
 import gleam/int
 import gleam/string
-import palabres
-import palabres/level
-import palabres/options
 
 /// Logging verbosity for beryl's internal helpers.
-pub type LogLevel {
-  Debug
-  Info
-  Warn
-  ErrorLevel
-}
+pub type LogLevel =
+  log.Level
 
 /// Logging configuration shared by internal beryl modules.
 pub type LoggingConfig {
@@ -25,23 +18,10 @@ pub type LoggingConfig {
   )
 }
 
-/// Configure the global palabres logger from a beryl logging configuration.
-///
-/// Palabres is a singleton configured once at startup; the level set here is
-/// global across every beryl logger. Called when a runtime starts.
-pub fn configure(config: LoggingConfig) -> Nil {
-  options.defaults()
-  |> options.level(to_palabres_level(config.level))
-  |> palabres.configure
-}
-
-fn to_palabres_level(log_level: LogLevel) -> level.Level {
-  case log_level {
-    Debug -> level.Debug
-    Info -> level.Info
-    Warn -> level.Warning
-    ErrorLevel -> level.Error
-  }
+/// Create a logger with this system's local threshold.
+pub fn configured_logger(name: String, config: LoggingConfig) -> Logger {
+  log.new(name)
+  |> log.with_level(config.level)
 }
 
 pub fn result_error(error: e) -> Result(a, e) {
