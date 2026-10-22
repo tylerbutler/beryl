@@ -6,7 +6,6 @@
 
 import app_test_helper
 import beryl
-import beryl/internal
 import beryl/socket.{AcceptJoin, Join, Next}
 import beryl/wire
 import gleam/dict
@@ -15,20 +14,9 @@ import gleeunit/should
 import test_helper
 import unitest
 
-/// Palabres's level is a global, singleton setting (see
-/// `beryl/internal.configure`); restore it to beryl's own default so a
-/// `DebugLevel` test doesn't leak verbosity into tests that run after it.
-fn restore_default_logging_level() -> Nil {
-  internal.configure(internal.LoggingConfig(
-    level: internal.Info,
-    include_payloads: False,
-    payload_preview_bytes: 200,
-  ))
-}
-
 pub fn start_warns_when_no_abuse_controls_configured_test() -> Nil {
   use <- unitest.tag("serial")
-  let selector = test_helper.begin_capture()
+  use selector <- test_helper.with_capture()
 
   let assert Ok(channels) =
     app_test_helper.start_app(
@@ -46,7 +34,7 @@ pub fn start_warns_when_no_abuse_controls_configured_test() -> Nil {
 
 pub fn start_does_not_warn_when_a_limit_is_configured_test() -> Nil {
   use <- unitest.tag("serial")
-  let selector = test_helper.begin_capture()
+  use selector <- test_helper.with_capture()
 
   let assert Ok(channels) =
     app_test_helper.start_app(
@@ -65,7 +53,7 @@ pub fn start_does_not_warn_when_a_limit_is_configured_test() -> Nil {
 
 pub fn inbound_routing_log_omits_payload_by_default_test() -> Nil {
   use <- unitest.tag("serial")
-  let selector = test_helper.begin_capture()
+  use selector <- test_helper.with_capture()
 
   let assert Ok(channels) =
     app_test_helper.start_app(
@@ -107,5 +95,4 @@ pub fn inbound_routing_log_omits_payload_by_default_test() -> Nil {
 
   let _ = beryl.stop(channels)
   test_helper.stop_capture()
-  restore_default_logging_level()
 }
