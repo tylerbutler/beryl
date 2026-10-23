@@ -27,7 +27,8 @@ Set expectations up front:
   it has shipped and give the current status. The production record is still
   short, so ask for reports from real applications. State this limitation
   early.
-- Two packages: `beryl` (the core) and `beryl_mist` (the WebSocket transport).
+- Three packages: `beryl` (the core), `beryl_mist`, and `beryl_ewe`
+  (WebSocket transports).
   Explain the package split on the architecture slide.
 
 TRANSITION: "First, I will explain the problem because it explains each
@@ -278,7 +279,7 @@ supply static types. Gleam closes that gap."
 Describe Gleam for people who have not used it:
 - Gleam reached 1.0 in 2024. It is young but stable, has a welcoming
   community, and provides clear compiler error messages.
-- SOUND static types: no `any` escape hatch, no nil, and errors are
+- SOUND static types: no `any` escape hatch, no implicit null values, and errors are
   values (`Result(ok, err)`) rather than exceptions. The compiler rejects
   many type-related errors before the program runs.
 - Deliberately SMALL language: no macros, no inheritance, no operator
@@ -635,7 +636,7 @@ State these two design rules slowly:
 - "The transport talks to beryl only through the public
   `beryl/transport` SPI. beryl_mist is a plug-in. A
   different HTTP server, or a non-WebSocket transport, implements the
-  same contract." This design explains the two-package repository structure.
+  same contract." This design explains the core/transport package split.
 
 LIKELY QUESTION: "Is the shared router a bottleneck?" Explain that admission,
 ingress, and local fan-out are shared, while callbacks run in socket actors
