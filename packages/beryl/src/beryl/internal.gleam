@@ -60,7 +60,10 @@ fn safe_preview(text: String, max_length: Int) -> String {
   string.slice(text, 0, safe_length)
 }
 
-/// Return bounded preview metadata only when payload logging is enabled.
+/// Return a grapheme-limited preview only when payload logging is enabled.
+///
+/// Keep the existing grapheme contract: no diagnostic byte cap or truncation
+/// marker is applied. Call only inside an enabled debug diagnostic.
 pub fn preview_metadata(
   key: String,
   text: String,
