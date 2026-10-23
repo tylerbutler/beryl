@@ -158,6 +158,20 @@ let logging =
   |> beryl.with_payload_preview_bytes(bytes: 100)
 ```
 
+Expected client rejections use debug, including malformed text/binary frames,
+invalid topics/events, stale joins, duplicate reply refs, and message, join,
+channel, and topic-cap limits. They do not produce a warning for each drop.
+Lifecycle and configuration problems remain warnings; callback and internal
+failures remain errors.
+
+Diagnostic string fields (such as topic, event, ref, and codec error text) are
+limited to **256 UTF-8 bytes**, including `...` when truncated. C0, DEL, and C1
+control characters become `?`. Text stays valid UTF-8, but a truncation can
+split a grapheme cluster. Explicit frame previews use the separate configured
+grapheme limit. Rejection metadata is not constructed when the system or host
+primary level disables debug; host filters still apply when emitting a report.
+Callback crash descriptions retain their separate bounded crash format.
+
 ---
 
 ## Broadcasts are not received by clients
