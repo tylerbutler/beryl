@@ -109,6 +109,10 @@ An unrelated broadcast can occur between two effects from the paused socket.
 
 ## Input order when a client disconnects
 
+The router applies at most 16 queued disconnect controls in each turn, then
+returns to its mailbox. A disconnect burst cannot hold one turn until every
+socket has closed. Data and disconnect controls keep their FIFO order.
+
 A client disconnect follows frames already admitted to the router. The router
 forwards those frames before closing the socket's input queue. The socket actor
 then drains its admitted input and applies the resulting effects before

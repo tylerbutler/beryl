@@ -59,7 +59,7 @@ cycle(Queue, Count) ->
     {ok, Id} = beryl_work_queue_ffi:publish(Queue, <<"payload">>, 7),
     {ok, {Id, <<"payload">>}} = beryl_work_queue_ffi:take(Queue),
     nil = beryl_work_queue_ffi:release(Queue, Id),
-    {error, nil} = beryl_work_queue_ffi:take(Queue),
+    {error, empty} = beryl_work_queue_ffi:take(Queue),
     cycle(Queue, Count - 1).
 
 median(Values) -> lists:nth(3, lists:sort(Values)).

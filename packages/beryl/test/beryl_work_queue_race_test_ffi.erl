@@ -38,6 +38,8 @@ registry_races() ->
         admission_before_close(),
         close_before_admission(),
         lists:foreach(fun stale_close/1, [remove, replace, complete]),
+        bounded_controls(),
+        yielded_registry_changes(),
         odd_epoch_allows_data(),
         telemetry_only_at_even_epoch(),
         nil
@@ -66,7 +68,7 @@ admission_before_close() ->
         {ok, {Id, <<"data">>}} = ?QUEUE:take(Queue),
         true = ?QUEUE:is_open(Target),
         nil = ?QUEUE:release(Queue, Id),
-        {error, nil} = ?QUEUE:take(Queue),
+        {error, empty} = ?QUEUE:take(Queue),
         false = ?QUEUE:is_open(Target),
         assert_empty_controls(Queue)
     after cleanup(Publisher, Monitor, [Queue, Target]) end.
@@ -97,11 +99,11 @@ stale_close(Transition) ->
             replace -> nil = ?QUEUE:register_target(Queue, <<"socket">>, Replacement);
             complete ->
                 nil = ?QUEUE:close_target(Queue, <<"socket">>),
-                {error, nil} = ?QUEUE:take(Queue)
+                {error, empty} = ?QUEUE:take(Queue)
         end,
         resume(Publisher, Monitor, Tag, nil),
         assert_empty_controls(Queue),
-        {error, nil} = ?QUEUE:take(Queue),
+        {error, empty} = ?QUEUE:take(Queue),
         true = ?QUEUE:is_open(Replacement),
         case Transition of
             complete -> false = ?QUEUE:is_open(Target);
@@ -110,10 +112,89 @@ stale_close(Transition) ->
         %% A new incarnation must still be independently closeable.
         nil = ?QUEUE:register_target(Queue, <<"socket">>, Replacement),
         nil = ?QUEUE:close_target(Queue, <<"socket">>),
-        {error, nil} = ?QUEUE:take(Queue),
+        {error, empty} = ?QUEUE:take(Queue),
         false = ?QUEUE:is_open(Replacement),
         assert_empty_controls(Queue)
     after cleanup(Publisher, Monitor, [Queue, Target, Replacement]) end.
+
+%% A turn completes at most 16 controls, preserving FIFO data and the
+%% remaining controls' deduplication entries across yields.
+bounded_controls() ->
+    Queue = new_queue(),
+    Targets = [{N, new_queue()} || N <- lists:seq(1, 33)],
+    try
+        lists:foreach(fun({Key, Target}) ->
+            nil = ?QUEUE:register_target(Queue, Key, Target),
+            nil = ?QUEUE:close_target(Queue, Key)
+        end, Targets),
+        {ok, Id} = ?QUEUE:publish(Queue, <<"data">>, 8),
+        {error, yielded} = ?QUEUE:take(Queue),
+        assert_closed_prefix(Targets, 16),
+        assert_pending_controls(Queue, 17),
+        lists:foreach(fun({Key, _}) ->
+            nil = ?QUEUE:close_target(Queue, Key)
+        end, Targets),
+        assert_pending_controls(Queue, 17),
+        {error, yielded} = ?QUEUE:take(Queue),
+        assert_closed_prefix(Targets, 32),
+        assert_pending_controls(Queue, 1),
+        {ok, {Id, <<"data">>}} = ?QUEUE:take(Queue),
+        assert_closed_prefix(Targets, 33),
+        nil = ?QUEUE:release(Queue, Id),
+        {error, empty} = ?QUEUE:take(Queue),
+        assert_empty_controls(Queue)
+    after
+        lists:foreach(fun(Q) -> true = ets:delete(element(1, Q)) end,
+                      [Queue | [Target || {_, Target} <- Targets]])
+    end.
+
+%% Pending controls remain cancellable by removal/reincarnation after a
+%% yield. Exactly 16 completed controls followed by empty is Empty, not Yielded.
+yielded_registry_changes() ->
+    Queue = new_queue(),
+    Replacement = new_queue(),
+    Targets = [{N, new_queue()} || N <- lists:seq(1, 18)],
+    try
+        lists:foreach(fun({Key, Target}) ->
+            nil = ?QUEUE:register_target(Queue, Key, Target),
+            nil = ?QUEUE:close_target(Queue, Key)
+        end, Targets),
+        {error, yielded} = ?QUEUE:take(Queue),
+        assert_pending_controls(Queue, 2),
+        nil = ?QUEUE:register_target(Queue, 17, Replacement),
+        nil = ?QUEUE:remove_target(Queue, 18),
+        {error, empty} = ?QUEUE:take(Queue),
+        assert_closed_prefix(Targets, 16),
+        true = ?QUEUE:is_open(Replacement),
+        assert_empty_controls(Queue),
+        nil = ?QUEUE:close_target(Queue, 17),
+        {error, empty} = ?QUEUE:take(Queue),
+        false = ?QUEUE:is_open(Replacement),
+        assert_empty_controls(Queue),
+        lists:foreach(fun({Key, Target}) ->
+            nil = ?QUEUE:register_target(Queue, Key, Target),
+            nil = ?QUEUE:close_target(Queue, Key)
+        end, lists:sublist(Targets, 16)),
+        {error, empty} = ?QUEUE:take(Queue),
+        assert_empty_controls(Queue)
+    after
+        lists:foreach(fun(Q) -> true = ets:delete(element(1, Q)) end,
+                      [Queue, Replacement | [Target || {_, Target} <- Targets]])
+    end.
+
+assert_closed_prefix(Targets, Closed) ->
+    lists:foreach(fun({Key, Target}) ->
+        ExpectedOpen = Key > Closed,
+        ExpectedOpen = ?QUEUE:is_open(Target)
+    end, Targets).
+
+assert_pending_controls(Queue, Count) ->
+    [{state, State}] = ets:lookup(element(1, Queue), state),
+    Count = map_size(maps:get(pending_closes, State)),
+    Count = length([Control || Control = {target_close, _, _, _} <-
+                                  queue:to_list(maps:get(pending, State))]),
+    0 = maps:get(registry_epoch, State) rem 2,
+    ok.
 
 %% Pause the owner between the odd-epoch CAS and the even-epoch cleanup.
 %% The data publisher must not wait for the registry transition to finish.
@@ -198,7 +279,7 @@ telemetry_only_at_even_epoch() ->
     try
         nil = beryl_work_queue_ffi:register_target(Queue, <<"socket">>, Target),
         nil = beryl_work_queue_ffi:close_target(Queue, <<"socket">>),
-        {error, nil} = beryl_work_queue_ffi:take(Queue),
+        {error, empty} = beryl_work_queue_ffi:take(Queue),
         nil = beryl_work_queue_ffi:remove_target(Queue, <<"socket">>),
         telemetry_epochs(Tag, 5)
     after

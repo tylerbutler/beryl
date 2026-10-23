@@ -17,6 +17,12 @@ pub type Queue(message)
 /// A reservation remains charged after dequeue, until completion.
 pub type Reservation
 
+/// Why a queue turn did not return data.
+pub type TakeError {
+  Empty
+  Yielded
+}
+
 @external(erlang, "beryl_work_queue_ffi", "new")
 fn new_queue(
   items: Int,
@@ -203,9 +209,10 @@ pub fn activate_cleanup(
 ) -> Result(Nil, AdmissionError)
 
 /// Take the oldest item, retaining its reservation until `release`.
-/// First apply any target close controls at the head of the pending FIFO.
+/// Apply at most 16 target close controls before yielding to the owner's mailbox.
+/// On `Yielded`, schedule another turn; only `Empty` means the FIFO is drained.
 @external(erlang, "beryl_work_queue_ffi", "take")
-pub fn take(queue: Queue(message)) -> Result(#(Reservation, message), Nil)
+pub fn take(queue: Queue(message)) -> Result(#(Reservation, message), TakeError)
 
 /// Take the first eligible item without changing the order of other items.
 /// Target close controls remain pending until a normal `take` reaches them.
@@ -222,10 +229,6 @@ pub fn release(queue: Queue(message), reservation: Reservation) -> Nil
 /// Stop admitting work. Existing reservations remain available to drain.
 @external(erlang, "beryl_work_queue_ffi", "close")
 pub fn close(queue: Queue(message)) -> Nil
-
-/// Close admission once. Only the first caller must initiate teardown.
-@external(erlang, "beryl_work_queue_ffi", "close_once")
-pub fn close_once(queue: Queue(message)) -> Bool
 
 /// Read occupancy and oldest outstanding age without asking the owner.
 @external(erlang, "beryl_work_queue_ffi", "snapshot")
