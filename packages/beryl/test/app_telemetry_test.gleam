@@ -725,6 +725,85 @@ fn assert_faulty_sender_fanout(
   beryl.stop(remote) |> should.equal(Ok(Nil))
 }
 
+pub fn channel_rate_allowance_survives_duplicate_join_and_leave_rejoin_test() -> Nil {
+  use <- unitest.tag("serial")
+  assert_rejoin_preserves_rate(
+    telemetry_config() |> beryl.with_channel_rate(per_second: 1, burst: 1),
+  )
+}
+
+pub fn topic_rate_allowance_survives_duplicate_join_and_leave_rejoin_test() -> Nil {
+  use <- unitest.tag("serial")
+  assert_rejoin_preserves_rate(
+    telemetry_config()
+    |> beryl.with_channel_rate(per_second: 1000, burst: 1000)
+    |> beryl.with_topic_rate("room:*", per_second: 1, burst: 1),
+  )
+}
+
+fn assert_rejoin_preserves_rate(config: beryl.Config) -> Nil {
+  let handler = attach()
+  let inputs = process.new_subject()
+  let sockets = app_test_helper.start_observed(config, inputs)
+  let frames = app_test_helper.connect(sockets, "retained")
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join_ok(sockets, frames, "retained", "room:lobby", "j1", "1")
+  let assert Join("room:lobby", _, _) = app_test_helper.next_event(inputs)
+  expect_join(handler, "accepted") |> should.be_true
+  app_test_helper.push(sockets, "retained", "room:lobby", "first", "2")
+  let assert Message("room:lobby", "first", _, _) =
+    app_test_helper.next_event(inputs)
+  expect_message(handler, "text", "handled", "no_reply") |> should.be_true
+  app_test_helper.push(sockets, "retained", "room:lobby", "exhausted", "3")
+  expect_message(handler, "text", "rate_limited", "not_applicable")
+  |> should.be_true
+
+  app_test_helper.join(sockets, "retained", "room:lobby", "j2", "4")
+  app_test_helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+  let assert Closed("room:lobby", socket.Normal) =
+    app_test_helper.next_event(inputs)
+  let assert Join("room:lobby", _, _) = app_test_helper.next_event(inputs)
+  expect_join(handler, "accepted") |> should.be_true
+  app_test_helper.push(
+    sockets,
+    "retained",
+    "room:lobby",
+    "after_duplicate",
+    "5",
+  )
+  expect_message(handler, "text", "rate_limited", "not_applicable")
+  |> should.be_true
+
+  app_test_helper.route(
+    sockets,
+    "retained",
+    "[\"j2\",\"6\",\"room:lobby\",\"phx_leave\",{}]",
+  )
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+  app_test_helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  let assert Closed("room:lobby", socket.Normal) =
+    app_test_helper.next_event(inputs)
+  app_test_helper.join_ok(sockets, frames, "retained", "room:lobby", "j3", "7")
+  let assert Join("room:lobby", _, _) = app_test_helper.next_event(inputs)
+  expect_join(handler, "accepted") |> should.be_true
+  app_test_helper.push(sockets, "retained", "room:lobby", "after_leave", "8")
+  expect_message(handler, "text", "rate_limited", "not_applicable")
+  |> should.be_true
+  route_heartbeat(sockets, "retained")
+  let _barrier = app_test_helper.recv(frames)
+  expect_message(handler, "heartbeat", "handled", "not_applicable")
+  |> should.be_true
+  process.receive(inputs, 0) |> should.be_error
+  expect_none(handler) |> should.be_true
+  detach(handler)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
 pub fn shutdown_reason_and_disabled_runtime_are_reported_test() -> Nil {
   use <- unitest.tag("serial")
   let handler = attach()
