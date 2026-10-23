@@ -112,6 +112,11 @@ pub fn handler(
   )
 }
 
+type ConnectionMessage {
+  Outbound(SendRequest)
+  UpgradeOwnerDown
+}
+
 /// Perform the actual WebSocket upgrade
 fn do_upgrade(
   request: Request(Connection),
@@ -122,23 +127,32 @@ fn do_upgrade(
   telemetry: transport.Telemetry,
 ) -> Response(ResponseBody) {
   let seed = server.connect_seed(request, connect_metadata)
+  let upgrade_owner = process.self()
   ewe.upgrade_websocket(
     request,
-    on_init: fn(connection, base_selector: Selector(SendRequest)) {
-      // Extend the selector Ewe provides so the runtime can push outbound
-      // frames to this connection's process as `ewe.User(SendRequest)`
-      // messages.
-      server.init_connection(
-        sockets: channels,
-        seed: seed,
-        connection_permit: connection_permit,
-        base_selector: base_selector,
-        config: config,
-        force_close: fn() { force_close(connection) },
-        logger_name: "beryl_ewe",
-        telemetry: telemetry,
-        codec: None,
-      )
+    on_init: fn(connection, base_selector: Selector(ConnectionMessage)) {
+      let upgrade_monitor = process.monitor(upgrade_owner)
+      // Wrap shared outbound requests so the handoff monitor stays private
+      // to this transport.
+      let #(state, selector) =
+        server.init_connection(
+          sockets: channels,
+          seed: seed,
+          connection_permit: connection_permit,
+          base_selector: process.new_selector(),
+          config: config,
+          force_close: fn() { force_close(connection) },
+          logger_name: "beryl_ewe",
+          telemetry: telemetry,
+          codec: None,
+        )
+      let selector =
+        process.map_selector(selector, Outbound)
+        |> process.merge_selector(base_selector)
+        |> process.select_specific_monitor(upgrade_monitor, fn(_) {
+          UpgradeOwnerDown
+        })
+      #(state, selector)
     },
     handler: on_message,
     on_close: fn(_connection, state) { server.close_connection(state) },
@@ -165,19 +179,33 @@ fn force_close(
 fn on_message(
   connection: WebsocketConnection,
   state: ConnectionState,
-  message: ewe.WebsocketMessage(SendRequest),
-) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
+  message: ewe.WebsocketMessage(ConnectionMessage),
+) -> ewe.WebsocketNext(ConnectionState, ConnectionMessage) {
   case message {
     ewe.Text(text) -> resume(server.handle_text_frame(state, text))
     ewe.Binary(data) -> resume(server.handle_binary_frame(state, data))
-    ewe.User(server.Close) -> ewe.websocket_stop()
-    ewe.User(server.SendText(text, bytes)) ->
+    ewe.User(UpgradeOwnerDown) ->
+      // Ewe 4 ignores a failed socket handoff. A healthy handoff already made
+      // this process the owner before the HTTP process exited.
+      case
+        glisten_transport.controlling_process(
+          connection.transport,
+          connection.socket,
+          process.self(),
+        )
+        |> result.is_ok
+      {
+        True -> ewe.websocket_continue(state)
+        False -> ewe.websocket_stop()
+      }
+    ewe.User(Outbound(server.Close)) -> ewe.websocket_stop()
+    ewe.User(Outbound(server.SendText(text, bytes))) ->
       resume(server.finish_outbound_write(
         state,
         bytes,
         ewe.send_text_frame(connection, text) |> result.is_ok,
       ))
-    ewe.User(server.SendBinary(data, bytes)) ->
+    ewe.User(Outbound(server.SendBinary(data, bytes))) ->
       resume(server.finish_outbound_write(
         state,
         bytes,
@@ -188,7 +216,7 @@ fn on_message(
 
 fn resume(
   outcome: server.FrameDisposition,
-) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
+) -> ewe.WebsocketNext(ConnectionState, ConnectionMessage) {
   case outcome {
     server.Continue(state) -> ewe.websocket_continue(state)
     server.Stop -> ewe.websocket_stop()

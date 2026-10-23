@@ -10,6 +10,7 @@ pub type Boundary {
   SocketQueue
   WorkerQueue
   PresenceQueue
+  ConnectionQueue
   CallbackBatch
 }
 

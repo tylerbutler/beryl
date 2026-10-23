@@ -1,0 +1,3 @@
+package = "beryl_ewe"
+kind = "Fixed"
+body = "Release connection slots and runtime sockets when clients disconnect during WebSocket initialization before the socket handoff."

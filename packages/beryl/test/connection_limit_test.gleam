@@ -7,10 +7,13 @@
 
 import app_test_helper
 import beryl
+import beryl/connection_limit
 import beryl/socket
 import beryl/transport
 import beryl/wire
 import gleam/erlang/process
+import gleam/list
+import gleam/option
 import gleeunit/should
 import test_helper
 import unitest
@@ -153,8 +156,8 @@ pub fn slot_reclaimed_when_requester_dies_before_bind_test() -> Nil {
   Nil
 }
 
-// A timed-out request suppresses its late reply and sends a cancellation
-// behind its queued acquire, so no mailbox message or reservation remains.
+// A timed-out request suppresses its late reply and activates reserved cleanup,
+// so no mailbox message or reservation remains.
 pub fn timed_out_queued_acquire_is_cancelled_test() -> Nil {
   let channels = start_with_limit(1)
   let assert Ok(limiter) = beryl.app_limiter_pid(channels)
@@ -259,8 +262,13 @@ pub fn acquire_returns_error_when_limiter_dies_while_waiting_test() -> Nil {
         test_helper.mailbox_length(process.self()),
       ))
     })
+  let assert option.Some(registry) =
+    beryl.configured_connection_limiter(channels)
   test_helper.wait_until(
-    fn() { test_helper.mailbox_length(limiter) == 1 },
+    fn() {
+      let assert Ok(snapshot) = connection_limit.queue_snapshot(registry)
+      snapshot.items == 2
+    },
     500,
     10,
   )
@@ -343,6 +351,48 @@ pub fn transfer_fails_after_request_owner_dies_test() -> Nil {
 
   let assert Ok(Nil) = beryl.stop(channels)
   Nil
+}
+
+pub fn cancelled_slot_is_reusable_before_release_notification_test() -> Nil {
+  list.each([True, False], fn(per_ip) {
+    let config = case per_ip {
+      True ->
+        beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(1)
+      False ->
+        beryl.config(wire.phoenix_codec()) |> beryl.with_max_connections(1)
+    }
+    let assert Ok(channels) =
+      app_test_helper.start_app(
+        config,
+        init: fn(_) { #(Nil, []) },
+        update: fn(model: Nil, _: socket.Input(Nil)) { socket.Next(model, []) },
+      )
+    let assert Ok(option.Some(permit)) =
+      connection_limit.acquire_optional(
+        beryl.configured_connection_limiter(channels),
+        "192.0.2.1",
+      )
+    let assert option.Some(limiter) =
+      beryl.configured_connection_limiter(channels)
+    test_helper.wait_until(
+      fn() {
+        let assert Ok(queue) = connection_limit.queue_snapshot(limiter)
+        queue.items == 0
+      },
+      1000,
+      1,
+    )
+    connection_limit.release_with_cancel_hook(permit, fn() {
+      let ip = case per_ip {
+        True -> "192.0.2.1"
+        False -> "192.0.2.2"
+      }
+      let assert Ok(next) = transport.acquire_connection_slot(channels, ip)
+      transport.release_connection_slot(next)
+    })
+    beryl.stop(channels) |> should.equal(Ok(Nil))
+  })
 }
 
 pub fn transferred_slot_survives_requester_exit_and_restart_test() -> Nil {
