@@ -61,7 +61,7 @@ stack_frame({Module, Function, Arguments, Location})
     ModuleName = diagnostic_format("~tp", [Module], 28),
     FunctionName = diagnostic_format("~tp", [Function], 28),
     Call = unicode:characters_to_list([ModuleName, ":", FunctionName, "/", Arity]),
-    Source = stack_location(lists:sublist(Location, 8), 80 - length(Call)),
+    Source = stack_location(stack_location_entries(Location, 8), 80 - length(Call)),
     unicode:characters_to_binary([Call, Source]);
 stack_frame({Function, Arguments, Location}) when is_function(Function) ->
     {module, Module} = erlang:fun_info(Function, module),
@@ -78,6 +78,13 @@ stack_arity([_ | Rest], Count) when Count < 255 ->
     stack_arity(Rest, Count + 1);
 stack_arity(_, _) ->
     "?".
+
+%% erlang:raise/3 accepts improper location lists. Copy only the bounded
+%% prefix so metadata traversal cannot throw while handling the exception.
+stack_location_entries(_, 0) -> [];
+stack_location_entries([Entry | Rest], Remaining) ->
+    [Entry | stack_location_entries(Rest, Remaining - 1)];
+stack_location_entries(_, _) -> [].
 
 stack_location(Location, Budget) ->
     Line = case proplists:get_value(line, Location) of
