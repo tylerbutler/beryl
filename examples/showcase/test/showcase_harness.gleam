@@ -46,7 +46,7 @@ pub type Frames =
 /// throttle a public demo, and a test that tripped them would be asserting
 /// the limiter rather than the channels.
 pub fn start(_replica: String) -> System {
-  let presence_tracker = session_presence.start()
+  let assert Ok(presence_tracker) = session_presence.start()
   let #(groups, groups_specification) = group.child_spec()
   let assert Ok(store) = document_store.start()
   let assert Ok(broadcast_hub) = hub.start()
@@ -89,7 +89,7 @@ pub fn start(_replica: String) -> System {
 /// Stop the socket runtime and test-only presence publisher.
 pub fn stop(system: System) -> Nil {
   let assert Ok(Nil) = beryl.stop(system.sockets)
-  session_presence.stop(system.presence)
+  let assert Ok(Nil) = session_presence.stop(system.presence)
   Nil
 }
 
