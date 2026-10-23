@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Dependencies"
-body = "use the Hex release of unitest"
