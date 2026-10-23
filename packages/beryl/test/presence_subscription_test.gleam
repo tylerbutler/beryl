@@ -180,7 +180,8 @@ pub fn subscriber_death_removes_the_actor_monitor_test() -> Nil {
 }
 
 pub fn remote_replacement_events_follow_committed_state_test() -> Nil {
-  let pubsub = pubsub.start(pubsub.config_with_scope("observer_remote_prune"))
+  let assert Ok(pubsub) =
+    pubsub.start(pubsub.config_with_scope("observer_remote_prune"))
   let handle = start_distributed(pubsub, "observer")
   let old = start_distributed(pubsub, "peer")
   let assert Ok(_) = presence.track(old, "room:a", "alice", "old", json.null())
@@ -216,7 +217,8 @@ pub fn remote_replacement_events_follow_committed_state_test() -> Nil {
 }
 
 pub fn callback_failure_does_not_hide_committed_remote_change_test() -> Nil {
-  let pubsub = pubsub.start(pubsub.config_with_scope("observer_failed_remote"))
+  let assert Ok(pubsub) =
+    pubsub.start(pubsub.config_with_scope("observer_failed_remote"))
   let assert Ok(handle) =
     presence.start(
       presence.default_config("observer")

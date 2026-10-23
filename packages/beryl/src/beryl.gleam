@@ -30,7 +30,7 @@
 ////
 //// pub fn main() -> Nil {
 ////   // Optional: start PubSub for distributed messaging
-////   let pubsub_handle = pubsub.start(pubsub.default_config())
+////   let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 ////
 ////   // Build the supervised system. The app supplies `init` (the per-socket
 ////   // model) and `update` (which routes every event by topic).

@@ -6197,7 +6197,7 @@ fn publish_broadcast(
   event_name: String,
   payload: Json,
   except: Option(String),
-) -> Nil {
+) -> Result(Nil, pubsub.PubSubError) {
   case except {
     None ->
       pubsub.broadcast_from(
@@ -6222,15 +6222,15 @@ fn publish_broadcast(
 fn forward_pubsub(
   state: State(model, message),
   topic_name: String,
-  send: fn() -> Nil,
+  send: fn() -> Result(Nil, pubsub.PubSubError),
 ) -> Nil {
-  case internal.rescue(send) {
+  case send() {
     Ok(Nil) -> Nil
-    Error(crash) ->
+    Error(error) ->
       state.logger
       |> log.warn("PubSub forwarding failed; local delivery preserved", [
         #("topic", topic_name),
-        #("crash", crash),
+        #("reason", pubsub.describe_error(error)),
       ])
   }
 }

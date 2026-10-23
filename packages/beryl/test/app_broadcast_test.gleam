@@ -92,9 +92,9 @@ pub fn stalled_registry_does_not_block_router_traffic_test() -> Nil {
   let observer = join_lobby(sockets, "observer", "jr-observer")
   let newcomer = app_test_helper.connect(sockets, "newcomer")
   let router = app_test_helper.runtime_pid(sockets)
-  let instance = pubsub.start(pubsub.config_with_scope(scope))
+  let assert Ok(instance) = pubsub.start(pubsub.config_with_scope(scope))
   test_helper.wait_until(
-    fn() { pubsub.subscriber_count(instance, "room:lobby") == 1 },
+    fn() { pubsub.subscriber_count(instance, "room:lobby") == Ok(1) },
     2000,
     5,
   )
@@ -118,12 +118,19 @@ pub fn stalled_registry_does_not_block_router_traffic_test() -> Nil {
     app_test_helper.recv(observer)
     |> string.contains("still-local")
     |> should.be_true
+    heartbeat(sockets, observer)
+    beryl.broadcast(sockets, "room:lobby", "still-responsive", json.object([]))
+    |> should.equal(Ok(Nil))
+    app_test_helper.recv(observer)
+    |> string.contains("still-responsive")
+    |> should.be_true
+    heartbeat(sockets, observer)
     transport.runtime_pid(sockets) |> should.equal(Ok(router))
   })
   test_helper.wait_until(
     fn() {
-      pubsub.subscriber_count(instance, "room:new") == 1
-      && pubsub.subscriber_count(instance, "room:gone") == 0
+      pubsub.subscriber_count(instance, "room:new") == Ok(1)
+      && pubsub.subscriber_count(instance, "room:gone") == Ok(0)
     },
     2000,
     5,
@@ -134,7 +141,7 @@ pub fn stalled_registry_does_not_block_router_traffic_test() -> Nil {
 pub fn stalled_registry_coalesces_membership_churn_test() -> Nil {
   use <- unitest.tag("serial")
   let scope = "app_bcast_coalesced_registry"
-  let instance = pubsub.start(pubsub.config_with_scope(scope))
+  let assert Ok(instance) = pubsub.start(pubsub.config_with_scope(scope))
   let assert Ok(limits) = overload.limits(items: 8, bytes: 8192)
   let assert Ok(sockets) =
     app_test_helper.start_app(
@@ -149,7 +156,7 @@ pub fn stalled_registry_coalesces_membership_churn_test() -> Nil {
   let newcomer = app_test_helper.connect(sockets, "newcomer")
   let router = app_test_helper.runtime_pid(sockets)
   test_helper.wait_until(
-    fn() { pubsub.subscriber_count(instance, "room:lobby") == 1 },
+    fn() { pubsub.subscriber_count(instance, "room:lobby") == Ok(1) },
     2000,
     5,
   )
@@ -170,8 +177,8 @@ pub fn stalled_registry_coalesces_membership_churn_test() -> Nil {
   })
   test_helper.wait_until(
     fn() {
-      pubsub.subscriber_count(instance, "room:final") == 1
-      && pubsub.subscriber_count(instance, "room:churn") == 0
+      pubsub.subscriber_count(instance, "room:final") == Ok(1)
+      && pubsub.subscriber_count(instance, "room:churn") == Ok(0)
     },
     2000,
     5,
@@ -181,7 +188,7 @@ pub fn stalled_registry_coalesces_membership_churn_test() -> Nil {
     membership_intent_size(router) |> should.equal(0)
   })
   test_helper.wait_until(
-    fn() { pubsub.subscriber_count(instance, "room:final") == 0 },
+    fn() { pubsub.subscriber_count(instance, "room:final") == Ok(0) },
     2000,
     5,
   )
@@ -196,11 +203,11 @@ pub fn joins_and_leaves_during_pg_outage_preserve_live_sockets_test() -> Nil {
   let remote = join_lobby(other, "remote", "jr-remote")
   let newcomer = app_test_helper.connect(sockets, "newcomer")
   join_topic(sockets, newcomer, "room:gone")
-  let instance = pubsub.start(pubsub.config_with_scope(scope))
+  let assert Ok(instance) = pubsub.start(pubsub.config_with_scope(scope))
   test_helper.wait_until(
     fn() {
-      pubsub.subscriber_count(instance, "room:lobby") == 2
-      && pubsub.subscriber_count(instance, "room:gone") == 1
+      pubsub.subscriber_count(instance, "room:lobby") == Ok(2)
+      && pubsub.subscriber_count(instance, "room:gone") == Ok(1)
     },
     2000,
     5,
@@ -229,9 +236,9 @@ pub fn joins_and_leaves_during_pg_outage_preserve_live_sockets_test() -> Nil {
   test_helper.wait_until(
     fn() {
       recovered(atom.create(scope), old_pid, "room:lobby", 2)
-      && pubsub.subscriber_count(instance, "room:new") == 1
-      && pubsub.subscriber_count(instance, "room:cycling") == 1
-      && pubsub.subscriber_count(instance, "room:gone") == 0
+      && pubsub.subscriber_count(instance, "room:new") == Ok(1)
+      && pubsub.subscriber_count(instance, "room:cycling") == Ok(1)
+      && pubsub.subscriber_count(instance, "room:gone") == Ok(0)
     },
     5000,
     5,
@@ -282,9 +289,9 @@ pub fn pubsub_scope_recovery_preserves_runtime_broadcasts_test() -> Nil {
   let node_b = start_runtime(scope)
   let sender = join_lobby(node_a, "recovery-sender", "jr-a")
   let observer = join_lobby(node_b, "recovery-observer", "jr-b")
-  let instance = pubsub.start(pubsub.config_with_scope(scope))
+  let assert Ok(instance) = pubsub.start(pubsub.config_with_scope(scope))
   test_helper.wait_until(
-    fn() { pubsub.subscriber_count(instance, "room:lobby") == 2 },
+    fn() { pubsub.subscriber_count(instance, "room:lobby") == Ok(2) },
     5000,
     10,
   )
@@ -307,7 +314,7 @@ pub fn pubsub_scope_recovery_preserves_runtime_broadcasts_test() -> Nil {
 }
 
 fn start_runtime(scope: String) -> beryl.Sockets {
-  let started_pubsub = pubsub.start(pubsub.config_with_scope(scope))
+  let assert Ok(started_pubsub) = pubsub.start(pubsub.config_with_scope(scope))
   let assert Ok(channels) =
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(started_pubsub),
