@@ -21,6 +21,74 @@ import unitest
 @external(erlang, "beryl_test_process_ffi", "with_suspended")
 fn with_suspended(pid: process.Pid, action: fn() -> a) -> a
 
+pub fn rejected_broadcast_aborts_later_effects_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each([False, True], rejected_broadcast_aborts_later_effects)
+}
+
+fn rejected_broadcast_aborts_later_effects(disconnect_first: Bool) -> Nil {
+  let entered = process.new_subject()
+  let closed = process.new_subject()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      config()
+        |> beryl.with_effect_limits(limits(2, 32_768))
+        |> beryl.with_router_queue_limits(limits(64, 4096)),
+      init: app_test_helper.accepting_init,
+      update: fn(model, input) {
+        case input {
+          socket.Message(topic, "reject", _, _) -> {
+            let release = process.new_subject()
+            process.send(entered, release)
+            process.receive_forever(release)
+            socket.Next(model, [
+              socket.Broadcast(
+                topic,
+                "oversized",
+                json.string(string.repeat("x", 8192)),
+              ),
+              socket.Push(topic, "unexpected", json.null()),
+            ])
+          }
+          _ -> app_test_helper.accepting_update(model, input)
+        }
+      },
+    )
+  let frames = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(sockets)
+  transport.admit_socket(
+    sockets:,
+    owner:,
+    socket_id: "broadcast-rejected",
+    send: fn(frame) {
+      process.send(frames, frame)
+      Ok(Nil)
+    },
+    send_binary: fn(_) { Ok(Nil) },
+    codec: option.None,
+    seed: socket.empty_seed(),
+    close: fn() { process.send(closed, Nil) },
+  )
+  |> should.equal(Ok(Nil))
+  helper.join(sockets, "broadcast-rejected", "room:a", "j", "r")
+  helper.recv(frames) |> string.contains("\"status\":\"ok\"") |> should.be_true
+  helper.push(sockets, "broadcast-rejected", "room:a", "reject", "message")
+  let assert Ok(release) = process.receive(entered, 1000)
+  case disconnect_first {
+    False -> Nil
+    True -> {
+      transport.socket_disconnected(sockets, "broadcast-rejected")
+      snapshot.get(sockets) |> should.be_ok
+      Nil
+    }
+  }
+  process.send(release, Nil)
+  process.receive(closed, 1000) |> should.equal(Ok(Nil))
+  helper.recv(frames) |> string.contains("phx_error") |> should.be_true
+  app_test_helper.recv_none(frames)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
 pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil {
   use <- unitest.tag("serial")
   list.each([False, True], rejected_index_closes)

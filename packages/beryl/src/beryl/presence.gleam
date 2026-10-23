@@ -108,7 +108,7 @@ fn monotonic_time_ms() -> Int {
 /// caller's node. Keep a `Presence` handle on the node where its child
 /// specification runs. From another BEAM node, synchronous mutations
 /// (`track`, `update`, `untrack`, and `untrack_all`) cannot reach the owning
-/// actor and panic as unavailable, while `list`, `get_by_key`, and `count`
+/// actor and return typed call errors, while `list`, `get_by_key`, and `count`
 /// return `Error(Nil)` because the read model is unavailable. Use PubSub
 /// replication (`with_pubsub`) to share presence state across nodes instead of
 /// moving the handle itself.
@@ -748,7 +748,7 @@ type ActorState {
     /// `untrack` can locate the correct CRDT entry to leave. Populated on
     /// `Track` and pruned on `Untrack`/`UntrackAll`.
     refs: Dict(String, TrackedPresence),
-    /// Socket actors with runtime-owned presence and a live monitor process.
+    /// Socket actors with a reserved cleanup obligation and a live monitor.
     runtime_owners: Set(process.Pid),
     /// The ETS table backing the read model that `list`, `get_by_key`, and
     /// `count` read directly. Owned by this actor process; see `publish_topic`.
@@ -844,8 +844,9 @@ pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
 /// Set the timeout for synchronous presence mutations, in milliseconds.
 ///
 /// This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
-/// functions panic if the actor does not reply before the timeout. The default
-/// is 5000 ms.
+/// functions return typed timeout errors if the actor does not reply in time.
+/// Pending work is cancelled, but running mutations may still complete.
+/// The default is 5000 ms.
 pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
   Config(..config, call_timeout_ms: timeout_ms)
 }
@@ -1628,7 +1629,14 @@ fn schedule_work_recovery(subject: Subject(Message)) -> Nil {
 
 fn handle_available_work(state: ActorState) -> actor.Next(ActorState, Message) {
   case work_queue.take(state.inbox) {
-    Error(Nil) -> actor.continue(state)
+    Error(work_queue.Empty) -> actor.continue(state)
+    Error(work_queue.Yielded) -> {
+      case state.self_subject {
+        Some(subject) -> process.send(subject, WorkAvailable)
+        None -> Nil
+      }
+      actor.continue(state)
+    }
     Ok(#(reservation, message)) -> {
       case state.self_subject {
         Some(subject) -> process.send(subject, WorkAvailable)
@@ -1715,6 +1723,8 @@ fn handle_message(
             logger,
           )
         True -> {
+          // A rejected mutation still owns its reserved cleanup capacity.
+          let actor_state = monitor_runtime_owner(actor_state, owner)
           use #(new_state, ref, stored_meta) <- continue_with_track(
             actor_state,
             do_track(
@@ -1729,7 +1739,6 @@ fn handle_message(
               process.send(reply, MutationAck(tag, operation_id, TrackFailed))
             },
           )
-          let new_state = monitor_runtime_owner(new_state, owner)
           log_tracked(logger, topic, key, session_id, ref)
           process.send(
             reply,

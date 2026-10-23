@@ -501,6 +501,11 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
   let _local = app_test_helper.recv(frames)
   expect_broadcast(handler, "local", 1) |> should.be_true
 
+  test_helper.wait_until(
+    fn() { pubsub.subscriber_count(pubsub_instance, "room:lobby") == 1 },
+    1000,
+    5,
+  )
   pubsub.broadcast(pubsub_instance, "room:lobby", "remote", json.object([]))
   let _remote = app_test_helper.recv(frames)
   expect_broadcast(handler, "remote", 1) |> should.be_true
@@ -645,9 +650,9 @@ pub fn rejected_router_broadcast_sends_no_inline_copy_or_success_event_test() ->
   expect_join(handler, "accepted") |> should.be_true
   app_test_helper.push(sockets, "rejected", "room:lobby", "cast_oversized", "2")
   expect_message(handler, "text", "handled", "push") |> should.be_true
-  expect_disconnect(handler, "normal", 1) |> should.be_true
+  expect_disconnect(handler, "admission_rejected", 1) |> should.be_true
   app_test_helper.recv(frames)
-  |> should.equal("[\"j\",\"j\",\"room:lobby\",\"phx_close\",{}]")
+  |> should.equal("[\"j\",\"j\",\"room:lobby\",\"phx_error\",{}]")
   app_test_helper.recv_none(frames)
   expect_none(handler) |> should.be_true
   detach(handler)

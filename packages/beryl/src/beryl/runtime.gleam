@@ -1086,7 +1086,11 @@ fn handle_queued_work(
   }
   let state = State(..state, current_work: None)
   case work_queue.take(state.inbox) {
-    Error(Nil) ->
+    Error(work_queue.Yielded) -> {
+      process.send(state.self_subject, WorkAvailable)
+      actor.continue(state)
+    }
+    Error(work_queue.Empty) ->
       case state.role, work_queue.is_open(state.inbox) {
         SocketActorRole(phase: Active, ..), False ->
           disconnect_socket_actor(state)
@@ -1345,8 +1349,6 @@ fn handle_message(
           dict.to_list(socket_actors)
           |> list.each(fn(entry) {
             let #(socket_id, ref) = entry
-            // A rejected first track reserves cleanup without an owner watcher.
-            sweep_runtime_presence(state.config.presence, ref.pid)
             process.kill(ref.pid)
             let _closer = process.spawn_unlinked(ref.close)
             emit_abnormal_disconnect(
@@ -6515,15 +6517,10 @@ fn admit_router_broadcast(
       |> log.warn("Socket closing: broadcast admission rejected", [
         #("reason", overload.describe(error)),
       ])
-      case work_queue.close_once(state.inbox) {
-        False -> Nil
-        True ->
-          dict.values(state.sockets)
-          |> list.each(fn(socket) {
-            socket.close()
-            process.send(state.self_subject, SocketDisconnected(socket.id))
-          })
-      }
+      dict.keys(state.sockets)
+      |> list.each(fn(socket_id) {
+        close_socket_for_admission(state, socket_id, error)
+      })
       False
     }
   }
@@ -7341,7 +7338,8 @@ fn serve_worker_queue(
     Some(_) -> Ok(WorkerRunning(worker, link))
     None ->
       case work_queue.take(link.input) {
-        Error(Nil) ->
+        Error(work_queue.Yielded) -> Ok(WorkerRunning(worker, link))
+        Error(work_queue.Empty) ->
           case link.terminate {
             None -> Ok(WorkerRunning(worker, link))
             Some(reason) -> terminate_worker(worker, link, reason)
