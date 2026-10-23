@@ -91,18 +91,28 @@ pub fn caught_group_timeouts_drop_monitors_and_late_replies_test() -> Nil {
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
   let assert Ok(owner) = process.subject_owner(group.subject(groups))
-  let monitors = test_helper.monitor_count(process.self())
-  let messages = test_helper.mailbox_length(process.self())
-
-  with_suspended(owner, fn() {
-    list.each(list.repeat(Nil, 10), fn(_) {
-      internal.rescue(fn() { group.list_groups(groups) }) |> should.be_error
-      test_helper.monitor_count(process.self()) |> should.equal(monitors)
+  let completed = process.new_subject()
+  let _caller =
+    process.spawn_unlinked(fn() {
+      let outcome =
+        internal.rescue(fn() {
+          let monitors = test_helper.monitor_count(process.self())
+          let messages = test_helper.mailbox_length(process.self())
+          with_suspended(owner, fn() {
+            list.each(list.repeat(Nil, 10), fn(_) {
+              internal.rescue(fn() { group.list_groups(groups) })
+              |> should.be_error
+              test_helper.monitor_count(process.self())
+              |> should.equal(monitors)
+            })
+          })
+          group.list_groups(groups) |> should.equal([])
+          test_helper.monitor_count(process.self()) |> should.equal(monitors)
+          test_helper.mailbox_length(process.self()) |> should.equal(messages)
+        })
+      process.send(completed, outcome)
     })
-  })
-  group.list_groups(groups) |> should.equal([])
-  test_helper.monitor_count(process.self()) |> should.equal(monitors)
-  test_helper.mailbox_length(process.self()) |> should.equal(messages)
+  process.receive(completed, 5000) |> should.equal(Ok(Ok(Nil)))
 }
 
 pub fn group_create_and_list_test() -> Nil {
