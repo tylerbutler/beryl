@@ -169,8 +169,8 @@ pub opaque type Config {
     channel_rate: Int,
     /// Per-channel message burst capacity (0 = defaults to channel_rate)
     channel_burst: Int,
-    /// Maximum active per-channel rate-limit buckets per socket.
-    /// Values <= 0 disable the cap.
+    /// Maximum retained per-channel rate-limit buckets per socket.
+    /// Buckets remain until socket teardown. Values <= 0 disable the cap.
     channel_rate_max_keys_per_socket: Int,
     /// Maximum byte length for client-supplied topic strings (default: 256).
     /// Topics exceeding this limit are rejected with a `phx_reply` error before
