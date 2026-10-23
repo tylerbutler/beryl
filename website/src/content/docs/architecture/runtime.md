@@ -107,6 +107,23 @@ that socket. Then it resumes at the next effect. The socket keeps its effect
 order. Other sockets, broadcasts, heartbeat checks, and shutdown work continue.
 An unrelated broadcast can occur between two effects from the paused socket.
 
+## Input order when a client disconnects
+
+A client disconnect follows frames already admitted to the router. The router
+forwards those frames before closing the socket's input queue. The socket actor
+then drains its admitted input and applies the resulting effects before
+delivering `Closed(topic, Normal)`. Channel handlers see this work before
+`on_terminate`. Replies and pushes can fail because the client has already
+closed the connection; draining does not confirm network delivery.
+
+Disconnect requests coalesce into one lifecycle control per registered socket,
+even when the router's data queue is full. These controls do not consume data
+capacity. Input, reply refs, worker reports, and effects still use their
+configured item and byte limits during the drain. Overload rejection, callback
+failure, heartbeat expiry, owner death, and shutdown can end the drain early.
+Shutdown keeps its existing two-second socket-actor drain deadline and kills
+blocked actors. A blocked raw callback cannot be interrupted by a disconnect.
+
 ## What closes after a callback crash
 
 The runtime catches crashes in app callbacks. A `Join` crash rejects that join.

@@ -14,7 +14,8 @@ limit_schedulers(Maximum) ->
 socket_queue(Router, SocketId) ->
     {registered_name, Name} = process_info(Router, registered_name),
     {ok, {Table, Router, _, _, _, _, _}} = beryl_work_queue_ffi:lookup(Name),
-    [{{target, SocketId}, Queue}] = ets:lookup(Table, {target, SocketId}),
+    [{state, #{targets := Targets}}] = ets:lookup(Table, state),
+    {_Incarnation, Queue, _Status} = maps:get(SocketId, Targets),
     Queue.
 
 socket_actor(Router, SocketId) ->

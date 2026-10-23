@@ -1039,21 +1039,27 @@ fn handle_available_work(
   state: State(model, message),
 ) -> actor.Next(State(model, message), Message(message)) {
   case state.role, work_queue.is_open(state.inbox) {
-    SocketActorRole(router:, phase: Active, workers:), False ->
-      case dict.keys(state.sockets) {
-        [socket_id] ->
-          socket_turn(
-            State(
-              ..state,
-              role: SocketActorRole(router:, phase: Closing, workers:),
-            ),
-            socket_id,
-            SocketDisconnected(socket_id),
-          )
-        _ -> actor.stop()
+    SocketActorRole(phase: Active, ..), False ->
+      case work_queue.close_reason(state.inbox) {
+        Some(_) -> disconnect_socket_actor(state)
+        None -> handle_queued_work(state)
       }
     SocketActorRole(phase: Booting, ..), False -> actor.stop()
     _, _ -> handle_queued_work(state)
+  }
+}
+
+fn disconnect_socket_actor(
+  state: State(model, message),
+) -> actor.Next(State(model, message), Message(message)) {
+  case state.role, dict.keys(state.sockets) {
+    SocketActorRole(router:, workers:, ..), [socket_id] ->
+      socket_turn(
+        State(..state, role: SocketActorRole(router:, phase: Closing, workers:)),
+        socket_id,
+        SocketDisconnected(socket_id),
+      )
+    _, _ -> actor.stop()
   }
 }
 
@@ -1069,7 +1075,12 @@ fn handle_queued_work(
   }
   let state = State(..state, current_work: None)
   case work_queue.take(state.inbox) {
-    Error(Nil) -> actor.continue(state)
+    Error(Nil) ->
+      case state.role, work_queue.is_open(state.inbox) {
+        SocketActorRole(phase: Active, ..), False ->
+          disconnect_socket_actor(state)
+        _, _ -> actor.continue(state)
+      }
     Ok(#(reservation, message)) -> {
       process.send(state.self_subject, WorkAvailable)
       let current = case message {
@@ -4739,7 +4750,8 @@ fn run_effects(
   continuation: Continuation,
 ) -> Execution(model, message) {
   let input_closed = case state.role {
-    SocketActorRole(phase: Active, ..) -> !work_queue.is_open(state.inbox)
+    SocketActorRole(phase: Active, ..) ->
+      work_queue.close_reason(state.inbox) != None
     _ -> False
   }
   use <- bool.lazy_guard(when: input_closed, return: fn() {
@@ -5147,7 +5159,7 @@ fn register_reply_ref(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> Error(overload.Closed)
     Ok(socket) -> {
-      use reservation <- result.map(work_queue.retain(state.inbox, ref))
+      use reservation <- result.map(work_queue.retain_output(state.inbox, ref))
       store_socket(
         state,
         SocketState(
@@ -7549,7 +7561,7 @@ fn execute_accepted_worker_join(
   source: Source,
   continuation: Continuation,
 ) -> Execution(model, message) {
-  case work_queue.retain(state.inbox, Nil) {
+  case work_queue.retain_output(state.inbox, Nil) {
     Error(error) ->
       execute_admission_failure(state, socket_id, source, continuation, error)
     Ok(reservation) -> {

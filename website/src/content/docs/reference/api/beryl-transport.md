@@ -338,6 +338,10 @@ pub fn socket_disconnected(
 
 Announce that a socket's connection has closed.
 
+ Previously admitted inbound work drains before `Closed`, including work
+ waiting in the router. Existing limits, faults, timeouts, and shutdown still
+ apply. This does not confirm delivery of replies to the closed connection.
+
 <div class="api-entry-anchor" id="api-function-telemetry" aria-hidden="true"></div>
 
 ### `telemetry`
