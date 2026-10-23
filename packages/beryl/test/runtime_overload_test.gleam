@@ -22,11 +22,23 @@ import unitest
 fn with_suspended(pid: process.Pid, action: fn() -> a) -> a
 
 pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each([False, True], rejected_index_closes)
+}
+
+fn rejected_index_closes(disconnect_first: Bool) -> Nil {
   let entered = process.new_subject()
+  let senders = process.new_subject()
   let assert Ok(sockets) =
     app_test_helper.start_app(
       config() |> beryl.with_router_queue_limits(limits(1, 4096)),
-      init: app_test_helper.accepting_init,
+      init: fn(info) {
+        case info.socket_id {
+          "rejected" -> process.send(senders, info.self)
+          _ -> Nil
+        }
+        app_test_helper.accepting_init(info)
+      },
       update: fn(model, input) {
         case input {
           socket.Join("room:reject", _, ref) -> {
@@ -35,7 +47,7 @@ pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil
             process.receive_forever(release)
             socket.Next(model, [
               socket.AcceptJoin(ref, option.None),
-              socket.Push("room:reject", "unexpected", json.null()),
+              socket.Push("room:existing", "unexpected", json.null()),
             ])
           }
           _ -> app_test_helper.accepting_update(model, input)
@@ -70,6 +82,17 @@ pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil
       seed: socket.empty_seed(),
       close: fn() { process.send(closed, Nil) },
     )
+  let assert Ok(sender) = process.receive(senders, 1000)
+  helper.join(sockets, "rejected", "room:existing", "existing", "first")
+  let _ = helper.recv(frames)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = snapshot.queue(sockets)
+      queue.items == 0
+    },
+    1000,
+    5,
+  )
   helper.join(sockets, "rejected", "room:reject", "j", "r")
   let assert Ok(release) = process.receive(entered, 1000)
   test_helper.wait_until(
@@ -80,6 +103,14 @@ pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil
     1000,
     5,
   )
+  case disconnect_first {
+    False -> Nil
+    True -> {
+      transport.socket_disconnected(sockets, "rejected")
+      snapshot.get(sockets) |> should.be_ok
+      socket.notify(sender, Nil) |> should.equal(Error(overload.Closed))
+    }
+  }
   with_suspended(owner, fn() {
     beryl.broadcast(sockets, "room:a", "queued", json.null())
     |> should.equal(Ok(Nil))
@@ -97,6 +128,7 @@ pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil
     1000,
     5,
   )
+  helper.recv(frames) |> string.contains("phx_error") |> should.be_true
   app_test_helper.recv_none(frames)
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
