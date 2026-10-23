@@ -230,7 +230,7 @@ jobs:
 
   docs:
     needs: [changes, dependencies]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Docs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
@@ -311,7 +311,7 @@ jobs:
 
   examples:
     needs: [changes, dependencies]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Examples
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
