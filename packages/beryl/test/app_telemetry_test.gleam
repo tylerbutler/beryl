@@ -14,6 +14,7 @@ import channel_dispatch_helper
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit/should
 import unitest
 
@@ -279,6 +280,118 @@ pub fn decoded_binary_route_preserves_message_kind_test() -> Nil {
   detach(handler)
   let assert Ok(Nil) = beryl.stop(sockets)
   Nil
+}
+
+pub fn invalid_decoded_events_emit_one_terminal_outcome_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let inputs = process.new_subject()
+  let sockets = app_test_helper.start_observed(telemetry_config(), inputs)
+  let frames = app_test_helper.connect(sockets, "invalid")
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join(sockets, "invalid", "room:lobby", "join", "1")
+  let _joined = app_test_helper.recv(frames)
+  let assert Join(..) = app_test_helper.next_event(inputs)
+  expect_join(handler, "accepted") |> should.be_true
+
+  let long_topic = string.repeat("x", 257)
+  route_invalid(sockets, "invalid", long_topic, "noop", False)
+  route_invalid(sockets, "invalid", "room:lobby", "phx_bad", False)
+  route_invalid(sockets, "invalid", long_topic, "phx_bad", True)
+  route_invalid(sockets, "invalid", "room:lobby", "phx_bad", True)
+  app_test_helper.push(sockets, "invalid", "room:lobby", "barrier", "2")
+  expect_message(handler, "text", "handled", "no_reply") |> should.be_true
+  let assert Message("room:lobby", "barrier", _, _) =
+    app_test_helper.next_event(inputs)
+  process.receive(inputs, 0) |> should.be_error
+  expect_message(handler, "text", "invalid", "not_applicable")
+  |> should.be_true
+  expect_message(handler, "text", "invalid", "not_applicable")
+  |> should.be_true
+  expect_message(handler, "binary", "invalid", "not_applicable")
+  |> should.be_true
+  expect_message(handler, "binary", "invalid", "not_applicable")
+  |> should.be_true
+  expect_none(handler) |> should.be_true
+  detach(handler)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+fn route_invalid(
+  sockets: beryl.Sockets,
+  socket_id: String,
+  topic: String,
+  event: String,
+  binary: Bool,
+) -> Nil {
+  let raw =
+    json.array(
+      [
+        json.null(),
+        json.null(),
+        json.string(topic),
+        json.string(event),
+        json.object([]),
+      ],
+      fn(value) { value },
+    )
+    |> json.to_string
+  let assert Ok(message) =
+    codec.decode_text(transport.active_codec(sockets))(raw)
+  case binary {
+    True -> transport.route_decoded_binary(sockets, socket_id, message)
+    False -> transport.route_decoded(sockets, socket_id, message)
+  }
+  |> should.be_ok
+}
+
+pub fn invalid_event_rate_limit_precedes_validation_and_disabled_is_silent_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let limited =
+    start(
+      telemetry_config() |> beryl.with_message_rate(per_second: 1, burst: 1),
+    )
+  let frames = app_test_helper.connect(limited, "limited-invalid")
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join(limited, "limited-invalid", "room:lobby", "join", "1")
+  let _joined = app_test_helper.recv(frames)
+  expect_join(handler, "accepted") |> should.be_true
+  app_test_helper.push(limited, "limited-invalid", "room:lobby", "noop", "2")
+  expect_message(handler, "text", "handled", "no_reply") |> should.be_true
+  route_invalid(limited, "limited-invalid", "room:lobby", "phx_bad", True)
+  expect_message(handler, "binary", "rate_limited", "not_applicable")
+  |> should.be_true
+  // A join reply is an ordering barrier that does not use the message bucket.
+  app_test_helper.join(
+    limited,
+    "limited-invalid",
+    "room:barrier",
+    "join-2",
+    "3",
+  )
+  let _barrier = app_test_helper.recv(frames)
+  expect_join(handler, "accepted") |> should.be_true
+  expect_none(handler) |> should.be_true
+  detach(handler)
+  beryl.stop(limited) |> should.equal(Ok(Nil))
+
+  let handler = attach()
+  let disabled = start(beryl.config(wire.phoenix_codec()))
+  let disabled_frames = app_test_helper.connect(disabled, "disabled-invalid")
+  route_invalid(disabled, "disabled-invalid", "room:lobby", "phx_bad", False)
+  route_invalid(
+    disabled,
+    "disabled-invalid",
+    string.repeat("x", 257),
+    "phx_bad",
+    True,
+  )
+  route_heartbeat(disabled, "disabled-invalid")
+  let _barrier = app_test_helper.recv(disabled_frames)
+  expect_none(handler) |> should.be_true
+  detach(handler)
+  beryl.stop(disabled) |> should.equal(Ok(Nil))
 }
 
 fn raw_binary_codec() -> codec.Codec {
