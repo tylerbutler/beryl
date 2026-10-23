@@ -2947,16 +2947,15 @@ fn handle_route_text(
   case codec.decode_text(active_codec)(raw_text) {
     Error(error) -> {
       state.logger
-      |> log.warn(
-        "Failed to decode wire protocol message",
+      |> log.debug_lazy("Failed to decode wire protocol message", fn() {
         list.append(
           [
             #("socket_id", socket_id),
-            #("error", codec.format_decode_error(error)),
+            #("error", log.field(codec.format_decode_error(error))),
           ],
           internal.preview_metadata("frame_preview", raw_text, logging),
-        ),
-      )
+        )
+      })
       state
     }
     Ok(message) ->
@@ -3004,9 +3003,9 @@ fn dispatch_inbound(
       case is_valid_topic(message_topic, state.config) {
         False -> {
           state.logger
-          |> log.warn("Leave dropped: invalid topic", [
+          |> log.debug("Leave dropped: invalid topic", [
             #("socket_id", socket_id),
-            #("topic", topic.sanitize_for_log(message_topic)),
+            #("topic", message_topic),
           ])
           state
         }
@@ -3046,8 +3045,8 @@ fn dispatch_inbound(
         socket_id,
         fn() {
           [
-            #("topic", topic.sanitize_for_log(message_topic)),
-            #("event", topic.sanitize_for_log(event_name)),
+            #("topic", message_topic),
+            #("event", event_name),
           ]
         },
         started_at,
@@ -3072,19 +3071,19 @@ fn dispatch_inbound(
           )
         False, True | False, False -> {
           state.logger
-          |> log.warn("Event dropped: invalid topic", [
+          |> log.debug("Event dropped: invalid topic", [
             #("socket_id", socket_id),
-            #("topic", topic.sanitize_for_log(message_topic)),
-            #("event", topic.sanitize_for_log(event_name)),
+            #("topic", message_topic),
+            #("event", event_name),
           ])
           state
         }
         True, False -> {
           state.logger
-          |> log.warn("Event dropped: invalid event", [
+          |> log.debug("Event dropped: invalid event", [
             #("socket_id", socket_id),
             #("topic", message_topic),
-            #("event", topic.sanitize_for_log(event_name)),
+            #("event", event_name),
           ])
           state
         }
@@ -3134,10 +3133,9 @@ fn with_message_rate_limit(
   case allowed {
     False -> {
       state.logger
-      |> log.debug("Message rate limited", [
-        #("socket_id", socket_id),
-        ..metadata()
-      ])
+      |> log.rejection("Message rate limited", fn() {
+        [#("socket_id", socket_id), ..metadata()]
+      })
       emit_message_stop(
         state,
         started_at,
@@ -3157,12 +3155,13 @@ fn reject_invalid_join(
   message: codec.Inbound,
   started_at: Int,
 ) -> State(model, message) {
-  let safe_topic = topic.sanitize_for_log(codec.inbound_topic(message))
   state.logger
-  |> log.warn("Join rejected: invalid topic", [
-    #("socket_id", socket_id),
-    #("topic", safe_topic),
-  ])
+  |> log.rejection("Join rejected: invalid topic", fn() {
+    [
+      #("socket_id", socket_id),
+      #("topic", codec.inbound_topic(message)),
+    ]
+  })
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
       emit_join_stop(state, started_at, telemetry.JoinSocketMissing)
@@ -3177,7 +3176,8 @@ fn reject_invalid_join(
           codec.StatusError,
           error_reason("invalid_topic"),
         )
-      let _send_result = send_frame_logged(state, socket, safe_topic, reply)
+      let _send_result =
+        send_frame_logged(state, socket, codec.inbound_topic(message), reply)
       emit_join_stop(state, started_at, telemetry.JoinInvalidTopic)
       state
     }
@@ -3199,10 +3199,12 @@ fn handle_join(
   case join_allowed {
     False -> {
       state.logger
-      |> log.warn("Join rate limited", [
-        #("socket_id", socket_id),
-        #("topic", topic_name),
-      ])
+      |> log.rejection("Join rate limited", fn() {
+        [
+          #("socket_id", socket_id),
+          #("topic", topic_name),
+        ]
+      })
       send_error_reply(
         state,
         socket_id,
@@ -3239,11 +3241,13 @@ fn handle_join_inner(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
       state.logger
-      |> log.debug("Join ignored", [
-        #("socket_id", socket_id),
-        #("topic", topic_name),
-        #("reason", "socket_not_found"),
-      ])
+      |> log.rejection("Join ignored", fn() {
+        [
+          #("socket_id", socket_id),
+          #("topic", topic_name),
+          #("reason", "socket_not_found"),
+        ]
+      })
       emit_join_stop(state, started_at, telemetry.JoinSocketMissing)
       state
     }
@@ -3269,7 +3273,14 @@ fn handle_join_inner(
         )
       let state = discard_finished_join_timing(state, socket_id, topic_name)
       case limited {
-        True -> emit_join_stop(state, started_at, telemetry.JoinTopicLimit)
+        True -> {
+          state.logger
+          |> log.debug("Join rejected: topic cap exceeded", [
+            #("socket_id", socket_id),
+            #("topic", topic_name),
+          ])
+          emit_join_stop(state, started_at, telemetry.JoinTopicLimit)
+        }
         False -> Nil
       }
       run(
@@ -3314,6 +3325,22 @@ fn handle_leave(
   message_join_ref: Option(String),
   ref: Option(String),
 ) -> State(model, message) {
+  case dict.get(state.sockets, socket_id) {
+    Ok(socket) -> {
+      case is_stale_join_ref(socket, topic_name, message_join_ref) {
+        True ->
+          state.logger
+          |> log.rejection("Leave dropped: stale join_ref", fn() {
+            [
+              #("socket_id", socket_id),
+              #("topic", topic_name),
+            ]
+          })
+        False -> Nil
+      }
+    }
+    Error(Nil) -> Nil
+  }
   let #(state, actions) =
     advance_protocol(
       state,
@@ -3349,12 +3376,14 @@ fn handle_in_subscribed(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> {
       state.logger
-      |> log.debug("Inbound message ignored", [
-        #("socket_id", socket_id),
-        #("topic", topic_name),
-        #("event", event_name),
-        #("reason", "socket_not_found"),
-      ])
+      |> log.rejection("Inbound message ignored", fn() {
+        [
+          #("socket_id", socket_id),
+          #("topic", topic_name),
+          #("event", event_name),
+          #("reason", "socket_not_found"),
+        ]
+      })
       emit_message_stop(
         state,
         started_at,
@@ -3425,12 +3454,14 @@ fn reject_unjoined_event(
   kind: telemetry.MessageKind,
 ) -> State(model, message) {
   state.logger
-  |> log.debug("Inbound message rejected", [
-    #("socket_id", socket_id),
-    #("topic", topic_name),
-    #("event", event_name),
-    #("reason", "topic_not_joined"),
-  ])
+  |> log.rejection("Inbound message rejected", fn() {
+    [
+      #("socket_id", socket_id),
+      #("topic", topic_name),
+      #("event", event_name),
+      #("reason", "topic_not_joined"),
+    ]
+  })
   let #(state, actions) =
     advance_protocol(
       state,
@@ -3468,10 +3499,12 @@ fn handle_in_rate_limited(
   case allowed {
     False -> {
       state.logger
-      |> log.warn("Channel rate limited", [
-        #("socket_id", socket_id),
-        #("topic", topic_name),
-      ])
+      |> log.rejection("Channel rate limited", fn() {
+        [
+          #("socket_id", socket_id),
+          #("topic", topic_name),
+        ]
+      })
       emit_message_stop(
         state,
         started_at,
@@ -3526,6 +3559,29 @@ fn route_inbound_message(
         ref,
       )),
     )
+  case actions {
+    [protocol.Send(protocol.ReplyMessage(_, _, _, protocol.StatusError, _)), ..] -> {
+      state.logger
+      |> log.rejection(
+        "Inbound message rejected: reply ref already outstanding",
+        fn() {
+          [
+            #("socket_id", socket_id),
+            #("topic", topic_name),
+            #("event", event_name),
+          ]
+        },
+      )
+      emit_message_stop(
+        state,
+        started_at,
+        kind,
+        telemetry.MessageInvalid,
+        telemetry.NotApplicable,
+      )
+    }
+    _ -> Nil
+  }
   run(state, socket_id, protocol_steps(actions, started_at, kind))
 }
 
@@ -3585,10 +3641,15 @@ fn handle_binary_in(
       case decode_binary(data) {
         Error(error) -> {
           state.logger
-          |> log.warn("Failed to decode binary wire protocol message", [
-            #("socket_id", socket_id),
-            #("error", codec.format_decode_error(error)),
-          ])
+          |> log.rejection(
+            "Failed to decode binary wire protocol message",
+            fn() {
+              [
+                #("socket_id", socket_id),
+                #("error", codec.format_decode_error(error)),
+              ]
+            },
+          )
           state
         }
         Ok(message) ->
@@ -3611,7 +3672,9 @@ fn handle_undecoded_binary_in(
   case allowed, dict.get(state.sockets, socket_id) {
     False, Ok(_) | False, Error(Nil) -> {
       state.logger
-      |> log.debug("Binary message rate limited", [#("socket_id", socket_id)])
+      |> log.rejection("Binary message rate limited", fn() {
+        [#("socket_id", socket_id)]
+      })
       emit_message_stop(
         state,
         started_at,
@@ -3623,10 +3686,12 @@ fn handle_undecoded_binary_in(
     }
     True, Error(Nil) -> {
       state.logger
-      |> log.debug("Binary message ignored", [
-        #("socket_id", socket_id),
-        #("reason", "socket_not_found"),
-      ])
+      |> log.rejection("Binary message ignored", fn() {
+        [
+          #("socket_id", socket_id),
+          #("reason", "socket_not_found"),
+        ]
+      })
       emit_message_stop(
         state,
         started_at,
@@ -6937,7 +7002,7 @@ fn stop_reason_to_string(reason: StopReason) -> String {
 fn option_to_log_string(value: Option(String)) -> String {
   value
   |> option.unwrap("")
-  |> topic.sanitize_for_log
+  |> log.field
 }
 
 fn joined_topics_metadata(

@@ -235,6 +235,13 @@ Logging configuration for beryl diagnostics.
  beryl does not change OTP Logger levels, filters, metadata, or handlers.
  The host application's logger configuration can further restrict output.
 
+ Expected client rejections and rate-limit drops use debug. Lifecycle and
+ configuration problems use warning; callback and internal failures use
+ error. Diagnostic string fields are limited to 256 UTF-8 bytes, including
+ a trailing `...` when truncated. Control characters become `?`.
+ Explicitly enabled frame previews have their own grapheme-length limit.
+ Callback crash descriptions retain their separate bounded crash format.
+
 <div class="api-entry-anchor" id="api-type-loglevel" aria-hidden="true"></div>
 
 ### `LogLevel`
