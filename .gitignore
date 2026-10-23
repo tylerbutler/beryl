@@ -25,12 +25,14 @@ Thumbs.db
 # Local settings
 .claude/settings.local.json
 .claude/worktrees
-.claude
+.claude/*
+!.claude/agents/
 /.worktrees/
 docs/architecture-deck.html
 
 # Local k6 load-test summaries
-/load/results/
+/load/results/*
+!/load/results/admission-bounds.json
 
 
 # APM dependencies

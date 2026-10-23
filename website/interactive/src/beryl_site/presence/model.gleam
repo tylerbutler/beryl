@@ -58,6 +58,7 @@ pub type Message {
   JoinSucceeded(ClientRole, protocol.JoinReply)
   JoinFailed(ClientRole, String)
   PresenceDiffReceived(protocol.PresenceDiff)
+  PresenceStateReceived(protocol.PresenceState)
   AddSecondaryRequested
   DisconnectSecondaryRequested
   TransportClosed(ClientRole, CloseReason)
@@ -178,6 +179,7 @@ fn open_primary(model: Model, topic: String) -> Command {
 /// the effect layer to execute.
 pub fn update(model: Model, message: Message) -> #(Model, List(Command)) {
   case message {
+    PresenceStateReceived(state) -> #(Model(..model, presences: state), [])
     ServiceUrlChanged(url) ->
       case accepts_settings(model.status) {
         True -> #(Model(..model, service_url: url), [])
@@ -258,9 +260,15 @@ pub fn update(model: Model, message: Message) -> #(Model, List(Command)) {
           Model(..updated, status: Incompatible),
           [CloseAll(model.topic)],
         )
-        Ok(_) | Error(_) -> #(Model(..updated, status: Failed(reason)), [
-          CloseClient(model.topic, role),
-        ])
+        Ok(_) | Error(_) ->
+          case role {
+            Primary -> #(Model(..updated, status: Failed(reason)), [
+              CloseAll(model.topic),
+            ])
+            Secondary -> #(Model(..updated, secondary_connected: False), [
+              CloseClient(model.topic, Secondary),
+            ])
+          }
       }
     }
 

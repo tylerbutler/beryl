@@ -104,6 +104,7 @@ beryl: type-safe real-time communication
 <li><a href="#api-function-with_channel_rate"><code>with_channel_rate</code></a></li>
 <li><a href="#api-function-with_channel_rate_max_keys_per_socket"><code>with_channel_rate_max_keys_per_socket</code></a></li>
 <li><a href="#api-function-with_connection_rate_per_ip"><code>with_connection_rate_per_ip</code></a></li>
+<li><a href="#api-function-with_effect_limits"><code>with_effect_limits</code></a></li>
 <li><a href="#api-function-with_frame_rate"><code>with_frame_rate</code></a></li>
 <li><a href="#api-function-with_heartbeat"><code>with_heartbeat</code></a></li>
 <li><a href="#api-function-with_join_rate"><code>with_join_rate</code></a></li>
@@ -118,8 +119,11 @@ beryl: type-safe real-time communication
 <li><a href="#api-function-with_payload_preview_bytes"><code>with_payload_preview_bytes</code></a></li>
 <li><a href="#api-function-with_presence_handle"><code>with_presence_handle</code></a></li>
 <li><a href="#api-function-with_pubsub"><code>with_pubsub</code></a></li>
+<li><a href="#api-function-with_router_queue_limits"><code>with_router_queue_limits</code></a></li>
+<li><a href="#api-function-with_socket_queue_limits"><code>with_socket_queue_limits</code></a></li>
 <li><a href="#api-function-with_telemetry"><code>with_telemetry</code></a></li>
 <li><a href="#api-function-with_topic_rate"><code>with_topic_rate</code></a></li>
+<li><a href="#api-function-with_worker_queue_limits"><code>with_worker_queue_limits</code></a></li>
   </ul>
 </section>
 </nav>
@@ -147,6 +151,7 @@ Configuration for an app-side socket runtime.
 ```gleam
 pub type ConfigError {
   HeartbeatTimeoutTooLow(minimum: Int)
+  RateLimitTooHigh(maximum: Int)
   InvalidTopicPattern(
     pattern: String,
     reason: topic.TopicError
@@ -173,6 +178,16 @@ HeartbeatTimeoutTooLow(minimum: Int)
  division). A timeout of 1 would round down to a check interval of 0 and
  disable heartbeat eviction. The wrapped `Int` is the
  smallest accepted timeout.
+
+##### `RateLimitTooHigh`
+
+```gleam
+RateLimitTooHigh(maximum: Int)
+```
+
+A configured per-second rate was above the largest value that can still
+ consume at least one token. The wrapped `Int` is the maximum accepted
+ rate.
 
 ##### `InvalidTopicPattern`
 
@@ -291,7 +306,7 @@ pub fn broadcast(
   String,
   String,
   json.Json
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Broadcast a message to all subscribers of a topic.
@@ -322,7 +337,7 @@ pub fn broadcast_from(
   String,
   String,
   json.Json
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Broadcast a message to all subscribers except one socket.
@@ -353,7 +368,7 @@ pub fn broadcast_presence_diff(
   Sockets,
   String,
   presence.Diff
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Broadcast a Phoenix-compatible `presence_diff` event for a topic.
@@ -367,8 +382,14 @@ Broadcast a Phoenix-compatible `presence_diff` event for a topic.
  }
  ```
 
- When the system was started with PubSub, the broadcast is distributed
- using the same semantics as `broadcast`.
+ Honors `presence.diff_scope`: application-mutation and explicitly constructed
+ `Cluster` diffs use the same distributed semantics as `broadcast`.
+ `LocalNode` diffs from replication, failure detection, and recovery reach
+ only local socket subscribers, including other local runtimes in the same
+ PubSub scope. They must not change healthy clients on another node.
+
+ Pass the original diff from `presence.with_on_diff`. Encoding or rebuilding
+ the diff before an unconditional `broadcast` loses this routing metadata.
 
 <div class="api-entry-anchor" id="api-function-child_spec" aria-hidden="true"></div>
 
@@ -392,8 +413,7 @@ Build the app-side dispatch supervision child specification.
  The returned `Sockets` handle is name-backed and usable immediately, even
  before the supervision tree that owns the returned child specification is
  started. Before startup, during a runtime restart window, and after
- shutdown, fire-and-forget handle operations are no-ops and connection
- admission fails cleanly rather than panicking.
+ shutdown, sends return admission errors and connection admission fails.
 
  #### Example
 
@@ -457,8 +477,8 @@ Stop a beryl system.
 
  You can call `stop` more than once or use a handle whose system never
  started. In these cases, it returns `Error(NotRunning)` and does not crash.
- It returns `Error(StopTimeout)` if the app runtime does not
- acknowledge the stop within the shutdown window. After a successful stop
+ It returns `Error(StopTimeout)` if the runtime does not drain or the
+ subtree does not terminate within the shutdown window. After a successful stop
  the handle should no longer be used.
 
 <div class="api-entry-anchor" id="api-function-validate_config" aria-hidden="true"></div>
@@ -471,8 +491,9 @@ pub fn validate_config(Config) -> Result(Nil, ConfigError)
 
 Validate a [`Config`](#config) without starting any process.
 
- This checks that `heartbeat_timeout_ms` is at least 2 and that every
- per-topic rate-limit pattern is valid.
+ This checks that `heartbeat_timeout_ms` is at least 2, that every
+ configured rate limit is representable, and that every per-topic
+ rate-limit pattern is valid.
 
 <div class="api-entry-anchor" id="api-function-with_channel_rate" aria-hidden="true"></div>
 
@@ -533,6 +554,19 @@ Configure a per-IP connection-attempt rate limit.
 
  This uses the same peer IP and trusted-proxy caveats as
  `with_max_connections_per_ip`.
+
+<div class="api-entry-anchor" id="api-function-with_effect_limits" aria-hidden="true"></div>
+
+### `with_effect_limits`
+
+```gleam
+pub fn with_effect_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound each callback's effect count and inspectable result bytes.
 
 <div class="api-entry-anchor" id="api-function-with_frame_rate" aria-hidden="true"></div>
 
@@ -609,35 +643,38 @@ pub fn with_max_connections(
 ) -> Config
 ```
 
-Configure the maximum number of concurrent connections allowed across the
- whole node, regardless of source IP.
+Configure the maximum number of concurrent connections for this beryl
+ system on one BEAM node, regardless of source IP.
 
  A value of 0, the default, means unlimited. When a limit is set, a
- transport admits a connection only while the node is below the limit. It
- rejects other connections before it allocates long-lived per-socket state.
- The transport frees the slot when the connection closes, its process dies,
- or its handshake or setup fails. The limiter actor performs the check and
- increment atomically. Concurrent opens cannot materially exceed the
+ transport admits a connection only while this system is below the limit.
+ It rejects other connections before it allocates long-lived per-socket
+ state. The transport frees the slot when the connection closes, its process
+ dies, or its handshake or setup fails. The limiter actor performs the check
+ and increment atomically. Concurrent opens cannot materially exceed the
  ceiling.
+
+ Each independently constructed `Sockets` system owns a separate limiter.
+ Two systems on the same node therefore each have their own configured
+ capacity; this is not one shared ceiling for every beryl system on the node.
 
  #### Composition with per-IP limits
 
- This node-wide ceiling works with `with_max_connections_per_ip`. When both
+ This per-system ceiling works with `with_max_connections_per_ip`. When both
  are set, a connection must be under *both* limits. The per-IP limit
- throttles any single abusive peer, while this global ceiling
- bounds the node's total resource use so that many distinct source addresses
- (for example, a botnet or IPv6 address rotation) cannot exhaust the node's
- process, socket, and runtime budget. A per-IP limit alone cannot stop this
- case.
+ throttles any single abusive peer, while this total ceiling bounds the
+ system's resource use so that many distinct source addresses (for example,
+ a botnet or IPv6 address rotation) cannot exhaust its process, socket, and
+ runtime budget. A per-IP limit alone cannot stop this case.
 
  #### Composition with external load balancers
 
- This ceiling is enforced per BEAM node. If you run several nodes behind a
- load balancer, each node enforces its own limit independently, so the
- cluster's effective ceiling is roughly `max_connections × node_count`
- (subject to how the balancer distributes connections). Size the per-node
- value against a single node's capacity. Use the load balancer's
- global connection/rate controls when you need a cluster-wide cap.
+ Each beryl system enforces this ceiling independently on its BEAM node. With
+ one system per node, a load-balanced cluster's effective ceiling is roughly
+ `max_connections × node_count` (subject to how the balancer distributes
+ connections). Multiple systems on one node contribute separate allowances.
+ Size their combined limits against that node's capacity. Use the load
+ balancer's global connection/rate controls when you need a cluster-wide cap.
 
 <div class="api-entry-anchor" id="api-function-with_max_connections_per_ip" aria-hidden="true"></div>
 
@@ -799,7 +836,8 @@ pub fn with_presence_handle(
 ) -> Config
 ```
 
-Attach the presence actor used by socket presence effects.
+Attach the presence actor used by socket presence effects and
+ `channel.on_presence` callbacks.
 
 <div class="api-entry-anchor" id="api-function-with_pubsub" aria-hidden="true"></div>
 
@@ -813,6 +851,38 @@ pub fn with_pubsub(
 ```
 
 Add PubSub to a configuration for distributed broadcasts.
+
+ Runtime topic memberships reconcile asynchronously. A `pg` restart does
+ not block local routing; distributed delivery remains best-effort during
+ recovery. Reconciliation uses the latest active topics, not a backlog of
+ join and leave operations. Registry loss invalidates this handle: start
+ PubSub again and rebuild the beryl system with the replacement handle.
+
+<div class="api-entry-anchor" id="api-function-with_router_queue_limits" aria-hidden="true"></div>
+
+### `with_router_queue_limits`
+
+```gleam
+pub fn with_router_queue_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound outstanding local router requests.
+
+<div class="api-entry-anchor" id="api-function-with_socket_queue_limits" aria-hidden="true"></div>
+
+### `with_socket_queue_limits`
+
+```gleam
+pub fn with_socket_queue_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound outstanding socket work, including presence-suspended continuations.
 
 <div class="api-entry-anchor" id="api-function-with_telemetry" aria-hidden="true"></div>
 
@@ -847,3 +917,16 @@ Configure a per-topic-pattern message rate limit for an app-dispatch
  only after a socket has joined the topic. A non-positive `per_second`
  explicitly disables limiting for matching topics, including any global
  channel limit, and allocates no bucket.
+
+<div class="api-entry-anchor" id="api-function-with_worker_queue_limits" aria-hidden="true"></div>
+
+### `with_worker_queue_limits`
+
+```gleam
+pub fn with_worker_queue_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound outstanding input for each topic-worker incarnation.

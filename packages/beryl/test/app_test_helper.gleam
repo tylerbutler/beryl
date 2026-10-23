@@ -121,6 +121,7 @@ pub fn route(channels: beryl.Sockets, socket_id: String, raw: String) -> Nil {
   let assert Ok(message) =
     codec.decode_text(transport.active_codec(channels))(raw)
   transport.route_decoded(channels, socket_id, message)
+  |> should.equal(Ok(Nil))
 }
 
 /// Send a `phx_join` for a topic with the given join_ref/ref.

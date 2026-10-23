@@ -6,6 +6,16 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleeunit/should
 
+pub fn secondary_join_failure_preserves_primary_session_test() {
+  let current =
+    model.Model(..model.initial(), status: model.Connected, topic: "topic")
+  let #(updated, commands) =
+    model.update(current, model.JoinFailed(model.Secondary, "join_timeout"))
+  updated.status |> should.equal(model.Connected)
+  updated.secondary_connected |> should.be_false
+  commands |> should.equal([model.CloseClient("topic", model.Secondary)])
+}
+
 pub fn connect_requests_a_fresh_scenario_test() {
   let #(updated, commands) =
     model.update(model.initial(), model.ConnectRequested)

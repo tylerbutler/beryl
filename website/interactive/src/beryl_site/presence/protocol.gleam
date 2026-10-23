@@ -59,6 +59,12 @@ fn state_decoder() -> decode.Decoder(PresenceState) {
   })
 }
 
+/// Decode a Phoenix Presence state after its buffered diffs have been applied.
+pub fn decode_state(encoded: String) -> Result(PresenceState, String) {
+  json.parse(encoded, state_decoder())
+  |> result.replace_error("invalid_presence_state")
+}
+
 /// Decodes a join reply JSON string from the Phoenix channel.
 pub fn decode_join(encoded: String) -> Result(JoinReply, String) {
   let decoder = {

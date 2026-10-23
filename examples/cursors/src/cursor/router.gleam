@@ -1,12 +1,19 @@
 import beryl
+import example_helper/session_presence
 import example_helper/static
 import gleam/bytes_tree
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/json
 import mist.{type Connection, type ResponseData}
 
 pub type Context {
-  Context(channels: beryl.Sockets, base_path: String, static_directory: String)
+  Context(
+    channels: beryl.Sockets,
+    presence: session_presence.Tracker,
+    base_path: String,
+    static_directory: String,
+  )
 }
 
 pub fn handle_request(
@@ -24,10 +31,18 @@ pub fn handle_request(
 
       case static.match_prefix(http_request, context.base_path) {
         Ok([]) -> index_page(context)
+        Ok(["api", "users"]) -> user_count(context)
         Error(_) | Ok(_) -> static.not_found()
       }
     }
   }
+}
+
+fn user_count(context: Context) -> Response(ResponseData) {
+  session_presence.count(context.presence, "cursor:lobby")
+  |> json.int
+  |> json.to_string
+  |> static.json_response
 }
 
 fn healthz() -> Response(ResponseData) {

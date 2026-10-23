@@ -91,6 +91,27 @@ fn lobby() -> channel.Handler {
   channel.handler("lobby", fn(_context) { channel.accept(Nil) })
 }
 
+/// Runtime configuration shared by the deployed showcase and its tests.
+pub fn runtime_config(demo_presence: presence.Presence) -> beryl.Config {
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_max_connections(max_connections: 200)
+  |> beryl.with_max_connections_per_ip(max_connections: 8)
+  |> beryl.with_max_inbound_frame_bytes(max_bytes: 16 * 1024)
+  |> beryl.with_max_joined_topics_per_socket(max_topics: 8)
+  |> beryl.with_frame_rate(per_second: 35, burst: 70)
+  |> beryl.with_message_rate(per_second: 30, burst: 60)
+  |> beryl.with_join_rate(per_second: 5, burst: 10)
+  |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
+  |> beryl.with_topic_rate(pattern: "room:*", per_second: 10, burst: 20)
+  |> beryl.with_topic_rate(pattern: "document:*:*", per_second: 10, burst: 20)
+  |> beryl.with_topic_rate(
+    pattern: "demo:presence:*",
+    per_second: 10,
+    burst: 20,
+  )
+  |> beryl.with_presence_handle(presence: demo_presence)
+}
+
 pub fn main() -> Nil {
   let assert Ok(cursor_static_directory) = static.priv_static("cursor")
   let assert Ok(chatroom_static_directory) = static.priv_static("chatroom")
@@ -114,29 +135,16 @@ pub fn main() -> Nil {
 
   // The documentation site's presence lab: beryl's presence actor plus the
   // absolute scenario expiry from website/demo_server, on this same socket.
-  let assert Ok(demo_presence) =
-    presence.start(presence.default_config("showcase@node"))
-  let assert Ok(demo_expiry) =
-    expiry.start(demo_config.default().session_ttl_ms)
+  let #(demo_presence, demo_presence_spec) =
+    presence.child_spec(presence.default_config("showcase@node"))
+  let #(demo_expiry, demo_expiry_spec) =
+    expiry.child_spec(demo_config.default().session_ttl_ms)
 
   // Per-topic-pattern rate limits replace the old single global
   // channel-rate compromise: cursors stream fast, chat and docs do not.
   // The frame budget sits modestly above the decoded-message budget to
   // account for joins and malformed frames.
-  let config =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_frame_rate(per_second: 35, burst: 70)
-    |> beryl.with_message_rate(per_second: 30, burst: 60)
-    |> beryl.with_join_rate(per_second: 5, burst: 10)
-    |> beryl.with_topic_rate(pattern: "cursor:*", per_second: 30, burst: 60)
-    |> beryl.with_topic_rate(pattern: "room:*", per_second: 10, burst: 20)
-    |> beryl.with_topic_rate(pattern: "document:*:*", per_second: 10, burst: 20)
-    |> beryl.with_topic_rate(
-      pattern: "demo:presence:*",
-      per_second: 10,
-      burst: 20,
-    )
-    |> beryl.with_presence_handle(presence: demo_presence)
+  let config = runtime_config(demo_presence)
 
   let dependencies =
     Dependencies(
@@ -157,7 +165,13 @@ pub fn main() -> Nil {
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(groups_specification)
-    |> static_supervisor.add(beryl_specification)
+    |> static_supervisor.add(
+      static_supervisor.new(static_supervisor.OneForAll)
+      |> static_supervisor.add(demo_presence_spec)
+      |> static_supervisor.add(demo_expiry_spec)
+      |> static_supervisor.add(beryl_specification)
+      |> static_supervisor.supervised,
+    )
     |> static_supervisor.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
@@ -168,6 +182,7 @@ pub fn main() -> Nil {
   let cursor_context =
     cursor_router.Context(
       channels:,
+      presence: presence_tracker,
       base_path: "/cursors",
       static_directory: cursor_static_directory,
     )

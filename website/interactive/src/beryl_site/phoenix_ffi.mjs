@@ -1,4 +1,4 @@
-import { Socket } from "phoenix";
+import { Presence, Socket } from "phoenix";
 
 const clients = new Map();
 
@@ -34,6 +34,7 @@ export function connect(
   onJoin,
   onJoinError,
   onPresenceDiff,
+  onPresenceState,
   onClose,
 ) {
   disconnect(topic, role);
@@ -65,8 +66,14 @@ export function connect(
     color: role === "primary" ? "emerald" : "magenta",
   });
   client = { socket, channel, manual: false, exhausted: false, offlineFired: false };
+  const presence = new Presence(channel);
+  const active = () => !client.manual && clients.get(topic)?.get(role) === client;
+  presence.onSync(() => {
+    if (active()) onPresenceState(JSON.stringify(presence.state));
+  });
 
   socket.onOpen(() => {
+    if (!active()) return;
     client.offlineFired = false;
     onOpen();
   });
@@ -102,7 +109,7 @@ export function connect(
   };
 
   channel.on("presence_diff", (payload) => {
-    onPresenceDiff(JSON.stringify(payload));
+    if (active()) onPresenceDiff(JSON.stringify(payload));
   });
   channel.onClose(() => {
     if (!client.manual && !client.offlineFired) onClose("session_expired");
@@ -112,9 +119,18 @@ export function connect(
   socket.connect();
   channel
     .join()
-    .receive("ok", (payload) => onJoin(JSON.stringify(payload)))
-    .receive("error", (payload) => onJoinError(JSON.stringify(payload)))
-    .receive("timeout", () => onJoinError("join_timeout"));
+    .receive("ok", (payload) => {
+      if (!active()) return;
+      onJoin(JSON.stringify(payload));
+      // A round trip after the reply orders this snapshot behind router indexing.
+      channel.push("sync_presence", {});
+    })
+    .receive("error", (payload) => {
+      if (active()) onJoinError(JSON.stringify(payload));
+    })
+    .receive("timeout", () => {
+      if (active()) onJoinError("join_timeout");
+    });
 }
 
 export function disconnect(topic, role) {

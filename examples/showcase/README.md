@@ -1,12 +1,12 @@
 # beryl examples showcase
 
 A single Gleam app that bundles the three example demos behind a landing
-page so they can be deployed together as one Railway service:
+page so they can be deployed together as one Fly.io or Railway service:
 
 - `/`         — landing page with links to each demo
 - `/cursors`  — collaborative cursors
 - `/chat`     — chat rooms
-- `/docs`     — collaborative CRDT docs
+- `/docs`     — collaborative CRDT docs (HTTP route currently disabled)
 - `/healthz`  — health check
 - `/socket/websocket` — shared WebSocket endpoint (one `beryl.Sockets` app
   with a `beryl/channel` handler per topic namespace: `cursor:*`,
@@ -84,3 +84,86 @@ Point the Railway service at this repo with:
 
 `railway.toml` selects `examples/showcase/Dockerfile` and a `/healthz`
 health check.
+
+## Deploy to Fly.io
+
+[`fly.toml`](./fly.toml) uses the same Dockerfile, one shared CPU, and 512 MB
+of RAM in Ashburn, Virginia (`iad`). Fly terminates HTTPS and forwards HTTP
+and WebSocket traffic to port 8000. The health check uses `/healthz`.
+
+Run every command below from the **repository root**, not `examples/showcase`.
+The Docker build needs the local packages and sibling examples.
+The build file paths in `fly.toml` are relative to that config file; the build
+context remains the repository root.
+
+1. Install the [Fly CLI](https://fly.io/docs/flyctl/install/) if needed, then
+   sign in:
+
+   ```sh
+   fly auth login
+   ```
+
+2. Choose a globally unique app name. Replace `beryl-showcase-yourname` below,
+   then create the app without deploying it:
+
+   ```sh
+   APP_NAME=beryl-showcase-yourname
+   fly launch --config examples/showcase/fly.toml --copy-config \
+     --name "$APP_NAME" --no-deploy --ha=false
+   ```
+
+   Select your organization. If prompted to review settings, keep the region
+   and Machine size from the config. Do not add a database or other services;
+   the demos do not need them. Launch updates the config's app name. The
+   first deployment allocates the app's public addresses.
+
+3. Start Docker locally, validate the config, and deploy:
+
+   ```sh
+   fly config validate --config examples/showcase/fly.toml --strict
+   fly deploy --config examples/showcase/fly.toml --local-only --ha=false
+   ```
+
+   Keep `--ha=false` on later deployments too. It prevents Fly from creating
+   a spare Machine. This showcase keeps its state in one BEAM instance and
+   does not configure clustering; keep it on one Machine.
+   `--local-only` builds with your local Docker daemon instead of a remote
+   builder.
+
+4. Check the deployment:
+
+   ```sh
+   fly status --config examples/showcase/fly.toml
+   curl --fail "https://${APP_NAME}.fly.dev/healthz"
+   ```
+
+   The health endpoint returns `ok`. Open `https://YOUR_APP_NAME.fly.dev/`
+   and try `/cursors` and `/chat` in two browser tabs. Cursor movement and
+   chat messages should appear in both tabs. The `/docs` HTTP route is
+   currently disabled in the showcase router.
+
+For startup failures, inspect the logs:
+
+```sh
+fly logs --config examples/showcase/fly.toml --no-tail
+```
+
+### Idle shutdown and cost
+
+The Machine stops after an idle period and starts when a new request arrives.
+Open WebSocket connections can keep it running, even if nobody is interacting
+with the page. The first request after a stop can take longer.
+
+Demo state is held in memory and resets when the Machine stops, restarts, or
+is redeployed. No database or volume is provisioned. To keep one Machine
+running between visits, set `min_machines_running = 1` and deploy again.
+
+Fly charges for running CPU and RAM, outbound traffic, and other billable
+resources. A stopped Machine still incurs root filesystem storage charges;
+idle shutdown does not make hosting free. See the current
+[Fly pricing](https://fly.io/docs/about/pricing/) before comparing it with
+your Railway bill.
+
+Keep Railway running until the Fly health check and two-tab demos work.
+After switching any links or custom domain to Fly, remove the old Railway
+service if you no longer need it, so it does not keep billing.

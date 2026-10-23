@@ -18,8 +18,9 @@ git clone https://github.com/tylerbutler/beryl.git
 cd beryl
 ```
 
-<Aside type="note" title="Pre-1.0">
-beryl is not yet version 1.0. Minor releases can change the API, and the library is not ready for production. Report problems to help define version 1.0.
+<Aside type="note" title="Stability">
+beryl is pre-1.0. Minor releases can change the API. See the
+[stability policy](/reference/#versioning-before-10) before you adopt it.
 </Aside>
 
 ## Live presence lab
@@ -33,8 +34,8 @@ Phoenix-compatible presence state and diffs that beryl emits.
 
 **Source**: [`examples/showcase`](https://github.com/tylerbutler/beryl/tree/main/examples/showcase)
 
-This example uses one socket runtime and three topic families. The
-`beryl/channel` API combines cursor, chat room, and shared document handlers in
+This example uses one socket runtime and four topic families. The
+`beryl/channel` API combines cursor, chat room, shared document, and presence-lab handlers in
 one supervised socket system. It does not need a socket-wide model or a custom
 router.
 
@@ -48,7 +49,7 @@ gleam run
 
 | beryl feature | How it's used |
 |---|---|
-| **Channel composition** | One `channel.child_spec` handler table owns `cursor:*`, `room:*`, and the `document:` prefix |
+| **Channel composition** | One `channel.child_spec` handler table owns `cursor:*`, `room:*`, the `document:` prefix, and `demo:presence:*` |
 | **Per-channel state** | Each joined topic keeps its own private state; the layer prunes it on close |
 | **Join and close actions** | Join and termination callbacks return actions that beryl runs in list order |
 | **Per-pattern rate limits** | `with_topic_rate` gives cursor traffic a higher limit than chat and document traffic |
@@ -62,7 +63,7 @@ Browser (Phoenix JS clients across /cursors, /chat, /docs)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
   ├── Mist HTTP — serves the landing page and each example UI
-  ├── beryl/channel — handler table owning cursor:*, room:*, document:
+  ├── beryl/channel — handlers for cursor:*, room:*, document:, demo:presence:*
   ├── per-channel state — private to each joined topic
   ├── session presence — shared across cursors and chat
   └── groups + doc store — example-specific state

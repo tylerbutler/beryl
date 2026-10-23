@@ -10,54 +10,169 @@ on:
 env:
   HEXPM_READ_API_KEY: ${{ secrets.HEXPM_API_KEY }}
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    name: Detect changed paths
+    outputs:
+      source: ${{ steps.filter.outputs.source }}
+      docs: ${{ steps.filter.outputs.docs }}
+      examples: ${{ steps.filter.outputs.examples }}
+      load: ${{ steps.filter.outputs.load }}
+      relevant: >-
+        ${{
+          steps.filter.outputs.source == 'true' ||
+          steps.filter.outputs.docs == 'true' ||
+          steps.filter.outputs.examples == 'true' ||
+          steps.filter.outputs.load == 'true'
+        }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # ratchet:dorny/paths-filter@v4
+        with:
+          filters: |
+            source:
+              - 'packages/**'
+              - '**/gleam.toml'
+              - '**/manifest.toml'
+              - '.mise.toml'
+              - 'justfile'
+              - 'scripts/prepare-gleam-deps*.mjs'
+              - 'scripts/check-ffi-*.sh'
+            docs:
+              - '.github/workflows/ci.yml'
+              - 'packages/**'
+              - 'website/**'
+              - '**/gleam.toml'
+              - '**/manifest.toml'
+              - '.mise.toml'
+              - 'justfile'
+              - 'scripts/prepare-gleam-deps*.mjs'
+            examples:
+              - '.github/workflows/ci.yml'
+              - 'examples/**'
+              - 'packages/**'
+              - '**/gleam.toml'
+              - '**/manifest.toml'
+              - '.mise.toml'
+              - 'justfile'
+              - 'scripts/prepare-gleam-deps*.mjs'
+            load:
+              - 'load/**'
+              - 'examples/load_test/**'
+              - 'packages/**'
+              - '**/gleam.toml'
+              - '**/manifest.toml'
+              - '.mise.toml'
+              - 'justfile'
+              - 'scripts/prepare-gleam-deps*.mjs'
+
   dependencies:
+    needs: changes
     runs-on: ubuntu-latest
     name: Dependencies
     outputs:
       cache-key: ${{ steps.cache.outputs.cache-primary-key }}
+      prepared-cache-key: ${{ steps.prepared-cache-key.outputs.key }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
+        if: needs.changes.outputs.relevant == 'true'
 
       - name: Setup environment
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        if: needs.changes.outputs.relevant == 'true'
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          erlang-version: "28"
           run-deps: false
+          cache: false
 
       - name: Setup mise tools
+        if: needs.changes.outputs.relevant == 'true'
         uses: ./.github/actions/mise
+
+      - name: Setup Node.js
+        if: needs.changes.outputs.relevant == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # ratchet:actions/setup-node@v7
+        with:
+          node-version: 22
 
       # Cache source dependencies and resolution fingerprints, not compiled
       # output, so both Erlang versions can use the same cache.
       - name: Restore Gleam dependencies
+        if: needs.changes.outputs.relevant == 'true'
         id: cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/restore@v6
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: gleam-deps-${{ runner.os }}-${{ hashFiles('.tool-versions', '.mise.toml', '**/gleam.toml', '**/manifest.toml') }}
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
+          key: gleam-deps-v2-${{ runner.os }}-${{ hashFiles('.mise.toml', '**/gleam.toml', '**/manifest.toml', 'scripts/prepare-gleam-deps.mjs', 'website/scripts/check-snippets.mjs', '!**/build/**', '!**/node_modules/**') }}
           restore-keys: |
-            gleam-deps-${{ runner.os }}-
+            gleam-deps-v2-${{ runner.os }}-
 
       - name: Install Gleam dependencies
+        if: needs.changes.outputs.relevant == 'true'
         run: just deps-gleam
 
+      - name: Test dependency preparation
+        if: needs.changes.outputs.relevant == 'true'
+        run: just deps-test
+
       - name: Save Gleam dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/save@v4
+        if: >-
+          ${{
+            needs.changes.outputs.relevant == 'true' &&
+            steps.cache.outputs.cache-hit != 'true'
+          }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/save@v6
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
+      - name: Set prepared dependency cache key
+        if: needs.changes.outputs.relevant == 'true'
+        id: prepared-cache-key
+        run: |
+          echo "key=${{ steps.cache.outputs.cache-primary-key }}-run-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: Save prepared Gleam dependencies for this workflow run
+        if: needs.changes.outputs.relevant == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/save@v6
+        with:
+          path: |
+            ~/.cache/gleam/hex/hexpm/packages
+            packages/*/build/packages
+            examples/*/build/packages
+            examples/*/client/build/packages
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
+          key: ${{ steps.prepared-cache-key.outputs.key }}
+
+      - name: Skip dependency setup
+        if: needs.changes.outputs.relevant != 'true'
+        run: echo "No CI-relevant paths changed."
+
   test:
-    needs: dependencies
+    needs: [changes, dependencies]
     runs-on: ubuntu-latest
     name: Test (Erlang ${{ matrix.erlang }})
     strategy:
@@ -65,173 +180,226 @@ jobs:
       matrix:
         erlang: ["27", "28"]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
+        if: needs.changes.outputs.source == 'true'
 
       - name: Setup environment
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        if: needs.changes.outputs.source == 'true'
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           # Providing erlang-version makes the action ignore version-file and
           # skip installing Gleam (gleam-version is left unset). Setup mise
-          # tools (below) installs the Gleam pinned in .tool-versions, which
+          # tools (below) installs the Gleam pinned in .mise.toml, which
           # is what actually ends up on PATH and is what we want: one Gleam
           # version, matching local dev, regardless of the Erlang matrix leg.
           erlang-version: ${{ matrix.erlang }}
           run-deps: false
+          cache: false
 
       - name: Setup mise tools
+        if: needs.changes.outputs.source == 'true'
         uses: ./.github/actions/mise
 
-      - name: Restore Gleam dependencies
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
+      - name: Restore prepared Gleam dependencies
+        if: needs.changes.outputs.source == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/restore@v6
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: ${{ needs.dependencies.outputs.cache-key }}
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
+          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
       - name: Check formatting
+        if: needs.changes.outputs.source == 'true'
         run: just format-check
 
-      - name: Type check
-        run: just check
-
-      - name: Build (warnings as errors)
-        run: just build-strict
+      - name: Build and analyze BEAM FFI
+        if: needs.changes.outputs.source == 'true'
+        run: just beam-check
 
       - name: Run tests
+        if: needs.changes.outputs.source == 'true'
         run: just test
 
+      - name: Skip source checks
+        if: needs.changes.outputs.source != 'true'
+        run: echo "No package source paths changed."
+
   docs:
-    needs: dependencies
-    runs-on: ubuntu-latest
+    needs: [changes, dependencies]
+    runs-on: ubuntu-24.04
     name: Docs
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
+        if: needs.changes.outputs.docs == 'true'
 
       - name: Setup environment
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        if: needs.changes.outputs.docs == 'true'
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          erlang-version: "28"
           run-deps: false
+          cache: false
 
       - name: Setup mise tools
+        if: needs.changes.outputs.docs == 'true'
         uses: ./.github/actions/mise
 
-      - name: Restore Gleam dependencies
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
+      - name: Restore prepared Gleam dependencies
+        if: needs.changes.outputs.docs == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/restore@v6
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: ${{ needs.dependencies.outputs.cache-key }}
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
+          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
+        if: needs.changes.outputs.docs == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # ratchet:actions/setup-node@v7
         with:
           node-version: 22
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # ratchet:pnpm/action-setup@v6
+        if: needs.changes.outputs.docs == 'true'
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # ratchet:pnpm/action-setup@v6
         with:
           package_json_file: website/package.json
 
       - name: Install website dependencies
+        if: needs.changes.outputs.docs == 'true'
         run: pnpm -C website install --frozen-lockfile
 
       - name: Install interactive client dependencies
+        if: needs.changes.outputs.docs == 'true'
         run: cd website/interactive && gleam deps download
 
       - name: Install demo server dependencies
+        if: needs.changes.outputs.docs == 'true'
         run: cd website/demo_server && gleam deps download
 
       - name: Build documentation (Gleam docs + website reference)
+        if: needs.changes.outputs.docs == 'true'
         run: just docs
 
       - name: Test reference docs generator
+        if: needs.changes.outputs.docs == 'true'
         run: just site-reference-test
 
       - name: Type-check documentation snippets
+        if: needs.changes.outputs.docs == 'true'
         run: pnpm -C website check:snippets
 
       - name: Validate reference docs are up to date
+        if: needs.changes.outputs.docs == 'true'
         run: |
           just site-reference
           git diff --exit-code -- website/src/content/docs/reference/api \
             || { echo "::error::Generated reference docs are out of date. Run 'just site-reference' and commit the result."; exit 1; }
 
       - name: Test Lustre interactive client
+        if: needs.changes.outputs.docs == 'true'
         run: just site-interactive-test
 
       - name: Test demo server
+        if: needs.changes.outputs.docs == 'true'
         run: just site-demo-test
 
-      - name: Check website
-        run: just site-check
-
-      - name: Build website
-        run: just site-build
-
-      - name: Install Playwright browser
+      - name: Install tutorial test browser
+        if: needs.changes.outputs.docs == 'true'
         run: pnpm -C website exec playwright install --with-deps chromium
 
+      - name: Check and build website and test tutorial demos
+        if: needs.changes.outputs.docs == 'true'
+        run: just site-demos-test
+
       - name: Test interactive website
+        if: needs.changes.outputs.docs == 'true'
         run: just site-e2e
 
+      - name: Skip documentation checks
+        if: needs.changes.outputs.docs != 'true'
+        run: echo "No documentation paths changed."
+
   examples:
-    needs: dependencies
-    runs-on: ubuntu-latest
+    needs: [changes, dependencies]
+    runs-on: ubuntu-24.04
     name: Examples
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
+        if: needs.changes.outputs.examples == 'true'
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
+        if: needs.changes.outputs.examples == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # ratchet:actions/setup-node@v7
         with:
           node-version: 22
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # ratchet:pnpm/action-setup@v6
+        if: needs.changes.outputs.examples == 'true'
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # ratchet:pnpm/action-setup@v6
         with:
           package_json_file: examples/package.json
 
       - name: Setup environment
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        if: needs.changes.outputs.examples == 'true'
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          erlang-version: "28"
           run-deps: false
+          cache: false
 
       - name: Setup mise tools
+        if: needs.changes.outputs.examples == 'true'
         uses: ./.github/actions/mise
 
-      - name: Restore Gleam dependencies
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
+      - name: Restore prepared Gleam dependencies
+        if: needs.changes.outputs.examples == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/restore@v6
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: ${{ needs.dependencies.outputs.cache-key }}
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
+          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
       - name: Install example dependencies
+        if: needs.changes.outputs.examples == 'true'
         run: pnpm -C examples install --frozen-lockfile
 
       - name: Install Playwright browsers
+        if: needs.changes.outputs.examples == 'true'
         run: pnpm -C examples exec playwright install --with-deps chromium
 
       - name: Build examples
+        if: needs.changes.outputs.examples == 'true'
         run: just examples-build
 
       - name: Test examples
+        if: needs.changes.outputs.examples == 'true'
+        timeout-minutes: 3
         run: just examples-test
 
+      - name: Skip example checks
+        if: needs.changes.outputs.examples != 'true'
+        run: echo "No example paths changed."
+
   load-smoke:
-    needs: dependencies
+    needs: [changes, dependencies]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     name: Protocol smoke (Erlang ${{ matrix.erlang }}, ${{ matrix.transport }})
@@ -245,45 +413,56 @@ jobs:
       SERVER_LOG: load/results/server-${{ matrix.erlang }}-${{ matrix.transport }}.log
       SUMMARY_PATH: load/results/protocol-smoke-${{ matrix.erlang }}-${{ matrix.transport }}.json
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
+        if: needs.changes.outputs.load == 'true'
 
       - name: Setup environment
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        if: needs.changes.outputs.load == 'true'
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
           # gleam-version intentionally omitted: Setup mise tools (below)
-          # installs the Gleam pinned in .tool-versions, which is what
+          # installs the Gleam pinned in .mise.toml, which is what
           # ends up on PATH. See the Test job for the full rationale.
           erlang-version: ${{ matrix.erlang }}
           run-deps: false
+          cache: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # ratchet:actions/setup-node@v6
+        if: needs.changes.outputs.load == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # ratchet:actions/setup-node@v7
         with:
           node-version: 22
 
       - name: Setup mise tools
+        if: needs.changes.outputs.load == 'true'
         uses: ./.github/actions/mise
 
-      - name: Restore Gleam dependencies
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # ratchet:actions/cache/restore@v4
+      - name: Restore prepared Gleam dependencies
+        if: needs.changes.outputs.load == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/restore@v6
         with:
           path: |
-            ~/.cache/gleam
+            ~/.cache/gleam/hex/hexpm/packages
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
-          key: ${{ needs.dependencies.outputs.cache-key }}
+            build/snippet-check/manifest.toml
+            build/snippet-check/build/packages
+          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
           fail-on-cache-miss: true
 
       - name: Validate pinned k6 workload
+        if: needs.changes.outputs.load == 'true'
         run: just load-check protocol-smoke
 
       - name: Build load-test server
+        if: needs.changes.outputs.load == 'true'
         run: trellis run build load_test
 
       # protocol-smoke contains protocol/error thresholds only: this job does
       # not enforce latency, throughput, or other hardware-dependent gates.
       - name: Start server and run protocol correctness smoke
+        if: needs.changes.outputs.load == 'true'
         shell: bash
         env:
           HTTP_TARGET_URL: http://127.0.0.1:8000/health
@@ -340,8 +519,8 @@ jobs:
             "${{ matrix.transport }}"
 
       - name: Upload smoke diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # ratchet:actions/upload-artifact@v4
+        if: needs.changes.outputs.load == 'true' && always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # ratchet:actions/upload-artifact@v7
         with:
           name: protocol-smoke-erlang-${{ matrix.erlang }}-${{ matrix.transport }}
           path: |
@@ -350,12 +529,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Skip load checks
+        if: needs.changes.outputs.load != 'true'
+        run: echo "No load-test paths changed."
+
   load-smoke-report:
     name: Protocol smoke report
     needs: load-smoke
     if: >-
       ${{
         always() &&
+        needs.changes.outputs.load == 'true' &&
         github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == github.repository
       }}
@@ -365,7 +549,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
 
       - name: Download smoke artifacts
         env:

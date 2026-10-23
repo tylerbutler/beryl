@@ -11,6 +11,7 @@ import beryl_demo/config
 import beryl_demo/expiry.{type Expiry}
 import gleam/bool
 import gleam/dynamic/decode
+import gleam/io
 import gleam/json.{type Json}
 import gleam/list
 import gleam/result
@@ -134,9 +135,29 @@ fn accept(
   expiry_actor: Expiry,
 ) -> channel.JoinResult(Nil, Info) {
   let self = context.self
-  expiry.track(expiry_actor, context.topic, context.socket_id, fn() {
-    channel.notify(self, Expire)
-  })
+  case
+    expiry.track(expiry_actor, context.topic, context.socket_id, fn() {
+      case channel.notify(self, Expire) {
+        Ok(Nil) -> Nil
+        Error(reason) ->
+          io.println(
+            "presence demo expiry notification rejected: "
+            <> string.inspect(reason),
+          )
+      }
+    })
+  {
+    Error(Nil) -> channel.reject(error_with_code(410, "scenario expired"))
+    Ok(Nil) -> accepted(context, payload, presence_actor, expiry_actor)
+  }
+}
+
+fn accepted(
+  context: channel.JoinContext(Info),
+  payload: JoinPayload,
+  presence_actor: Presence,
+  expiry_actor: Expiry,
+) -> channel.JoinResult(Nil, Info) {
   let snapshot =
     presence.list(presence_actor, context.topic)
     |> result.unwrap([])
@@ -156,9 +177,20 @@ fn accept(
   |> channel.with_reply(reply)
   |> channel.with_actions([channel.presence_track(payload.client_id, meta)])
   |> channel.on_message(fn(state, message) {
-    channel.next(state, [
-      channel.reply_error(message.reply, error_with_code(404, "unknown event")),
-    ])
+    case message.event {
+      "sync_presence" ->
+        channel.next(state, [
+          channel.reply_ok(message.reply, json.object([])),
+          channel.push_presence("presence_state", presence_wire.encode_state),
+        ])
+      _ ->
+        channel.next(state, [
+          channel.reply_error(
+            message.reply,
+            error_with_code(404, "unknown event"),
+          ),
+        ])
+    }
   })
   |> channel.on_info(fn(_state, info) {
     case info {

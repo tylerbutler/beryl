@@ -1,5 +1,4 @@
 import beryl_demo/config
-import beryl_demo/expiry
 import beryl_demo/server
 import gleam/dict
 import gleam/dynamic
@@ -12,6 +11,7 @@ import gleam/result
 import gleam/string
 import gleeunit
 import gleeunit/should
+import rasa/monotonic
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -49,6 +49,20 @@ fn http_get(port: Int, path: String) -> Result(Int, Nil)
 
 @external(erlang, "beryl_demo_test_ffi", "stop")
 fn stop(pid: process.Pid) -> Nil
+
+@external(erlang, "beryl_demo_test_ffi", "service_processes")
+fn service_processes() -> List(process.Pid)
+
+@external(erlang, "beryl_demo_test_ffi", "supervisor_descendants")
+fn supervisor_descendants(supervisor: process.Pid) -> List(process.Pid)
+
+type EtsTable
+
+@external(erlang, "beryl_demo_test_ffi", "owned_tables")
+fn owned_tables(owners: List(process.Pid)) -> List(EtsTable)
+
+@external(erlang, "beryl_demo_test_ffi", "table_exists")
+fn table_exists(table: EtsTable) -> Bool
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phoenix V2 frame helpers copied verbatim from `test/phoenix_contract_test.gleam:44-169`.
@@ -201,9 +215,21 @@ fn start_test_server(origin_mode: server.OriginMode) -> server.Started {
 }
 
 fn stop_started(started: server.Started) -> Nil {
-  expiry.stop(started.expiry)
-  stop(started.listener.pid)
   stop(started.supervisor.pid)
+}
+
+fn wait_until(check: fn() -> Bool, deadline: Int) -> Bool {
+  case check() {
+    True -> True
+    False ->
+      case monotonic.time(monotonic.Millisecond) >= deadline {
+        True -> False
+        False -> {
+          process.sleep(10)
+          wait_until(check, deadline)
+        }
+      }
+  }
 }
 
 fn join_frame(
@@ -244,6 +270,57 @@ fn connect_clients(
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
+
+pub fn root_shutdown_removes_children_and_presence_tables_test() {
+  let baseline = service_processes()
+  let started = start_test_server(server.TestOnlyAllowAll)
+  let descendants = supervisor_descendants(started.supervisor.pid)
+  let actors =
+    service_processes()
+    |> list.filter(fn(pid) {
+      pid != started.supervisor.pid && !list.contains(baseline, pid)
+    })
+  let tables = owned_tables(descendants)
+
+  // Save observations before shutdown, but assert afterwards so a regression
+  // does not leave a healthy listener running just because an assertion failed.
+  let actors_are_children =
+    list.length(actors) == 2
+    && list.all(actors, fn(pid) { list.contains(descendants, pid) })
+  stop_started(started)
+
+  actors_are_children |> should.be_true
+  list.is_empty(tables) |> should.be_false
+  list.any(descendants, process.is_alive) |> should.be_false
+  list.any(tables, table_exists) |> should.be_false
+  service_processes() |> should.equal(baseline)
+  http_get(started.port, "/healthz") |> should.equal(Error(Nil))
+}
+
+pub fn occupied_port_rolls_back_the_entire_service_test() {
+  process.trap_exits(True)
+  let started = start_test_server(server.TestOnlyAllowAll)
+  let baseline = service_processes()
+  let service_config = config.Config(..config.default(), port: started.port)
+  let attempted = server.start(service_config, server.TestOnlyAllowAll)
+  let _startup_exit =
+    process.new_selector()
+    |> process.select_trapped_exits(fn(message) { message })
+    |> process.selector_receive(0)
+  let rolled_back =
+    wait_until(
+      fn() { service_processes() == baseline },
+      monotonic.time(monotonic.Millisecond) + 1000,
+    )
+  // Rollback must not tear down the already-running service either.
+  let health = http_get(started.port, "/healthz")
+  stop_started(started)
+  process.trap_exits(False)
+
+  attempted |> should.be_error
+  rolled_back |> should.be_true
+  health |> should.equal(Ok(200))
+}
 
 pub fn status_routes_are_available_test() {
   let started = start_test_server(server.TestOnlyAllowAll)

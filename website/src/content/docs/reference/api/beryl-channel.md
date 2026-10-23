@@ -122,21 +122,25 @@ The channel composition surface: a channel is a topic pattern paired
 <li><a href="#api-function-broadcast_presence"><code>broadcast_presence</code></a></li>
 <li><a href="#api-function-child_spec"><code>child_spec</code></a></li>
 <li><a href="#api-function-close"><code>close</code></a></li>
+<li><a href="#api-function-discard_reply"><code>discard_reply</code></a></li>
 <li><a href="#api-function-handler"><code>handler</code></a></li>
 <li><a href="#api-function-next"><code>next</code></a></li>
 <li><a href="#api-function-notify"><code>notify</code></a></li>
 <li><a href="#api-function-on_info"><code>on_info</code></a></li>
 <li><a href="#api-function-on_message"><code>on_message</code></a></li>
+<li><a href="#api-function-on_presence"><code>on_presence</code></a></li>
 <li><a href="#api-function-on_terminate"><code>on_terminate</code></a></li>
 <li><a href="#api-function-presence_track"><code>presence_track</code></a></li>
 <li><a href="#api-function-presence_untrack"><code>presence_untrack</code></a></li>
 <li><a href="#api-function-push"><code>push</code></a></li>
 <li><a href="#api-function-push_presence"><code>push_presence</code></a></li>
+<li><a href="#api-function-queue_snapshot"><code>queue_snapshot</code></a></li>
 <li><a href="#api-function-reject"><code>reject</code></a></li>
 <li><a href="#api-function-reply_error"><code>reply_error</code></a></li>
 <li><a href="#api-function-reply_ok"><code>reply_ok</code></a></li>
 <li><a href="#api-function-stay"><code>stay</code></a></li>
 <li><a href="#api-function-with_actions"><code>with_actions</code></a></li>
+<li><a href="#api-function-with_presence"><code>with_presence</code></a></li>
 <li><a href="#api-function-with_reply"><code>with_reply</code></a></li>
   </ul>
 </section>
@@ -297,7 +301,8 @@ pub type Message {
 A client message delivered to a joined channel's `on_message` callback.
 
  `reply` is present only when the client asked for a reply; pass it to
- [`reply_ok`](#reply_ok) or [`reply_error`](#reply_error).
+ [`reply_ok`](#reply_ok), [`reply_error`](#reply_error), or
+ [`discard_reply`](#discard_reply).
 
 <div class="api-entry-anchor" id="api-type-next" aria-hidden="true"></div>
 
@@ -326,18 +331,16 @@ A typed handle for sending server-side messages to one joined channel.
  You can share it with any process. The channel's `on_info` callback
  receives each message with its type intact.
 
- A sender is scoped to the join that produced it. Sending is asynchronous
- and never fails. It cannot report that the channel is gone. The message
- goes to the worker process for that join. After the join ends, the worker
- no longer exists and the runtime drops the message. A later join of the
- same topic has a different worker. It cannot receive the message.
+ A sender is scoped to the join that produced it. Sending reserves worker
+ capacity and returns an admission Result. A closed or stale sender returns
+ an error; it cannot send to a later join of the same topic.
 
  #### Cost
 
  A sealed function carries each message to the worker. The worker opens
- the function and uses a selective receive in the same turn. One delivery
- can scan queued work for that topic. Work for other topics does not add
- to this cost.
+ the function and uses a selective receive in the same turn.
+ Function environments are not included in accounted bytes. Bound typed
+ message payloads in the application as well as configuring item limits.
 
 ## Functions
 
@@ -444,6 +447,20 @@ Leave this channel after applying `actions` in order.
  The socket stays connected. Its other channels do not change. This
  channel's [`on_terminate`](#on_terminate) callback still runs.
 
+<div class="api-entry-anchor" id="api-function-discard_reply" aria-hidden="true"></div>
+
+### `discard_reply`
+
+```gleam
+pub fn discard_reply(option.Option(socket.ReplyRef)) -> Action(Active)
+```
+
+Discard a client message reply handle without sending a wire reply.
+
+ Use this for messages the application intentionally will not answer.
+ [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+ produces no effect.
+
 <div class="api-entry-anchor" id="api-function-handler" aria-hidden="true"></div>
 
 ### `handler`
@@ -485,18 +502,18 @@ Stay joined with the given state, applying `actions` in order.
 pub fn notify(
   Sender(a),
   a
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Send a typed server-side message to the channel that owns `sender`.
 
- Each call enqueues one message. Each enqueued message produces one
- `on_info` call. The runtime does not combine sends. It delivers them in
- the order that the worker receives them.
+ Each accepted call queues one message. The runtime does not combine sends.
+ The worker processes accepted messages in queue order.
 
- This is a fire-and-forget send. It returns when the message is enqueued,
- whether or not the channel is still joined. The runtime discards a message
- for a channel that has ended. See [`Sender`](#sender) for delivery cost.
+ `Ok(Nil)` confirms admission, not callback completion. Queue saturation,
+ oversized input, and a closed or unavailable worker return an error.
+ Rejection alone does not close the channel. See [`Sender`](#sender) for
+ delivery cost and the limits of sealed-message byte accounting.
 
 <div class="api-entry-anchor" id="api-function-on_info" aria-hidden="true"></div>
 
@@ -524,6 +541,54 @@ pub fn on_message(
 ```
 
 Handle client messages on this channel's topic.
+
+<div class="api-entry-anchor" id="api-function-on_presence" aria-hidden="true"></div>
+
+### `on_presence`
+
+```gleam
+pub fn on_presence(
+  JoinResult(a, b),
+  fn(a, presence.Event) -> Next(a)
+) -> JoinResult(a, b)
+```
+
+Observe this topic's initial presence roster and later changes.
+
+ The callback runs in this channel's worker with its private state. It
+ receives `presence.Snapshot` first, then `presence.Changed` events,
+ including this connection's changes. Ordinary message and info callbacks
+ wait for the initial callback. The stream reflects the local presence
+ replica, not a globally consistent cluster snapshot.
+
+ Observation does not track this connection. Add
+ [`with_presence`](#with_presence) to track it as well. Its initial track
+ may be in the snapshot or a later change, depending on actor ordering.
+
+ A missing presence handle rejects the join. Source failure, subscription
+ timeout, callback panic, or more than 64 pending change batches closes
+ only this topic with an error. Rejoin to obtain a fresh snapshot.
+ One large snapshot or metadata value is not bounded by that batch limit.
+ Subscription startup waits up to five seconds by default.
+
+ Apply leaves before joins when maintaining a roster. A callback that
+ changes presence can trigger itself again; avoid unconditional updates.
+ Repeated calls replace the callback. A rejected result stays rejected.
+
+ ```gleam
+ import beryl/presence
+ import gleam/list
+
+ channel.accept(0)
+ |> channel.on_presence(fn(online_sessions, event) {
+   let next = case event {
+     presence.Snapshot(entries) -> list.length(entries)
+     presence.Changed(joins, leaves) ->
+       online_sessions + list.length(joins) - list.length(leaves)
+   }
+   channel.stay(next)
+ })
+ ```
 
 <div class="api-entry-anchor" id="api-function-on_terminate" aria-hidden="true"></div>
 
@@ -606,6 +671,16 @@ Push a presence snapshot for this channel's topic to this socket.
  earlier [`presence_track`](#presence_track) or
  [`presence_untrack`](#presence_untrack) in the same list.
 
+<div class="api-entry-anchor" id="api-function-queue_snapshot" aria-hidden="true"></div>
+
+### `queue_snapshot`
+
+```gleam
+pub fn queue_snapshot(Sender(a)) -> Result(overload.Occupancy, overload.AdmissionError)
+```
+
+Read this worker incarnation's queue accounting without waiting for it.
+
 <div class="api-entry-anchor" id="api-function-reject" aria-hidden="true"></div>
 
 ### `reject`
@@ -685,6 +760,55 @@ Add ordered actions to an accepted join.
 
  Existing actions stay before the actions added here. A refused join has no
  topic, so this function returns [`reject`](#reject) results unchanged.
+
+<div class="api-entry-anchor" id="api-function-with_presence" aria-hidden="true"></div>
+
+### `with_presence`
+
+```gleam
+pub fn with_presence(
+  JoinResult(a, b),
+  key: String,
+  meta: json.Json
+) -> JoinResult(a, b)
+```
+
+Track this connection and send a Phoenix-compatible presence snapshot
+ after an accepted join.
+
+ A shorthand for existing presence actions, not a new presence lifecycle.
+ Diff delivery and automatic cleanup also apply when using those actions
+ directly.
+
+ Requires a running presence actor attached with `beryl.with_presence_handle`.
+ Without a handle, the runtime logs warnings and drops the presence actions;
+ it does not reject the join.
+
+ Appends [`presence_track`](#presence_track), then
+ [`push_presence`](#push_presence) with event `presence_state` and
+ `beryl/presence/wire.encode_state`. The snapshot includes the new entry
+ after tracking succeeds. Existing join actions stay before these actions.
+ A rejected join remains unchanged.
+
+ Tracking broadcasts a `presence_diff`, which can arrive before the initial
+ snapshot. Phoenix Presence clients buffer diffs until `presence_state`.
+ The runtime removes this connection's entries when the topic closes.
+ Connections with the same key remain separate entries under that key.
+
+ To replace metadata later, return [`presence_track`](#presence_track) with
+ the same key from a callback. This builder does not observe state changes
+ or register server-side callbacks for presence changes; use
+ [`on_presence`](#on_presence) for those callbacks. Use the actions
+ directly for a custom snapshot event name or encoder. Neither approach
+ reserves room capacity.
+
+ ```gleam
+ channel.accept(state)
+ |> channel.with_presence(
+   key: "user:alice",
+   meta: json.object([#("status", json.string("online"))]),
+ )
+ ```
 
 <div class="api-entry-anchor" id="api-function-with_reply" aria-hidden="true"></div>
 

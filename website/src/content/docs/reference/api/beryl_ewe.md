@@ -100,8 +100,9 @@ Upgrade a request to WebSocket if it matches the configured path.
  ```
 
  Path matching, origin policy, `?vsn` version negotiation, connection
- limits (per-IP and node-wide, rejected with `429 Too Many Requests`), and
- the `on_connect` callback use the shared admission pipeline. See
+ limits (per-IP and per beryl system on the current node, rejected with
+ `429 Too Many Requests`), and the `on_connect` callback use the shared
+ admission pipeline. See
  `beryl/transport/server.upgrade` for the full contract. Enforcement
  uses the real socket peer IP from the TCP connection; forwarded headers
  such as `X-Forwarded-For` are not trusted.

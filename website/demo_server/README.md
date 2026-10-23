@@ -1,4 +1,4 @@
-# Beryl documentation demo service
+# beryl documentation demo service
 
 This package holds the realtime scenario embedded in the beryl documentation:
 a validated `demo:presence:*` channel with absolute scenario expiry, plus the
@@ -10,7 +10,8 @@ registers `beryl_demo/presence_channel` on its own socket and serves
 `/v1/status`, and the documentation site connects to
 `https://demo.beryl.tylerbutler.com`. The standalone server in
 `beryl_demo/server` exists for local development and the Playwright e2e
-suite, and its integration tests exercise the channel end to end.
+suite, and its integration tests exercise the channel end to end. Its root
+supervisor owns presence, expiry, the channel system, and the listener.
 
 ## Run locally
 
@@ -56,5 +57,16 @@ curl --fail http://127.0.0.1:4100/v1/status
 The service holds no persistent data. Presence state (name, client ID, and
 color metadata) is kept in memory only; it is removed when the owning socket
 disconnects. Scenarios have a fixed 10-minute absolute TTL: when a scenario
-expires the service disconnects all connected clients and rejects rejoins for
-that scenario ID.
+expires the service closes its channels and rejects rejoins for another
+10 minutes. After that tombstone window, the same topic can start a new
+scenario. The client uses a fresh random ID on reset.
+
+After joining, the browser requests `sync_presence` on the accepted channel.
+The request reaches the router after its subscription index is installed.
+The server then sends `presence_state`; Phoenix Presence buffers earlier
+diffs and reconciles them with this snapshot.
+
+The deployed showcase caps connections at 200 total and 8 per IP, joined
+topics at 8 per socket (including its other examples), and inbound frames
+at 16 KiB. Frame-size checks happen after assembly; an edge proxy must also
+limit frames before buffering.

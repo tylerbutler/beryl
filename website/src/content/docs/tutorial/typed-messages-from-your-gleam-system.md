@@ -98,7 +98,7 @@ or `UserBanned` here.
 
 The example stores `info.self` in the socket's `Model`. beryl makes the sender
 when the socket connects. It knows which socket actor it belongs to. If that
-socket has closed, the sender drops the message. You never see the subject
+socket has closed, the sender rejects the message. You never see the subject
 inside it.
 
 Your `Message` type appears at each step of the path:
@@ -111,8 +111,9 @@ socket.Input(Message)
 socket.Info(ClosePoll(topic))
 ```
 
-To send an event, call `socket.notify(sender, ClosePoll(topic))`. beryl
-delivers it to the socket's update function as `Info(ClosePoll(topic))`.
+To submit an event, call `socket.notify(sender, ClosePoll(topic))` and handle
+its result. `Ok(Nil)` confirms admission to the socket queue. When beryl
+processes the event, the update function receives `Info(ClosePoll(topic))`.
 
 The update function handles it like this:
 
@@ -141,7 +142,7 @@ A sender can do less than a `process.Subject`:
 - It accepts only values of your `Message` type.
 - It sends only to the socket that made it.
 - beryl wraps each value as `socket.Info(Message)`.
-- It drops the value if the socket has disconnected.
+- It reports rejection if the socket has disconnected or cannot admit work.
 - It has no request/reply protocol and no mailbox selection.
 
 Use a `Subject` when you define an actor's protocol. Use a `socket.Sender`
@@ -174,10 +175,20 @@ wait 60 seconds. It stays free to handle other work.
 When a timed socket accepts a poll topic, it schedules a callback:
 
 ```gleam
+import beryl/overload
+import gleam/io
+
 case stage {
   Timed ->
     timer.after(clock, duration_ms, fn() {
-      socket.notify(model.sender, ClosePoll(topic))
+      case socket.notify(model.sender, ClosePoll(topic)) {
+        Ok(Nil) -> Nil
+        Error(error) ->
+          io.println_error(
+            "[live_poll] timer notification rejected: "
+            <> overload.describe(error),
+          )
+      }
     })
   ReadOnly | Voting -> Nil
 }
@@ -185,12 +196,13 @@ case stage {
 
 `step_03` sets `duration_ms` to `60_000`. After 60 seconds, the timer actor
 runs the callback. The callback calls `socket.notify`. beryl then calls the
-socket's update function with `Info(ClosePoll(topic))`.
+socket's update function with `Info(ClosePoll(topic))` if the event is admitted
+and the socket stays open long enough to process it.
 
-`socket.notify` is fire-and-forget. It returns `Nil`. It does not tell you if
-the socket is still connected. If the browser closed during that minute, beryl
-drops the message. The timer actor does not need to watch the socket or clean
-up after it.
+`socket.notify` returns `Result(Nil, overload.AdmissionError)`. Success does
+not confirm callback completion. A closed socket or a full queue returns an
+error. This timer logs the rejection without retrying. See
+[Handle overload](/guides/overload/) for queue limits and error meanings.
 
 ## Keep shared poll state in the store actor
 

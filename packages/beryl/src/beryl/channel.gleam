@@ -82,7 +82,9 @@
 //// then.
 
 import beryl
+import beryl/overload
 import beryl/presence
+import beryl/presence/wire as presence_wire
 import beryl/socket
 import beryl/topic
 import gleam/dynamic
@@ -193,32 +195,43 @@ fn check_duplicates(
 /// You can share it with any process. The channel's `on_info` callback
 /// receives each message with its type intact.
 ///
-/// A sender is scoped to the join that produced it. Sending is asynchronous
-/// and never fails. It cannot report that the channel is gone. The message
-/// goes to the worker process for that join. After the join ends, the worker
-/// no longer exists and the runtime drops the message. A later join of the
-/// same topic has a different worker. It cannot receive the message.
+/// A sender is scoped to the join that produced it. Sending reserves worker
+/// capacity and returns an admission Result. A closed or stale sender returns
+/// an error; it cannot send to a later join of the same topic.
 ///
 /// ## Cost
 ///
 /// A sealed function carries each message to the worker. The worker opens
-/// the function and uses a selective receive in the same turn. One delivery
-/// can scan queued work for that topic. Work for other topics does not add
-/// to this cost.
+/// the function and uses a selective receive in the same turn.
+/// Function environments are not included in accounted bytes. Bound typed
+/// message payloads in the application as well as configuring item limits.
 pub opaque type Sender(info) {
-  Sender(send: fn(info) -> Nil)
+  Sender(
+    send: fn(info) -> Result(Nil, overload.AdmissionError),
+    snapshot: fn() -> Result(overload.Occupancy, overload.AdmissionError),
+  )
+}
+
+/// Read this worker incarnation's queue accounting without waiting for it.
+pub fn queue_snapshot(
+  sender: Sender(info),
+) -> Result(overload.Occupancy, overload.AdmissionError) {
+  sender.snapshot()
 }
 
 /// Send a typed server-side message to the channel that owns `sender`.
 ///
-/// Each call enqueues one message. Each enqueued message produces one
-/// `on_info` call. The runtime does not combine sends. It delivers them in
-/// the order that the worker receives them.
+/// Each accepted call queues one message. The runtime does not combine sends.
+/// The worker processes accepted messages in queue order.
 ///
-/// This is a fire-and-forget send. It returns when the message is enqueued,
-/// whether or not the channel is still joined. The runtime discards a message
-/// for a channel that has ended. See [`Sender`](#sender) for delivery cost.
-pub fn notify(sender: Sender(info), message: info) -> Nil {
+/// `Ok(Nil)` confirms admission, not callback completion. Queue saturation,
+/// oversized input, and a closed or unavailable worker return an error.
+/// Rejection alone does not close the channel. See [`Sender`](#sender) for
+/// delivery cost and the limits of sealed-message byte accounting.
+pub fn notify(
+  sender: Sender(info),
+  message: info,
+) -> Result(Nil, overload.AdmissionError) {
   sender.send(message)
 }
 
@@ -251,7 +264,8 @@ pub type JoinContext(info) {
 /// A client message delivered to a joined channel's `on_message` callback.
 ///
 /// `reply` is present only when the client asked for a reply; pass it to
-/// [`reply_ok`](#reply_ok) or [`reply_error`](#reply_error).
+/// [`reply_ok`](#reply_ok), [`reply_error`](#reply_error), or
+/// [`discard_reply`](#discard_reply).
 pub type Message {
   Message(
     /// The client-supplied event name.
@@ -295,6 +309,7 @@ pub opaque type Action(phase) {
     reply: option.Option(socket.ReplyRef),
     payload: json.Json,
   )
+  DiscardReplyAction(phase: phase, reply: option.Option(socket.ReplyRef))
   PresenceTrackAction(phase: phase, key: String, meta: json.Json)
   PresenceUntrackAction(key: String)
   PushPresenceAction(
@@ -345,6 +360,15 @@ pub fn reply_error(
   payload: json.Json,
 ) -> Action(Active) {
   ReplyErrorAction(Active, reply, payload)
+}
+
+/// Discard a client message reply handle without sending a wire reply.
+///
+/// Use this for messages the application intentionally will not answer.
+/// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
+/// produces no effect.
+pub fn discard_reply(reply: option.Option(socket.ReplyRef)) -> Action(Active) {
+  DiscardReplyAction(Active, reply)
 }
 
 /// Track this socket's presence under `key` on this channel's topic and
@@ -423,6 +447,7 @@ type Callbacks(state, info) {
   Callbacks(
     message: fn(state, Message) -> Next(state),
     info: fn(state, info) -> Next(state),
+    presence: option.Option(fn(state, presence.Event) -> Next(state)),
     terminate: fn(state, socket.StopReason) -> List(Action(Closing)),
   )
 }
@@ -431,6 +456,7 @@ fn callbacks() -> Callbacks(state, info) {
   Callbacks(
     message: fn(state, _message) { stay(state) },
     info: fn(state, _message) { stay(state) },
+    presence: option.None,
     terminate: fn(_state, _reason) { no_closing_actions() },
   )
 }
@@ -445,6 +471,7 @@ type SealedChannel(info) {
   SealedChannel(
     on_message: fn(Message) -> Continuation(info),
     on_info: fn(info) -> Continuation(info),
+    on_presence: option.Option(fn(presence.Event) -> Continuation(info)),
     on_terminate: fn(socket.StopReason) -> List(Action(Closing)),
   )
 }
@@ -466,6 +493,9 @@ fn seal(
     on_info: fn(message) {
       continuation(callbacks, callbacks.info(state, message))
     },
+    on_presence: option.map(callbacks.presence, fn(handle) {
+      fn(event) { continuation(callbacks, handle(state, event)) }
+    }),
     on_terminate: fn(reason) { callbacks.terminate(state, reason) },
   )
 }
@@ -536,6 +566,56 @@ pub fn on_info(
     JoinRejected(_) -> result
     JoinAccepted(callbacks: callbacks, ..) ->
       JoinAccepted(..result, callbacks: Callbacks(..callbacks, info: handle))
+  }
+}
+
+/// Observe this topic's initial presence roster and later changes.
+///
+/// The callback runs in this channel's worker with its private state. It
+/// receives `presence.Snapshot` first, then `presence.Changed` events,
+/// including this connection's changes. Ordinary message and info callbacks
+/// wait for the initial callback. The stream reflects the local presence
+/// replica, not a globally consistent cluster snapshot.
+///
+/// Observation does not track this connection. Add
+/// [`with_presence`](#with_presence) to track it as well. Its initial track
+/// may be in the snapshot or a later change, depending on actor ordering.
+///
+/// A missing presence handle rejects the join. Source failure, subscription
+/// timeout, callback panic, or more than 64 pending change batches closes
+/// only this topic with an error. Rejoin to obtain a fresh snapshot.
+/// One large snapshot or metadata value is not bounded by that batch limit.
+/// Subscription startup waits up to five seconds by default.
+///
+/// Apply leaves before joins when maintaining a roster. A callback that
+/// changes presence can trigger itself again; avoid unconditional updates.
+/// Repeated calls replace the callback. A rejected result stays rejected.
+///
+/// ```gleam
+/// import beryl/presence
+/// import gleam/list
+///
+/// channel.accept(0)
+/// |> channel.on_presence(fn(online_sessions, event) {
+///   let next = case event {
+///     presence.Snapshot(entries) -> list.length(entries)
+///     presence.Changed(joins, leaves) ->
+///       online_sessions + list.length(joins) - list.length(leaves)
+///   }
+///   channel.stay(next)
+/// })
+/// ```
+pub fn on_presence(
+  result: JoinResult(state, info),
+  handle: fn(state, presence.Event) -> Next(state),
+) -> JoinResult(state, info) {
+  case result {
+    JoinRejected(_) -> result
+    JoinAccepted(callbacks: callbacks, ..) ->
+      JoinAccepted(
+        ..result,
+        callbacks: Callbacks(..callbacks, presence: option.Some(handle)),
+      )
   }
 }
 
@@ -620,6 +700,53 @@ pub fn with_actions(
   }
 }
 
+/// Track this connection and send a Phoenix-compatible presence snapshot
+/// after an accepted join.
+///
+/// A shorthand for existing presence actions, not a new presence lifecycle.
+/// Diff delivery and automatic cleanup also apply when using those actions
+/// directly.
+///
+/// Requires a running presence actor attached with `beryl.with_presence_handle`.
+/// Without a handle, the runtime logs warnings and drops the presence actions;
+/// it does not reject the join.
+///
+/// Appends [`presence_track`](#presence_track), then
+/// [`push_presence`](#push_presence) with event `presence_state` and
+/// `beryl/presence/wire.encode_state`. The snapshot includes the new entry
+/// after tracking succeeds. Existing join actions stay before these actions.
+/// A rejected join remains unchanged.
+///
+/// Tracking broadcasts a `presence_diff`, which can arrive before the initial
+/// snapshot. Phoenix Presence clients buffer diffs until `presence_state`.
+/// The runtime removes this connection's entries when the topic closes.
+/// Connections with the same key remain separate entries under that key.
+///
+/// To replace metadata later, return [`presence_track`](#presence_track) with
+/// the same key from a callback. This builder does not observe state changes
+/// or register server-side callbacks for presence changes; use
+/// [`on_presence`](#on_presence) for those callbacks. Use the actions
+/// directly for a custom snapshot event name or encoder. Neither approach
+/// reserves room capacity.
+///
+/// ```gleam
+/// channel.accept(state)
+/// |> channel.with_presence(
+///   key: "user:alice",
+///   meta: json.object([#("status", json.string("online"))]),
+/// )
+/// ```
+pub fn with_presence(
+  result: JoinResult(state, info),
+  key key: String,
+  meta meta: json.Json,
+) -> JoinResult(state, info) {
+  with_actions(result, [
+    presence_track(key, meta),
+    push_presence("presence_state", presence_wire.encode_state),
+  ])
+}
+
 /// Refuse the join, returning `reason` to the client.
 pub fn reject(reason: json.Json) -> JoinResult(state, info) {
   JoinRejected(reason: reason)
@@ -666,9 +793,12 @@ pub fn handler(
     // worker no longer exists.
     let handoff = process.new_subject()
     let sender =
-      Sender(send: fn(message) {
-        context.deliver(fn() { process.send(handoff, message) })
-      })
+      Sender(
+        send: fn(message) {
+          context.deliver(fn() { process.send(handoff, message) })
+        },
+        snapshot: context.queue_snapshot,
+      )
     let join_context =
       JoinContext(
         socket_id: context.socket_id,
@@ -731,6 +861,9 @@ fn live(
           )
       }
     },
+    on_presence: option.map(channel.on_presence, fn(handle) {
+      fn(event) { step(handle(event), handoff, topic) }
+    }),
     on_terminate: fn(reason) { effects(topic, channel.on_terminate(reason)) },
   )
 }
@@ -773,12 +906,16 @@ fn effect(topic: String, action: Action(phase)) -> List(socket.Effect) {
       socket.BroadcastFrom(topic: topic, event: event, payload: payload),
     ]
     ReplyOkAction(reply: option.None, ..)
-    | ReplyErrorAction(reply: option.None, ..) -> []
+    | ReplyErrorAction(reply: option.None, ..)
+    | DiscardReplyAction(reply: option.None, ..) -> []
     ReplyOkAction(reply: option.Some(reply), payload: payload, ..) -> [
       socket.ReplyOk(ref: reply, payload: payload),
     ]
     ReplyErrorAction(reply: option.Some(reply), payload: payload, ..) -> [
       socket.ReplyError(ref: reply, payload: payload),
+    ]
+    DiscardReplyAction(reply: option.Some(reply), ..) -> [
+      socket.DiscardReply(ref: reply),
     ]
     PresenceTrackAction(key: key, meta: meta, ..) -> [
       socket.PresenceTrack(topic: topic, key: key, meta: meta),

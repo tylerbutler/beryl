@@ -55,7 +55,7 @@ flowchart TB
 | `beryl/socket` | The app-facing dispatch types: `Input`, `Next`, `Effect`, `JoinRef`/`ReplyRef`, `ConnectInfo`/`ConnectSeed`, typed `Sender`/`notify` | [Runtime](/architecture/runtime) |
 | `beryl/runtime` | Router, socket actors, and topic workers: subscriber index, per-socket models, per-topic channel processes, event delivery, returned effects, and heartbeat enforcement | [Runtime](/architecture/runtime) |
 | `beryl/pubsub` | Distributed publish and subscribe through Erlang `pg` | [Broadcasts Across Nodes](/architecture/pubsub-and-distribution) |
-| `beryl/presence` | OTP actor wrapping an add-wins OR-set CRDT; track/untrack, cross-node diff broadcast, `on_diff` callbacks | [Presence](/architecture/presence) |
+| `beryl/presence` | OTP actor wrapping an add-wins OR-set CRDT; track/untrack, replication, scoped `on_diff` callbacks | [Presence](/architecture/presence) |
 | `beryl/presence/wire` | Phoenix-compatible JSON encoding for presence diffs (`joins`/`leaves` maps) | [Presence](/architecture/presence) |
 | `beryl/wire` | Message encoding; includes `phoenix_codec()` for `[join_ref, ref, topic, event, payload]` frames | [WebSocket Frames & Transports](/architecture/wire-and-transport) |
 | `beryl/wire/codec` | `Codec` functions such as `decode_text`, `decode_binary`, and `encode_*` | [WebSocket Frames & Transports](/architecture/wire-and-transport) |

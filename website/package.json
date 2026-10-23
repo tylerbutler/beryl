@@ -2,6 +2,7 @@
 	"name": "beryl-docs",
 	"version": "0.0.1",
 	"private": true,
+	"packageManager": "pnpm@10.6.5",
 	"bugs": "https://github.com/tylerbutler/beryl/issues",
 	"repository": {
 		"type": "git",
@@ -11,7 +12,6 @@
 	"license": "MIT",
 	"author": "Tyler Butler <tyler@tylerbutler.com>",
 	"type": "module",
-	"packageManager": "pnpm@10.34.5",
 	"engines": {
 		"node": ">=22.12.0"
 	},
@@ -22,14 +22,16 @@
 		"check:astro": "pnpm run build:interactive && astro check",
 		"check:snippets": "node scripts/check-snippets.mjs",
 		"clean": "rimraf dist *.tsbuildinfo *.done.build.log .astro",
+		"deploy": "pnpm build:site && wrangler deploy",
 		"dev": "astro dev",
 		"generate:og": "node scripts/generate-og-image.mjs",
 		"generate:reference": "node scripts/generate-reference.mjs",
 		"preview": "astro preview",
 		"start": "astro dev",
 		"test:interactive": "cd interactive && gleam test --target javascript",
-		"test:reference": "node --test scripts/generate-reference.test.mjs",
-		"test:e2e": "playwright test"
+		"test:e2e": "playwright test --config playwright.config.js",
+		"test:demos": "playwright test --config playwright.config.ts",
+		"test:reference": "node --test scripts/generate-reference.test.mjs"
 	},
 	"dependencies": {
 		"@astrojs/check": "^0.9.10",
@@ -42,14 +44,15 @@
 		"astro-tinylytics": "^0.1.0",
 		"mermaid": "^11.16.1",
 		"phoenix": "^1.8.9",
-		"sharp": "^0.35.3",
+		"sharp": "^0.35.4",
 		"starlight-links-validator": "^0.24.1",
 		"starlight-llms-txt": "^0.11.0",
 		"typescript": "~6.0.0"
 	},
 	"devDependencies": {
 		"@fec/remark-a11y-emoji": "^4.0.2",
-		"@playwright/test": "^1.61.1",
-		"rimraf": "^6.1.3"
+		"@playwright/test": "^1.63.0",
+		"rimraf": "^6.1.3",
+		"wrangler": "^4.144.0"
 	}
 }

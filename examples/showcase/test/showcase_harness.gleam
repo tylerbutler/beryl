@@ -12,7 +12,6 @@ import beryl/group
 import beryl/presence
 import beryl/socket
 import beryl/transport
-import beryl/wire
 import beryl/wire/codec
 import beryl_demo/config as demo_config
 import beryl_demo/expiry
@@ -20,6 +19,7 @@ import collab_document/auth
 import collab_document/document_store
 import example_helper/broadcast_hub as hub
 import example_helper/session_presence
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None}
@@ -35,6 +35,7 @@ pub type System {
     sockets: beryl.Sockets,
     secret: BitArray,
     presence: session_presence.Tracker,
+    supervisor: process.Pid,
   )
 }
 
@@ -54,15 +55,17 @@ pub fn start(_replica: String) -> System {
   let assert Ok(store) = document_store.start()
   let assert Ok(broadcast_hub) = hub.start()
   let secret = auth.new_secret()
-  let assert Ok(demo_presence) =
-    presence.start(presence.default_config("showcase_test"))
-  let assert Ok(demo_expiry) =
-    expiry.start(demo_config.default().session_ttl_ms)
+  let #(demo_presence, demo_presence_spec) =
+    presence.child_spec(presence.default_config("showcase_test"))
+  let #(demo_expiry, demo_expiry_spec) =
+    expiry.child_spec(demo_config.default().session_ttl_ms)
 
   // Errors only: the runtime's info/warn lines would bury the test output.
   let config =
-    beryl.config(wire.phoenix_codec())
-    |> beryl.with_presence_handle(presence: demo_presence)
+    showcase.runtime_config(demo_presence)
+    |> beryl.with_frame_rate(per_second: 0, burst: 0)
+    |> beryl.with_message_rate(per_second: 0, burst: 0)
+    |> beryl.with_join_rate(per_second: 0, burst: 0)
     |> beryl.with_logging(beryl.logging_config(
       level: beryl.ErrorLevel,
       include_payloads: False,
@@ -84,22 +87,40 @@ pub fn start(_replica: String) -> System {
 
   session_presence.configure(presence_tracker, sockets)
   hub.bind(broadcast_hub, sockets)
-  let assert Ok(_) =
+  let assert Ok(supervisor) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(groups_specification)
-    |> static_supervisor.add(specification)
+    |> static_supervisor.add(
+      static_supervisor.new(static_supervisor.OneForAll)
+      |> static_supervisor.add(demo_presence_spec)
+      |> static_supervisor.add(demo_expiry_spec)
+      |> static_supervisor.add(specification)
+      |> static_supervisor.supervised,
+    )
     |> static_supervisor.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
   let assert Ok(_) = group.add(groups, "public", "room:random")
 
-  System(sockets: sockets, secret: secret, presence: presence_tracker)
+  System(
+    sockets: sockets,
+    secret: secret,
+    presence: presence_tracker,
+    supervisor: supervisor.pid,
+  )
 }
 
 /// Stop the socket runtime and test-only presence publisher.
 pub fn stop(system: System) -> Nil {
-  session_presence.stop(system.presence)
   let assert Ok(Nil) = beryl.stop(system.sockets)
+  let monitor = process.monitor(system.supervisor)
+  process.unlink(system.supervisor)
+  process.send_abnormal_exit(system.supervisor, atom.create("shutdown"))
+  let assert Ok(Nil) =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(_) { Nil })
+    |> process.selector_receive(1000)
+  session_presence.stop(system.presence)
   Nil
 }
 
@@ -146,7 +167,9 @@ pub fn route(system: System, socket_id: String, raw: String) -> Nil {
   let assert Ok(decoded) =
     codec.decode_text(transport.active_codec(system.sockets))(raw)
     as "the test frame is valid phoenix wire format"
-  transport.route_decoded(system.sockets, socket_id, decoded)
+  let assert Ok(Nil) =
+    transport.route_decoded(system.sockets, socket_id, decoded)
+  Nil
 }
 
 /// Send a `phx_join` carrying a raw JSON payload.

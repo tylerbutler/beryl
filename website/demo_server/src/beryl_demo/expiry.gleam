@@ -7,9 +7,12 @@
 
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
+import gleam/erlang/reference.{type Reference}
 import gleam/otp/actor
+import gleam/otp/supervision
 import gleam/result
 import gleam/set.{type Set}
+import rasa/monotonic
 
 /// Opaque handle for a running expiry actor.
 pub opaque type Expiry {
@@ -18,11 +21,16 @@ pub opaque type Expiry {
 
 /// Messages handled by the expiry actor.
 type Message {
-  Track(topic: String, socket_id: String, on_expire: fn() -> Nil)
+  Track(
+    topic: String,
+    socket_id: String,
+    on_expire: fn() -> Nil,
+    reply: Subject(Result(Nil, Nil)),
+  )
   Untrack(topic: String, socket_id: String)
   IsExpired(topic: String, reply: Subject(Bool))
-  ExpireTopic(String)
-  ForgetTopic(String)
+  ExpireTopic(String, Reference)
+  ForgetTopic(String, Reference)
   Stop(reply: Subject(Nil))
 }
 
@@ -37,11 +45,33 @@ type State {
     sockets: Dict(String, Dict(String, fn() -> Nil)),
     scheduled: Set(String),
     expired: Set(String),
+    deadlines: Dict(String, Int),
+    incarnation: Reference,
   )
 }
 
 /// Start the expiry actor with an absolute TTL in milliseconds.
 pub fn start(ttl_ms: Int) -> Result(Expiry, actor.StartError) {
+  let #(expiry, specification) = child_spec(ttl_ms)
+  specification.start()
+  |> result.replace(expiry)
+}
+
+/// Build a name-backed expiry actor owned by the application's supervisor.
+pub fn child_spec(
+  ttl_ms: Int,
+) -> #(Expiry, supervision.ChildSpecification(Nil)) {
+  let name = process.new_name("beryl_demo_expiry")
+  #(
+    Expiry(process.named_subject(name)),
+    supervision.worker(fn() {
+      builder(ttl_ms) |> actor.named(name) |> actor.start
+    })
+      |> supervision.map_data(fn(_) { Nil }),
+  )
+}
+
+fn builder(ttl_ms: Int) -> actor.Builder(State, Message, Subject(Message)) {
   actor.new_with_initialiser(1000, fn(subject) {
     State(
       ttl_ms: ttl_ms,
@@ -49,14 +79,14 @@ pub fn start(ttl_ms: Int) -> Result(Expiry, actor.StartError) {
       sockets: dict.new(),
       scheduled: set.new(),
       expired: set.new(),
+      deadlines: dict.new(),
+      incarnation: reference.new(),
     )
     |> actor.initialised
     |> actor.returning(subject)
     |> Ok
   })
   |> actor.on_message(handle_message)
-  |> actor.start
-  |> result.map(fn(started) { Expiry(subject: started.data) })
 }
 
 /// Track that `socket_id` joined `topic`, registering the callback to run
@@ -71,8 +101,10 @@ pub fn track(
   topic: String,
   socket_id: String,
   on_expire: fn() -> Nil,
-) -> Nil {
-  process.send(expiry.subject, Track(topic:, socket_id:, on_expire:))
+) -> Result(Nil, Nil) {
+  process.call(expiry.subject, 5000, fn(reply) {
+    Track(topic:, socket_id:, on_expire:, reply:)
+  })
 }
 
 /// Remove `socket_id` from `topic`'s tracked-sockets list.
@@ -99,31 +131,57 @@ fn handle_message(
   message: Message,
 ) -> actor.Next(State, Message) {
   case message {
-    Track(topic, socket_id, on_expire) ->
-      handle_track(state, topic, socket_id, on_expire)
+    Track(topic, socket_id, on_expire, reply) ->
+      case topic_expired(state, topic) {
+        True -> {
+          process.send(reply, Error(Nil))
+          actor.continue(state)
+        }
+        False -> {
+          process.send(reply, Ok(Nil))
+          handle_track(state, topic, socket_id, on_expire)
+        }
+      }
 
     Untrack(topic, socket_id) -> handle_untrack(state, topic, socket_id)
 
     IsExpired(topic, reply) -> {
-      process.send(reply, set.contains(state.expired, topic))
+      process.send(reply, topic_expired(state, topic))
       actor.continue(state)
     }
 
-    ExpireTopic(topic) -> handle_expire(state, topic)
+    ExpireTopic(topic, incarnation) ->
+      case incarnation == state.incarnation {
+        True -> handle_expire(state, topic)
+        False -> actor.continue(state)
+      }
 
-    ForgetTopic(topic) ->
-      actor.continue(
-        State(
-          ..state,
-          scheduled: set.delete(state.scheduled, topic),
-          expired: set.delete(state.expired, topic),
-        ),
-      )
+    ForgetTopic(topic, incarnation) ->
+      case incarnation == state.incarnation {
+        False -> actor.continue(state)
+        True ->
+          actor.continue(
+            State(
+              ..state,
+              scheduled: set.delete(state.scheduled, topic),
+              expired: set.delete(state.expired, topic),
+              deadlines: dict.delete(state.deadlines, topic),
+            ),
+          )
+      }
 
     Stop(reply) -> {
       process.send(reply, Nil)
       actor.stop()
     }
+  }
+}
+
+fn topic_expired(state: State, topic: String) -> Bool {
+  set.contains(state.expired, topic)
+  || case dict.get(state.deadlines, topic) {
+    Ok(deadline) -> monotonic.time(monotonic.Millisecond) >= deadline
+    Error(Nil) -> False
   }
 }
 
@@ -143,9 +201,21 @@ fn handle_track(
     True -> actor.continue(state)
     False -> {
       let _timer =
-        process.send_after(state.self, state.ttl_ms, ExpireTopic(topic))
+        process.send_after(
+          state.self,
+          state.ttl_ms,
+          ExpireTopic(topic, state.incarnation),
+        )
       actor.continue(
-        State(..state, scheduled: set.insert(state.scheduled, topic)),
+        State(
+          ..state,
+          scheduled: set.insert(state.scheduled, topic),
+          deadlines: dict.insert(
+            state.deadlines,
+            topic,
+            monotonic.time(monotonic.Millisecond) + state.ttl_ms,
+          ),
+        ),
       )
     }
   }
@@ -173,7 +243,12 @@ fn handle_expire(state: State, topic: String) -> actor.Next(State, Message) {
   dict.get(state.sockets, topic)
   |> result.unwrap(dict.new())
   |> dict.each(fn(_socket_id, on_expire) { on_expire() })
-  let _timer = process.send_after(state.self, state.ttl_ms, ForgetTopic(topic))
+  let _timer =
+    process.send_after(
+      state.self,
+      state.ttl_ms,
+      ForgetTopic(topic, state.incarnation),
+    )
   actor.continue(
     State(
       ..state,

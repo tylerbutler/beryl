@@ -9,6 +9,7 @@ import beryl
 import beryl/socket
 import beryl/transport/server
 import beryl/wire
+import beryl/wire/codec
 import beryl_ewe as ewe_transport
 import ewe
 import gleam/bit_array
@@ -83,6 +84,12 @@ fn receive_message_event(timeout: Int) -> Result(#(String, String, String), Nil)
 @external(erlang, "beryl_ewe_transport_test_ffi", "receive_text")
 fn receive_text(client: WebsocketClient, timeout: Int) -> Result(String, Nil)
 
+@external(erlang, "beryl_ewe_transport_test_ffi", "receive_binary")
+fn receive_binary(
+  client: WebsocketClient,
+  timeout: Int,
+) -> Result(BitArray, Nil)
+
 @external(erlang, "beryl_ewe_transport_test_ffi", "close")
 fn close(client: WebsocketClient) -> Nil
 
@@ -91,6 +98,15 @@ fn http_get(port: Int, path: String) -> Result(Int, Nil)
 
 @external(erlang, "beryl_ewe_transport_test_ffi", "stop_supervisor")
 fn stop_supervisor(pid: process.Pid) -> Nil
+
+@external(erlang, "beryl_ewe_transport_test_ffi", "suspend_server_peer")
+fn suspend_server_peer(client: WebsocketClient) -> Result(process.Pid, Nil)
+
+@external(erlang, "beryl_ewe_transport_test_ffi", "resume_process")
+fn resume_process(pid: process.Pid) -> Nil
+
+@external(erlang, "beryl_ewe_transport_test_ffi", "outbound_queue_usage")
+fn outbound_queue_usage(pid: process.Pid) -> #(Int, Int)
 
 // Runtime log capture distinguishes edge shedding from runtime shedding.
 type CapturedLog {
@@ -559,6 +575,138 @@ pub fn handler_closes_socket_on_oversized_text_frame_test() -> Nil {
 
   close(client)
   stop_supervisor(server_pid)
+}
+
+pub fn outbound_budget_evicts_and_releases_for_healthy_clients_test() -> Nil {
+  let channels = start_channels()
+  let assert Ok(healthy_config) =
+    server.default_config("/socket")
+    |> server.with_outbound_limits(max_frames: 1, max_bytes: 1024)
+  let #(healthy_port, healthy_server) =
+    start_server_with_config(channels, healthy_config)
+  let assert Ok(healthy_client) = connect_websocket(healthy_port, "/socket")
+
+  let assert Ok(healthy_client) =
+    send_text(healthy_client, "[null,\"one\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(healthy_client, 1000) |> should.be_ok
+  let assert Ok(healthy_client) =
+    send_text(healthy_client, "[null,\"two\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(healthy_client, 1000) |> should.be_ok
+  close(healthy_client)
+  stop_supervisor(healthy_server)
+
+  let channels = start_channels()
+  let assert Ok(restrictive_config) =
+    server.default_config("/socket")
+    |> server.with_outbound_limits(max_frames: 1, max_bytes: 1)
+  let #(restricted_port, restricted_server) =
+    start_server_with_config(channels, restrictive_config)
+  let assert Ok(slow_client) = connect_websocket(restricted_port, "/socket")
+  let assert Ok(_) =
+    send_text(slow_client, "[null,\"too-large\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(slow_client, 1000) |> should.equal(Error(Nil))
+
+  let assert Ok(reconnected) = connect_websocket(restricted_port, "/socket")
+  close(reconnected)
+  stop_supervisor(restricted_server)
+}
+
+pub fn stalled_client_outbound_queue_is_bounded_test() -> Nil {
+  let channels = start_mixed_outbound_system()
+  let assert Ok(config) =
+    server.default_config("/socket")
+    |> server.with_outbound_limits(max_frames: 32, max_bytes: 256)
+  let #(port, server_pid) = start_server_with_config(channels, config)
+  let assert Ok(slow_client) = connect_websocket(port, "/socket")
+  let assert Ok(healthy_client) = connect_websocket(port, "/socket")
+  let assert Ok(slow_client) =
+    send_text(slow_client, "[null,\"slow\",\"room:lobby\",\"phx_join\",{}]")
+  let assert Ok(healthy_client) =
+    send_text(
+      healthy_client,
+      "[null,\"healthy\",\"room:lobby\",\"phx_join\",{}]",
+    )
+  receive_text(slow_client, 1000) |> should.be_ok
+  receive_text(healthy_client, 1000) |> should.be_ok
+  let assert Ok(connection_pid) = suspend_server_peer(slow_client)
+
+  send_mixed_broadcasts(channels, healthy_client, 1, 50)
+  let #(frames, bytes) = outbound_queue_usage(connection_pid)
+  { frames > 0 && frames <= 32 } |> should.be_true
+  { bytes > 0 && bytes <= 256 } |> should.be_true
+
+  resume_process(connection_pid)
+  receive_text(slow_client, 1000) |> should.equal(Error(Nil))
+  let assert Ok(reconnected) = connect_websocket(port, "/socket")
+  let assert Ok(reconnected) =
+    send_text(reconnected, "[null,\"healthy\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(reconnected, 1000) |> should.be_ok
+  close(reconnected)
+  stop_supervisor(server_pid)
+}
+
+fn send_mixed_broadcasts(
+  channels: beryl.Sockets,
+  healthy_client: WebsocketClient,
+  index: Int,
+  remaining: Int,
+) -> Nil {
+  case remaining <= 0 {
+    True -> Nil
+    False -> {
+      let text_event = "text-" <> int.to_string(index)
+      beryl.broadcast(channels, "room:lobby", text_event, json.object([]))
+      |> should.equal(Ok(Nil))
+      receive_text(healthy_client, 1000) |> should.equal(Ok(text_event))
+
+      let binary_event = "binary-" <> int.to_string(index)
+      beryl.broadcast(channels, "room:lobby", binary_event, json.object([]))
+      |> should.equal(Ok(Nil))
+      receive_binary(healthy_client, 1000)
+      |> should.equal(Ok(bit_array.from_string(binary_event)))
+
+      send_mixed_broadcasts(channels, healthy_client, index + 1, remaining - 1)
+    }
+  }
+}
+
+fn start_mixed_outbound_system() -> beryl.Sockets {
+  let phoenix = wire.phoenix_codec()
+  let mixed_codec =
+    codec.new(
+      decode_text: wire.decode_message,
+      encode_reply: codec.encode_reply(phoenix),
+      encode_push: fn(_topic, event, _payload) {
+        case string.starts_with(event, "binary-") {
+          True -> codec.BinaryFrame(bit_array.from_string(event))
+          False -> codec.TextFrame(event)
+        }
+      },
+      encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
+    )
+  start_app_system_with_update(beryl.config(mixed_codec), fn(model, event) {
+    case event {
+      socket.Join(_, _, reference) ->
+        socket.Next(model, [socket.AcceptJoin(reference, option.None)])
+      socket.Message(_, _, _, _)
+      | socket.Binary(_, _)
+      | socket.Closed(_, _)
+      | socket.Info(_) -> socket.Next(model, [])
+    }
+  })
+}
+
+fn start_app_system_with_update(
+  config: beryl.Config,
+  update: fn(Nil, socket.Input(Nil)) -> socket.Next(Nil),
+) -> beryl.Sockets {
+  let assert Ok(channels) =
+    app_test_helper.start(
+      config,
+      init: fn(_info) { #(Nil, []) },
+      update: update,
+    )
+  channels
 }
 
 pub fn runtime_death_closes_the_connection_test() -> Nil {

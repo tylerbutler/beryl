@@ -5,9 +5,13 @@
 //// cannot distinguish those cases by exit reason alone, so this wrapper tracks
 //// intentional stops and translates only exhaustion into an abnormal exit.
 
+import beryl/overload
+import beryl/work_queue
 import gleam/erlang/process
+import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/otp/static_supervisor
+import gleam/result
 
 pub type StopAcceptance {
   StopAccepted
@@ -20,13 +24,15 @@ pub type StopCompletion {
 }
 
 pub type Message {
-  StopRuntime(
-    started: process.Subject(StopAcceptance),
-    finished: process.Subject(StopCompletion),
-  )
+  WorkAvailable
+  RecoverWork
   RuntimeStopped(completion: StopCompletion)
   RuntimeDown(process.Down)
   LinkedExit(process.ExitMessage)
+  StopRuntime(
+    started: fn(StopAcceptance) -> Nil,
+    finished: process.Subject(StopCompletion),
+  )
 }
 
 type StopState {
@@ -42,15 +48,18 @@ type StopState {
 /// arrived. Both-arrived is never stored: the second signal stops the actor.
 type StopProgress {
   AwaitingBoth
-  RuntimeStopAcknowledged
+  RuntimeStopAcknowledged(StopCompletion)
   SupervisorExited
 }
 
 type State {
   State(
+    self_subject: process.Subject(Message),
     parent: process.Pid,
     supervisor: process.Pid,
     stop_state: StopState,
+    inbox: work_queue.Queue(Message),
+    stop_credit: Option(work_queue.Reservation),
     runtime_stopped: process.Subject(StopCompletion),
     stop_runtime: fn(process.Subject(StopCompletion)) ->
       Result(process.Monitor, Nil),
@@ -73,6 +82,13 @@ pub fn start(
     case start_supervisor() {
       Error(error) -> Error(start_error_message(error))
       Ok(started) -> {
+        let assert Ok(limits) = overload.limits(items: 1, bytes: 256)
+        let inbox =
+          work_queue.new(limits, overload.RouterQueue, False, fn() {
+            process.send(subject, WorkAvailable)
+          })
+        work_queue.name(inbox, name)
+        let _timer = process.send_after(subject, 100, RecoverWork)
         let runtime_stopped = process.new_subject()
         let selector =
           process.new_selector()
@@ -82,9 +98,12 @@ pub fn start(
           |> process.select_trapped_exits(LinkedExit)
 
         actor.initialised(State(
+          self_subject: subject,
           parent: parent,
           supervisor: started.pid,
           stop_state: Running,
+          inbox: inbox,
+          stop_credit: None,
           runtime_stopped: runtime_stopped,
           stop_runtime: stop_runtime,
         ))
@@ -99,31 +118,70 @@ pub fn start(
   |> actor.start
 }
 
+/// Admit one stop request for this supervisor incarnation.
+pub fn request_stop(
+  name: process.Name(Message),
+  finished: process.Subject(StopCompletion),
+) -> Result(#(StopAcceptance, process.Pid), overload.CallError) {
+  use queue <- result.try(
+    work_queue.lookup(name) |> result.map_error(overload.AdmissionRejected),
+  )
+  work_queue.call(queue, 1000, fn(reply) {
+    StopRuntime(
+      fn(acceptance) { reply(#(acceptance, process.self())) },
+      finished,
+    )
+  })
+}
+
+fn clear_stop_credit(state: State) -> State {
+  case state.stop_credit {
+    Some(credit) -> work_queue.release(state.inbox, credit)
+    None -> Nil
+  }
+  State(..state, stop_credit: None)
+}
+
+fn handle_stop_request(
+  state: State,
+  started: fn(StopAcceptance) -> Nil,
+  finished: process.Subject(StopCompletion),
+) -> actor.Next(State, Message) {
+  case state.stop_runtime(state.runtime_stopped) {
+    Error(Nil) -> {
+      started(StopRejected)
+      actor.continue(clear_stop_credit(state))
+    }
+    Ok(monitor) -> {
+      started(StopAccepted)
+      actor.continue(
+        State(..state, stop_state: Stopping(monitor, finished, AwaitingBoth)),
+      )
+    }
+  }
+}
+
 fn handle_message(
   state: State,
   message: Message,
 ) -> actor.Next(State, Message) {
   case message {
+    WorkAvailable ->
+      case work_queue.take(state.inbox) {
+        Error(Nil) -> actor.continue(state)
+        Ok(#(credit, request)) ->
+          handle_message(State(..state, stop_credit: Some(credit)), request)
+      }
     StopRuntime(started, _) if state.stop_state != Running -> {
-      process.send(started, StopRejected)
+      started(StopRejected)
       actor.continue(state)
     }
     StopRuntime(started, finished) ->
-      case state.stop_runtime(state.runtime_stopped) {
-        Error(Nil) -> {
-          process.send(started, StopRejected)
-          actor.continue(state)
-        }
-        Ok(monitor) -> {
-          process.send(started, StopAccepted)
-          actor.continue(
-            State(
-              ..state,
-              stop_state: Stopping(monitor, finished, AwaitingBoth),
-            ),
-          )
-        }
-      }
+      handle_stop_request(state, started, finished)
+    RecoverWork -> {
+      let _timer = process.send_after(state.self_subject, 100, RecoverWork)
+      handle_message(state, WorkAvailable)
+    }
     RuntimeStopped(completion) ->
       case state.stop_state {
         Stopping(_, finished, SupervisorExited) -> {
@@ -131,21 +189,27 @@ fn handle_message(
           actor.stop()
         }
         Stopping(monitor, finished, AwaitingBoth) -> {
-          process.send(finished, completion)
           actor.continue(
             State(
               ..state,
-              stop_state: Stopping(monitor, finished, RuntimeStopAcknowledged),
+              stop_state: Stopping(
+                monitor,
+                finished,
+                RuntimeStopAcknowledged(completion),
+              ),
             ),
           )
         }
-        Running | Stopping(_, _, RuntimeStopAcknowledged) ->
+        Running | Stopping(_, _, RuntimeStopAcknowledged(_)) ->
           actor.continue(state)
       }
     RuntimeDown(down) -> handle_runtime_down(state, down)
     LinkedExit(process.ExitMessage(pid, _)) if pid == state.supervisor ->
       case state.stop_state {
-        Stopping(_, _, RuntimeStopAcknowledged) -> actor.stop()
+        Stopping(_, finished, RuntimeStopAcknowledged(completion)) -> {
+          process.send(finished, completion)
+          actor.stop()
+        }
         Stopping(monitor, finished, AwaitingBoth) ->
           actor.continue(
             State(
@@ -176,7 +240,7 @@ fn handle_runtime_down(
       if monitor == expected
     -> {
       process.send(finished, StopIncomplete)
-      actor.continue(State(..state, stop_state: Running))
+      actor.continue(clear_stop_credit(State(..state, stop_state: Running)))
     }
     process.ProcessDown(monitor, _, _),
       Stopping(expected, finished, SupervisorExited)
@@ -187,7 +251,7 @@ fn handle_runtime_down(
       actor.stop_abnormal("app subtree restart intensity exceeded")
     }
     process.ProcessDown(_, _, _), Running
-    | process.ProcessDown(_, _, _), Stopping(_, _, RuntimeStopAcknowledged)
+    | process.ProcessDown(_, _, _), Stopping(_, _, RuntimeStopAcknowledged(_))
     | process.ProcessDown(_, _, _), Stopping(_, _, AwaitingBoth)
     | process.ProcessDown(_, _, _), Stopping(_, _, SupervisorExited)
     | process.PortDown(_, _, _), Running

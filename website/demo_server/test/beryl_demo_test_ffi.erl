@@ -2,7 +2,47 @@
 -export([connect_websocket/2, connect_websocket_with_origin/3,
          websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
          send_text/2, receive_text/2,
-         close/1, http_get/2, stop/1]).
+         close/1, http_get/2, stop/1,
+         service_processes/0, supervisor_descendants/1,
+         owned_tables/1, table_exists/1]).
+
+%% Observe only this test's links and the demo's named actors, not VM-wide
+%% process counts. The integration suite runs sequentially.
+-spec service_processes() -> [pid()].
+service_processes() ->
+    {links, Links} = process_info(self(), links),
+    Named = [whereis(Name) || Name <- registered(),
+        lists:prefix("beryl_presence$", atom_to_list(Name)) orelse
+        lists:prefix("beryl_demo_expiry$", atom_to_list(Name))],
+    lists:usort([Pid || Pid <- Links ++ Named,
+        is_pid(Pid), is_process_alive(Pid)]).
+
+%% Call only on a healthy, quiescent supervisor. Unexpected supervisor exits
+%% remain test failures rather than becoming an empty, success-shaped list.
+%% Only direct children are needed: the root owns presence and expiry (and
+%% their ETS tables), and all its direct children must stop with it. Do not
+%% recurse by child-spec type: Glisten's factory is tagged supervisor but is
+%% a Gleam actor that does not implement supervisor:which_children/1.
+-spec supervisor_descendants(pid()) -> [pid()].
+supervisor_descendants(Supervisor) ->
+    lists:map(fun
+        ({_, Pid, _, _}) when is_pid(Pid) ->
+            Pid
+    end, supervisor:which_children(Supervisor)).
+
+%% Capture table identifiers, not names: a later table with the same name must
+%% not be mistaken for the table owned by the process under test.
+-spec owned_tables([pid()]) -> [ets:tid()].
+owned_tables(Pids) ->
+    [case is_atom(Table) of
+         true -> ets:whereis(Table);
+         false -> Table
+     end || Table <- ets:all(),
+        lists:member(ets:info(Table, owner), Pids)].
+
+-spec table_exists(ets:tid()) -> boolean().
+table_exists(Table) ->
+    ets:info(Table) =/= undefined.
 
 http_get(Port, Path) ->
     case gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}], 5000) of

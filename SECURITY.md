@@ -1,10 +1,9 @@
 # Security
 
 This document describes beryl's security model and the deployment hardening it
-assumes. Read it before running beryl in production, especially the **trust
-boundary** section — beryl's distributed features inherit the BEAM's cluster
-trust model, and evaluating that boundary is a deployment responsibility, not
-something the library can enforce for you.
+assumes. Read the **trust boundary** section before enabling Erlang distribution.
+beryl's distributed features inherit the BEAM's cluster trust model. Operators
+must enforce that boundary; the library cannot secure distribution for them.
 
 > [!IMPORTANT]
 > beryl is not yet 1.0 and is not considered production-ready. This document
@@ -60,18 +59,20 @@ untrusted nodes out.
 
 ## Erlang distribution hardening
 
-If you run more than one node, you must secure Erlang distribution itself.
-None of the following is specific to beryl; it is the baseline for any
-distributed BEAM application, and beryl assumes you have done it.
+Before enabling Erlang distribution, restrict its ports to trusted hosts and
+configure mutually verified TLS. Apply these controls even to a single node,
+in development and staging as well as production. These requirements apply to
+any BEAM application with distribution enabled, whether or not it runs beryl.
 
 ### Protect and randomize the Erlang cookie
 
 Nodes compare a shared **Erlang cookie** when connecting. Erlang
 [documents this mechanism](https://www.erlang.org/doc/system/distributed.html#security)
 as protection against accidental cross-cluster connections, not as
-cryptographically secure authentication against an adversary. Any node that
-knows the cookie and can reach a distribution port can join the cluster and is
-then fully trusted (see the trust boundary above).
+cryptographically secure authentication against an adversary. With plain
+distribution, a node that knows the cookie and can reach a distribution port
+can join the cluster and is then fully trusted. With mutually verified TLS
+distribution, the peer must also pass certificate verification.
 
 - Generate a long, high-entropy cookie; never ship the default `~/.erlang.cookie`
   that some tooling auto-generates, and never commit a cookie to source control.
@@ -91,9 +92,9 @@ integrity.
 
 Plain Erlang distribution traffic is unencrypted and its handshake is not
 cryptographically secure. Use **TLS distribution** (`inet_tls_dist`) with
-mutual certificate verification for secure multi-node deployments, including
-traffic within private networks. This protects the handshake and inter-node
-payloads from eavesdropping, tampering, and peer impersonation. See the Erlang/OTP
+mutual certificate verification when enabling distribution, including on
+private networks. This protects the handshake and inter-node payloads from
+eavesdropping, tampering, and peer impersonation. See the Erlang/OTP
 [Using TLS for Erlang Distribution](https://www.erlang.org/doc/apps/ssl/ssl_distribution.html)
 guide.
 
@@ -114,9 +115,8 @@ privileged ports:
 
 ### Keep cluster membership closed
 
-- **Do not connect beryl nodes to a shared or untrusted cluster.** Because every
-  peer is trusted, adding beryl to a multi-tenant or third-party BEAM cluster
-  hands those peers the ability to inject internal beryl traffic. Run beryl in a
+- **Do not admit untrusted peers to an Erlang cluster.** A connected peer can
+  execute code on your node whether or not beryl is installed. Run beryl in a
   dedicated cluster whose membership you control.
 - Prefer explicit, static topologies (or a vetted cluster-formation mechanism)
   over open auto-discovery that could admit an unexpected node.

@@ -22,6 +22,8 @@ import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/option.{None}
 import gleam/result
+import glisten/socket as glisten_socket
+import glisten/transport as glisten_transport
 
 /// Upgrade a request to WebSocket if it matches the configured path.
 ///
@@ -38,8 +40,9 @@ import gleam/result
 /// ```
 ///
 /// Path matching, origin policy, `?vsn` version negotiation, connection
-/// limits (per-IP and node-wide, rejected with `429 Too Many Requests`), and
-/// the `on_connect` callback use the shared admission pipeline. See
+/// limits (per-IP and per beryl system on the current node, rejected with
+/// `429 Too Many Requests`), and the `on_connect` callback use the shared
+/// admission pipeline. See
 /// `beryl/transport/server.upgrade` for the full contract. Enforcement
 /// uses the real socket peer IP from the TCP connection; forwarded headers
 /// such as `X-Forwarded-For` are not trusted.
@@ -58,7 +61,14 @@ pub fn upgrade(
     request_ip: request_ip,
     reject: reject,
     accept: fn(metadata, connection_permit) {
-      do_upgrade(request, channels, metadata, connection_permit, telemetry)
+      do_upgrade(
+        request,
+        channels,
+        config,
+        metadata,
+        connection_permit,
+        telemetry,
+      )
     },
     next: next,
   )
@@ -106,6 +116,7 @@ pub fn handler(
 fn do_upgrade(
   request: Request(Connection),
   channels: Sockets,
+  config: server.TransportConfig(Connection),
   connect_metadata: List(#(String, String)),
   connection_permit: transport.ConnectionPermit,
   telemetry: transport.Telemetry,
@@ -113,7 +124,7 @@ fn do_upgrade(
   let seed = server.connect_seed(request, connect_metadata)
   ewe.upgrade_websocket(
     request,
-    on_init: fn(_connection, base_selector: Selector(SendRequest)) {
+    on_init: fn(connection, base_selector: Selector(SendRequest)) {
       // Extend the selector Ewe provides so the runtime can push outbound
       // frames to this connection's process as `ewe.User(SendRequest)`
       // messages.
@@ -122,6 +133,8 @@ fn do_upgrade(
         seed: seed,
         connection_permit: connection_permit,
         base_selector: base_selector,
+        config: config,
+        force_close: fn() { force_close(connection) },
         logger_name: "beryl_ewe",
         telemetry: telemetry,
         codec: None,
@@ -130,6 +143,17 @@ fn do_upgrade(
     handler: on_message,
     on_close: fn(_connection, state) { server.close_connection(state) },
   )
+}
+
+fn force_close(
+  connection: WebsocketConnection,
+) -> Result(Nil, server.ForceCloseError) {
+  case glisten_transport.close(connection.transport, connection.socket) {
+    Ok(Nil) | Error(glisten_socket.Closed) | Error(glisten_socket.Enotconn) ->
+      Ok(Nil)
+    Error(reason) ->
+      Error(server.ForceCloseFailed(glisten_socket.reason_to_string(reason)))
+  }
 }
 
 /// Handle incoming WebSocket messages.
@@ -147,14 +171,18 @@ fn on_message(
     ewe.Text(text) -> resume(server.handle_text_frame(state, text))
     ewe.Binary(data) -> resume(server.handle_binary_frame(state, data))
     ewe.User(server.Close) -> ewe.websocket_stop()
-    ewe.User(server.SendText(text)) -> {
-      let _send_result = ewe.send_text_frame(connection, text)
-      ewe.websocket_continue(state)
-    }
-    ewe.User(server.SendBinary(data)) -> {
-      let _send_result = ewe.send_binary_frame(connection, data)
-      ewe.websocket_continue(state)
-    }
+    ewe.User(server.SendText(text, bytes)) ->
+      resume(server.finish_outbound_write(
+        state,
+        bytes,
+        ewe.send_text_frame(connection, text) |> result.is_ok,
+      ))
+    ewe.User(server.SendBinary(data, bytes)) ->
+      resume(server.finish_outbound_write(
+        state,
+        bytes,
+        ewe.send_binary_frame(connection, data) |> result.is_ok,
+      ))
   }
 }
 

@@ -19,6 +19,7 @@ fn connect_ffi(
   on_join: fn(String) -> Nil,
   on_join_error: fn(String) -> Nil,
   on_presence_diff: fn(String) -> Nil,
+  on_presence_state: fn(String) -> Nil,
   on_close: fn(String) -> Nil,
 ) -> Nil
 
@@ -62,6 +63,12 @@ fn run_one(command: model.Command) -> Effect(model.Message) {
           fn(encoded) {
             case protocol.decode_diff(encoded) {
               Ok(diff) -> dispatch(model.PresenceDiffReceived(diff))
+              Error(reason) -> dispatch(model.ProtocolFailed(reason))
+            }
+          },
+          fn(encoded) {
+            case protocol.decode_state(encoded) {
+              Ok(state) -> dispatch(model.PresenceStateReceived(state))
               Error(reason) -> dispatch(model.ProtocolFailed(reason))
             }
           },

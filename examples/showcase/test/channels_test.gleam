@@ -12,6 +12,35 @@ import gleam/string
 import gleeunit/should
 import showcase_harness
 
+pub fn showcase_bounds_presence_topics_per_socket_test() -> Nil {
+  let system = showcase_harness.start("topic-limit")
+  let frames = showcase_harness.connect(system, "limited")
+  [1, 2, 3, 4, 5, 6, 7, 8]
+  |> list.each(fn(index) {
+    let topic =
+      "demo:presence:" <> string.repeat("0", 31) <> int.to_string(index)
+    let reference = int.to_string(index)
+    showcase_harness.join(
+      system,
+      "limited",
+      topic,
+      reference,
+      "{\"client_id\":\"11111111-1111-1111-1111-111111111111\",\"compatibility_version\":1,\"name\":\"Alice\",\"color\":\"emerald\"}",
+    )
+    showcase_harness.expect(frames, ["phx_reply", "\"status\":\"ok\"", topic])
+  })
+  let topic = "demo:presence:" <> string.repeat("0", 31) <> "9"
+  showcase_harness.join(
+    system,
+    "limited",
+    topic,
+    "9",
+    "{\"client_id\":\"11111111-1111-1111-1111-111111111111\",\"compatibility_version\":1,\"name\":\"Alice\",\"color\":\"emerald\"}",
+  )
+  showcase_harness.expect(frames, ["phx_reply", "\"status\":\"error\"", topic])
+  showcase_harness.stop(system)
+}
+
 // ---------------------------------------------------------------------------
 // cursor:*
 // ---------------------------------------------------------------------------

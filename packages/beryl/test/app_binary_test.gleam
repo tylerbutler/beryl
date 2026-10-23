@@ -48,7 +48,7 @@ pub fn raw_binary_fans_out_to_joined_topics_in_sorted_order_test() -> Nil {
   let _reply_a = app_test_helper.recv(frames)
   let assert Ok(Join(_, _, _)) = process.receive(events, 500)
 
-  transport.route_binary(channels, "s1", <<1, 2, 3>>)
+  let assert Ok(_) = transport.route_binary(channels, "s1", <<1, 2, 3>>)
 
   let assert Ok(Binary("room:a", <<1, 2, 3>>)) = process.receive(events, 500)
   let assert Ok(Binary("room:b", <<1, 2, 3>>)) = process.receive(events, 500)
@@ -60,7 +60,7 @@ pub fn binary_to_unjoined_socket_is_dropped_test() -> Nil {
   let channels = start_system(events)
   let _frames = app_test_helper.connect(channels, "s1")
 
-  transport.route_binary(channels, "s1", <<1, 2, 3>>)
+  let assert Ok(_) = transport.route_binary(channels, "s1", <<1, 2, 3>>)
 
   let assert Error(Nil) = process.receive(events, 100)
   Nil
@@ -83,10 +83,10 @@ pub fn raw_binary_consumes_one_message_rate_token_test() -> Nil {
   let assert Ok(Join(_, _, _)) = process.receive(events, 500)
 
   // The first raw binary frame spends the single token and fans out.
-  transport.route_binary(channels, "s1", <<1, 2, 3>>)
+  let assert Ok(_) = transport.route_binary(channels, "s1", <<1, 2, 3>>)
   let assert Ok(Binary("room:a", <<1, 2, 3>>)) = process.receive(events, 500)
 
   // The second is shed by the runtime's message limiter.
-  transport.route_binary(channels, "s1", <<4, 5, 6>>)
+  let assert Ok(_) = transport.route_binary(channels, "s1", <<4, 5, 6>>)
   process.receive(events, 100) |> should.be_error
 }

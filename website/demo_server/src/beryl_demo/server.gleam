@@ -11,9 +11,11 @@ import beryl_demo/expiry.{type Expiry}
 import beryl_demo/presence_channel
 import beryl_demo/router
 import beryl_mist as mist_transport
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/otp/actor
 import gleam/otp/static_supervisor.{type Supervisor}
+import gleam/otp/supervision
 import gleam/result
 import mist
 
@@ -29,25 +31,21 @@ pub type OriginMode {
 
 /// Handles returned by `start` that the caller owns for lifecycle management.
 ///
-/// `supervisor` owns the beryl channel system; `listener` is the Mist
-/// listener. Stop both, plus `expiry`, to tear the service down.
+/// `supervisor` owns presence, expiry, the channel system, and the listener.
+/// Stop this supervisor to tear down the complete service.
 pub type Started {
   Started(
     port: Int,
     sockets: beryl.Sockets,
     expiry: Expiry,
     supervisor: actor.Started(Supervisor),
-    listener: actor.Started(Supervisor),
   )
 }
 
 /// Why the demo service failed to start.
 pub type StartError {
-  PresenceNotStarted(reason: actor.StartError)
-  ExpiryNotStarted(reason: actor.StartError)
   InvalidChannelSystem(reason: channel.ChildSpecError)
   SupervisorNotStarted(reason: actor.StartError)
-  ListenerNotStarted(reason: actor.StartError)
   /// Mist started but did not report its bound port within five seconds.
   PortNotReported
 }
@@ -60,14 +58,10 @@ pub fn start(
   service_config: config.Config,
   origin_mode: OriginMode,
 ) -> Result(Started, StartError) {
-  use presence_actor <- result.try(
-    presence.start(presence.default_config("beryl_demo@node"))
-    |> result.map_error(PresenceNotStarted),
-  )
-  use expiry_actor <- result.try(
-    expiry.start(service_config.session_ttl_ms)
-    |> result.map_error(ExpiryNotStarted),
-  )
+  let #(presence_actor, presence_spec) =
+    presence.child_spec(presence.default_config("beryl_demo@node"))
+  let #(expiry_actor, expiry_spec) =
+    expiry.child_spec(service_config.session_ttl_ms)
 
   let beryl_config =
     beryl.config(wire.phoenix_codec())
@@ -85,34 +79,39 @@ pub fn start(
     ])
     |> result.map_error(InvalidChannelSystem),
   )
+  let port_subject = process.new_subject()
+  let listener_spec =
+    supervision.supervisor(fn() {
+      mist_transport.handler(
+        sockets,
+        transport_config(origin_mode),
+        fn(http_request) { router.handle_request(http_request, service_config) },
+      )
+      |> mist.new
+      |> mist.port(service_config.port)
+      |> mist.bind(service_config.bind_address)
+      |> mist.after_start(fn(port, _scheme, _ip_address) {
+        process.send(port_subject, port)
+      })
+      |> mist.start
+    })
   use supervisor <- result.try(
-    static_supervisor.new(static_supervisor.OneForOne)
+    static_supervisor.new(static_supervisor.OneForAll)
+    |> static_supervisor.add(presence_spec)
+    |> static_supervisor.add(expiry_spec)
     |> static_supervisor.add(channel_spec)
+    |> static_supervisor.add(listener_spec)
     |> static_supervisor.start
     |> result.map_error(SupervisorNotStarted),
   )
-
-  let port_subject = process.new_subject()
-  use listener <- result.try(
-    mist_transport.handler(
-      sockets,
-      transport_config(origin_mode),
-      fn(http_request) { router.handle_request(http_request, service_config) },
-    )
-    |> mist.new
-    |> mist.port(service_config.port)
-    |> mist.bind(service_config.bind_address)
-    |> mist.after_start(fn(port, _scheme, _ip_address) {
-      process.send(port_subject, port)
-    })
-    |> mist.start
-    |> result.map_error(ListenerNotStarted),
-  )
-  use port <- result.try(
-    process.receive(port_subject, 5000)
-    |> result.replace_error(PortNotReported),
-  )
-  Ok(Started(port:, sockets:, expiry: expiry_actor, supervisor:, listener:))
+  case process.receive(port_subject, 5000) {
+    Ok(port) -> Ok(Started(port:, sockets:, expiry: expiry_actor, supervisor:))
+    Error(Nil) -> {
+      process.unlink(supervisor.pid)
+      process.send_abnormal_exit(supervisor.pid, atom.create("shutdown"))
+      Error(PortNotReported)
+    }
+  }
 }
 
 fn transport_config(

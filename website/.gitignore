@@ -1,7 +1,10 @@
 dist/
 .astro/
 .netlify/
+.wrangler/
 node_modules/
 *.tsbuildinfo
 *.done.build.log
 interactive/build/
+test-results/
+playwright-report/

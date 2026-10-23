@@ -98,3 +98,21 @@ test("supports keyboard operation at a mobile width", async ({ page }) => {
   );
   expect(hasHorizontalOverflow).toBe(false);
 });
+
+test("concurrent joins converge and departures reach every roster", async ({ context }) => {
+  const pages = await Promise.all(Array.from({ length: 4 }, () => context.newPage()));
+  await Promise.all(pages.map((page) => page.goto("/examples/")));
+  await Promise.all(pages.map(async (page) => {
+    const lab = page.locator("beryl-presence-lab");
+    await expect(lab.getByTestId("connect-primary")).toBeVisible();
+    await lab.evaluate((element) => element.setAttribute("reset-token", "abcdef0123456789abcdef0123456789"));
+  }));
+  for (const page of pages) {
+    await expect(page.locator("beryl-presence-lab").getByTestId("presence-list").locator("li")).toHaveCount(4);
+  }
+  await pages.pop().close();
+  for (const page of pages) {
+    await expect(page.locator("beryl-presence-lab").getByTestId("presence-list").locator("li")).toHaveCount(3);
+  }
+  await Promise.all(pages.map((page) => page.close()));
+});

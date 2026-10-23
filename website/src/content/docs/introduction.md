@@ -2,10 +2,9 @@
 title: What is beryl?
 ---
 
-:::note[Pre-1.0]
-beryl is not yet version 1.0. Minor releases can change the API, and the
-library is not ready for production. Report problems to help define version
-1.0.
+:::note[Stability]
+beryl is pre-1.0. Minor releases can change the API. See the
+[stability policy](/reference/#versioning-before-10) before you adopt it.
 :::
 
 beryl is a **type-safe library for real-time Gleam channels and presence** on
@@ -170,6 +169,6 @@ modules, callbacks, and assigns with both beryl APIs.
 - [Quick Start](/quick-start/) — get a working server in minutes
 - [Channels guide](/guides/channels/) — handlers, typed state, actions, and close behavior
 - [Dispatch guide](/guides/dispatch/) — route topics, messages, and close events in one app
-- [Supervision guide](/guides/supervision/) — production startup with OTP supervision
+- [Supervision guide](/guides/supervision/) — recommended startup order and OTP supervision
 - [Error Handling guide](/guides/error-handling/) — rejected joins, rate limits, and more
 - [Troubleshooting](/troubleshooting/) — symptom-first diagnostics

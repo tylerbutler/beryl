@@ -204,32 +204,66 @@ fn dynamic_to_json_limited(
   value: Dynamic,
   remaining_depth: Int,
 ) -> Result(json.Json, Nil) {
-  decode.run(value, json_decoder(remaining_depth))
+  decode.run(value, decode.string)
+  |> result.map(json.string)
+  |> result.lazy_or(fn() {
+    decode.run(value, decode.int)
+    |> result.map(json.int)
+  })
+  |> result.lazy_or(fn() {
+    decode.run(value, decode.float)
+    |> result.map(json.float)
+  })
+  |> result.lazy_or(fn() {
+    decode.run(value, decode.bool)
+    |> result.map(json.bool)
+  })
+  |> result.lazy_or(fn() {
+    decode.run(value, decode.optional(decode.failure(Nil, expected: "Nil")))
+    |> result.map(fn(_) { json.null() })
+  })
   |> result.replace_error(Nil)
+  |> result.lazy_or(fn() { dynamic_container_to_json(value, remaining_depth) })
 }
 
-fn json_decoder(remaining_depth: Int) -> decode.Decoder(json.Json) {
-  let scalar_decoder =
-    decode.one_of(decode.string |> decode.map(json.string), [
-      decode.int |> decode.map(json.int),
-      decode.float |> decode.map(json.float),
-      decode.bool |> decode.map(json.bool),
-      decode.optional(decode.failure(json.null(), expected: "Nil"))
-        |> decode.map(fn(_) { json.null() }),
-    ])
+fn dynamic_container_to_json(
+  value: Dynamic,
+  remaining_depth: Int,
+) -> Result(json.Json, Nil) {
+  use <- bool.guard(when: remaining_depth <= 0, return: Error(Nil))
 
-  case remaining_depth <= 0 {
-    True -> scalar_decoder
-    False -> {
-      let nested_decoder =
-        decode.recursive(fn() { json_decoder(remaining_depth - 1) })
-      decode.one_of(scalar_decoder, [
-        decode.list(nested_decoder) |> decode.map(json.preprocessed_array),
-        decode.dict(decode.string, nested_decoder)
-          |> decode.map(fn(fields) { fields |> dict.to_list() |> json.object() }),
-      ])
-    }
+  case
+    decode.run(value, decode.list(decode.dynamic))
+    |> result.replace_error(Nil)
+  {
+    Ok(items) ->
+      items
+      |> list.try_map(fn(item) {
+        dynamic_to_json_limited(item, remaining_depth - 1)
+      })
+      |> result.map(json.preprocessed_array)
+    Error(Nil) -> dynamic_object_to_json(value, remaining_depth - 1)
   }
+}
+
+fn dynamic_object_to_json(
+  value: Dynamic,
+  remaining_depth: Int,
+) -> Result(json.Json, Nil) {
+  use fields <- result.try(
+    decode.run(value, decode.dict(decode.string, decode.dynamic))
+    |> result.replace_error(Nil),
+  )
+  fields
+  |> dict.to_list
+  |> list.try_map(fn(field) {
+    use converted_value <- result.try(dynamic_to_json_limited(
+      field.1,
+      remaining_depth,
+    ))
+    Ok(#(field.0, converted_value))
+  })
+  |> result.map(json.object)
 }
 
 fn within_json_depth(value: Dynamic, remaining_depth: Int) -> Bool {
@@ -251,9 +285,9 @@ fn within_object_depth(value: Dynamic, remaining_depth: Int) -> Bool {
   case decode.run(value, dict_decoder) |> result.replace_error(Nil) {
     Ok(fields) ->
       remaining_depth > 0
-      && fields
-      |> dict.values()
-      |> list.all(fn(nested) { within_json_depth(nested, remaining_depth - 1) })
+      && dict.fold(fields, True, fn(within_depth, _key, nested) {
+        within_depth && within_json_depth(nested, remaining_depth - 1)
+      })
     Error(Nil) -> True
   }
 }

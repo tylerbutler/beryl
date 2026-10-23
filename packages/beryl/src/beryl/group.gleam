@@ -21,6 +21,7 @@
 //// ```
 
 import beryl
+import beryl/overload
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/json
@@ -61,6 +62,13 @@ pub type GroupError {
   GroupNotFound(name: String)
 }
 
+/// A group lookup or one topic's local broadcast admission failed.
+pub type BroadcastError {
+  GroupLookupFailed(GroupError)
+  /// Earlier topics were admitted; the failing topic and later topics were not.
+  BroadcastRejected(admitted_topics: Int, reason: overload.AdmissionError)
+}
+
 /// Messages that the groups actor handles.
 pub opaque type Message {
   Create(name: String, reply: Subject(Result(Nil, GroupError)))
@@ -93,7 +101,8 @@ pub fn default_config() -> Config {
 ///
 /// This applies to `create`, `delete`, `add`, `remove`, `topics`, and
 /// `list_groups`. These functions panic if the actor does not reply within
-/// this timeout.
+/// this timeout. If the panic is caught, the caller retains no call monitor
+/// and receives no late reply. A timed-out mutation may still be applied.
 pub fn with_call_timeout(_config: Config, timeout_ms: Int) -> Config {
   Config(call_timeout_ms: timeout_ms)
 }
@@ -155,14 +164,19 @@ fn build_groups() -> actor.Builder(State, Message, Subject(Message)) {
   |> actor.on_message(handle_message)
 }
 
+@external(erlang, "beryl_ffi", "actor_call")
+fn call(
+  subject: Subject(Message),
+  timeout_ms: Int,
+  request: fn(Subject(reply)) -> Message,
+) -> reply
+
 /// Create a named group.
 ///
 /// Panics if the groups actor is unavailable or does not reply within the
 /// configured call timeout (5 seconds by default).
 pub fn create(groups: Groups, name: String) -> Result(Nil, GroupError) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
-    Create(name, reply)
-  })
+  call(groups.subject, groups.call_timeout_ms, fn(reply) { Create(name, reply) })
 }
 
 /// Delete a group.
@@ -170,9 +184,7 @@ pub fn create(groups: Groups, name: String) -> Result(Nil, GroupError) {
 /// Panics if the groups actor is unavailable or does not reply within the
 /// configured call timeout (5 seconds by default).
 pub fn delete(groups: Groups, name: String) -> Result(Nil, GroupError) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
-    Delete(name, reply)
-  })
+  call(groups.subject, groups.call_timeout_ms, fn(reply) { Delete(name, reply) })
 }
 
 /// Add a topic to a group.
@@ -184,7 +196,7 @@ pub fn add(
   group_name: String,
   topic: String,
 ) -> Result(Nil, GroupError) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+  call(groups.subject, groups.call_timeout_ms, fn(reply) {
     Add(group_name, topic, reply)
   })
 }
@@ -198,7 +210,7 @@ pub fn remove(
   group_name: String,
   topic: String,
 ) -> Result(Nil, GroupError) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+  call(groups.subject, groups.call_timeout_ms, fn(reply) {
     Remove(group_name, topic, reply)
   })
 }
@@ -211,7 +223,7 @@ pub fn topics(
   groups: Groups,
   group_name: String,
 ) -> Result(Set(String), GroupError) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
+  call(groups.subject, groups.call_timeout_ms, fn(reply) {
     GetTopics(group_name, reply)
   })
 }
@@ -221,16 +233,16 @@ pub fn topics(
 /// Panics if the groups actor is unavailable or does not reply within the
 /// configured call timeout (5 seconds by default).
 pub fn list_groups(groups: Groups) -> List(String) {
-  process.call(groups.subject, groups.call_timeout_ms, fn(reply) {
-    ListGroups(reply)
-  })
+  call(groups.subject, groups.call_timeout_ms, fn(reply) { ListGroups(reply) })
 }
 
 /// Broadcast a message to all topics in a group.
 ///
 /// This function sends the message to each topic through `beryl.broadcast`.
 /// The groups actor performs the topic lookup. The caller performs the
-/// fan-out. If the group does not exist, this function does nothing.
+/// fan-out. A missing group returns `GroupLookupFailed`. On admission failure,
+/// `BroadcastRejected` reports the number of earlier topics admitted. Those
+/// admissions remain valid; fan-out is not transactional.
 ///
 /// Panics if the groups actor is unavailable or does not reply within the
 /// configured call timeout.
@@ -240,12 +252,11 @@ pub fn broadcast(
   group_name: String,
   event: String,
   payload: json.Json,
-) -> Nil {
-  case topics(groups, group_name) {
-    Ok(topics) -> broadcast_to_topics(topics, channels, event, payload)
-    Error(GroupAlreadyExists(_)) -> Nil
-    Error(GroupNotFound(_)) -> Nil
-  }
+) -> Result(Nil, BroadcastError) {
+  use topics <- result.try(
+    topics(groups, group_name) |> result.map_error(GroupLookupFailed),
+  )
+  broadcast_to_topics(topics, channels, event, payload)
 }
 
 // ── Actor loop ──────────────────────────────────────────────────────────────
@@ -339,7 +350,12 @@ fn broadcast_to_topics(
   channels: beryl.Sockets,
   event: String,
   payload: json.Json,
-) -> Nil {
+) -> Result(Nil, BroadcastError) {
   set.to_list(topics)
-  |> list.each(fn(topic) { beryl.broadcast(channels, topic, event, payload) })
+  |> list.try_fold(0, fn(admitted, topic) {
+    beryl.broadcast(channels, topic, event, payload)
+    |> result.map(fn(_) { admitted + 1 })
+    |> result.map_error(fn(error) { BroadcastRejected(admitted, error) })
+  })
+  |> result.map(fn(_) { Nil })
 }
