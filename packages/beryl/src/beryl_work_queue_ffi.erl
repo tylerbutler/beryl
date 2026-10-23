@@ -13,7 +13,7 @@ new(MaxItems, MaxBytes, Boundary, Telemetry, Wake)
     State = #{open => true, close_reason => none, version => 0, items => 0, bytes => 0,
               high_items => 0, high_bytes => 0, rejected => 0, cancelled => 0,
               pending => queue:new(),
-              leases => #{}, cleanups => #{}, notified => false},
+              leases => #{}, cleanups => #{}, targets => #{}, notified => false},
     true = ets:insert(Table, {state, State}),
     {Table, self(), MaxItems, MaxBytes, Boundary, Telemetry, Wake}.
 
@@ -56,19 +56,56 @@ close_with_error(Queue, Error) ->
         Changed -> Changed
     end.
 
-register_target({Table, Owner, _, _, _, _, _}, Key, Target) when Owner =:= self() ->
-    true = ets:insert(Table, {{target, Key}, Target}),
-    nil.
+register_target(Queue = {_, Owner, _, _, _, _, _}, Key, Target) when Owner =:= self() ->
+    Incarnation = make_ref(),
+    update(Queue, fun(State) ->
+        Next = without_target(State, Key),
+        Targets = maps:get(targets, Next),
+        {replace, Next#{targets := Targets#{Key => {Incarnation, Target, open}}}, nil}
+    end).
 
-remove_target({Table, Owner, _, _, _, _, _}, Key) when Owner =:= self() ->
-    true = ets:delete(Table, {target, Key}),
-    nil.
+remove_target(Queue = {_, Owner, _, _, _, _, _}, Key) when Owner =:= self() ->
+    update(Queue, fun(State) -> {replace, without_target(State, Key), nil} end).
 
-close_target({Table, _, _, _, _, _, _}, Key) ->
-    case safe_lookup(Table, {target, Key}) of
-        [] -> nil;
-        [{_, Target = {_, _, _, _, _, _, Wake}}] ->
-            case close_once(Target) of true -> Wake(); false -> nil end
+without_target(State, Key) ->
+    State#{targets := maps:remove(Key, maps:get(targets, State)),
+           pending := queue:filter(fun
+               ({target_close, TargetKey, _, _}) -> TargetKey =/= Key;
+               (_) -> true
+           end, maps:get(pending, State))}.
+
+close_target(Queue = {Table, _, _, _, _, _, _}, Key) ->
+    %% Capture the incarnation once, including across CAS retries.
+    case safe_lookup(Table, state) of
+        [{state, #{targets := Targets}}] ->
+            case maps:find(Key, Targets) of
+                {ok, {Incarnation, Target, open}} ->
+                    schedule_target_close(Queue, Key, Incarnation, Target);
+                _ -> nil
+            end;
+        [] -> nil
+    end.
+
+schedule_target_close(Queue, Key, Incarnation, Target) ->
+    Result = update(Queue, fun(State) ->
+        Targets = maps:get(targets, State),
+        case maps:find(Key, Targets) of
+            {ok, {Incarnation, Target, open}} ->
+                %% One fixed-size lifecycle control per registered target,
+                %% separate from (and never reducing) the data capacity.
+                Control = {target_close, Key, Incarnation, Target},
+                {replace, State#{
+                    targets := Targets#{Key := {Incarnation, Target, closing}},
+                    pending := queue:in(Control, maps:get(pending, State)),
+                    notified := true},
+                    {published, Incarnation, not maps:get(notified, State)}};
+            _ -> {return, nil}
+        end
+    end),
+    case Result of
+        {ok, _} -> nil;
+        {error, unavailable} -> nil;
+        nil -> nil
     end.
 
 call(Queue, Timeout, Request) ->
@@ -357,10 +394,12 @@ publish(Queue = {_, _, MaxItems, MaxBytes, Boundary, _, _}, Message, Bytes)
     end.
 
 take(Queue = {_, Owner, _, _, _, _, _}) when Owner =:= self() ->
-    update(Queue, fun(State) ->
+    Result = update(Queue, fun(State) ->
         case queue:out(maps:get(pending, State)) of
             {empty, _} ->
                 {replace, State#{notified := false}, {error, nil}};
+            {{value, {target_close, _, _, Target}}, Pending} ->
+                {replace, State#{pending := Pending}, {target_closed, Target}};
             {{value, Id}, Pending} ->
                 Leases = maps:get(leases, State),
                 {pending, Bytes, At, Message} = maps:get(Id, Leases),
@@ -369,7 +408,13 @@ take(Queue = {_, Owner, _, _, _, _, _}) when Owner =:= self() ->
                               leases := Leases#{Id := {running, Bytes, At}}},
                 {replace, Next, {ok, {Id, Message}}}
         end
-    end).
+    end),
+    case Result of
+        {target_closed, Target = {_, _, _, _, _, _, Wake}} ->
+            case close_once(Target) of true -> Wake(); false -> nil end,
+            take(Queue);
+        _ -> Result
+    end.
 
 take_matching(Queue = {_, Owner, _, _, _, _, _}, Eligible) when Owner =:= self() ->
     update(Queue, fun(State) ->
@@ -387,6 +432,8 @@ take_matching(Queue = {_, Owner, _, _, _, _, _}, Eligible) when Owner =:= self()
     end).
 
 first_eligible([], _, _) -> none;
+first_eligible([{target_close, _, _, _} | Rest], Leases, Eligible) ->
+    first_eligible(Rest, Leases, Eligible);
 first_eligible([Id | Rest], Leases, Eligible) ->
     {pending, Bytes, At, Message} = maps:get(Id, Leases),
     case Eligible(Message) of

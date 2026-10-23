@@ -126,6 +126,187 @@ pub fn closed_queue_drains_but_rejects_new_work_test() -> Nil {
   work_queue.take(queue) |> should.equal(Ok(#(reservation, 1)))
 }
 
+pub fn target_close_waits_for_router_fifo_without_using_data_capacity_test() -> Nil {
+  let assert Ok(limits) = overload.limits(items: 1, bytes: 8)
+  let router = work_queue.new(limits, overload.RouterQueue, False, fn() { Nil })
+  let target = work_queue.new(limits, overload.SocketQueue, False, fn() { Nil })
+  work_queue.register_target(router, "socket", target)
+  let assert Ok(first) = work_queue.publish(router, "first", 8)
+  work_queue.close_target(router, "socket")
+  let assert Ok(full) = work_queue.snapshot(router)
+  full.items |> should.equal(1)
+  full.bytes |> should.equal(8)
+  full.high_items |> should.equal(1)
+  work_queue.is_open(target) |> should.be_true()
+  work_queue.take(router) |> should.equal(Ok(#(first, "first")))
+  work_queue.is_open(target) |> should.be_true()
+  work_queue.release(router, first)
+  let assert Ok(second) = work_queue.publish(router, "second", 8)
+  work_queue.take(router) |> should.equal(Ok(#(second, "second")))
+  work_queue.is_open(target) |> should.be_false()
+  work_queue.release(router, second)
+  work_queue.take(router) |> should.equal(Error(Nil))
+  let assert Ok(empty) = work_queue.snapshot(router)
+  empty.items |> should.equal(0)
+  empty.bytes |> should.equal(0)
+}
+
+pub fn concurrent_target_closes_coalesce_until_removal_test() -> Nil {
+  let wakes = process.new_subject()
+  let closed = process.new_subject()
+  let completed = process.new_subject()
+  let router =
+    work_queue.new(overload.worker_limits(), overload.RouterQueue, False, fn() {
+      process.send(wakes, Nil)
+    })
+  let target =
+    work_queue.new(overload.worker_limits(), overload.SocketQueue, False, fn() {
+      process.send(closed, Nil)
+    })
+  work_queue.register_target(router, "socket", target)
+  list.repeat(Nil, 32)
+  |> list.each(fn(_) {
+    let _producer =
+      process.spawn_unlinked(fn() {
+        work_queue.close_target(router, "socket")
+        process.send(completed, Nil)
+      })
+  })
+  list.repeat(Nil, 32)
+  |> list.each(fn(_) {
+    process.receive(completed, 1000) |> should.equal(Ok(Nil))
+  })
+  process.receive(wakes, 0) |> should.equal(Ok(Nil))
+  process.receive(wakes, 0) |> should.equal(Error(Nil))
+  work_queue.is_open(target) |> should.be_true()
+  work_queue.take(router) |> should.equal(Error(Nil))
+  process.receive(closed, 0) |> should.equal(Ok(Nil))
+  work_queue.close_target(router, "socket")
+  work_queue.take(router) |> should.equal(Error(Nil))
+  process.receive(wakes, 0) |> should.equal(Error(Nil))
+  process.receive(closed, 0) |> should.equal(Error(Nil))
+  work_queue.remove_target(router, "socket")
+}
+
+pub fn removing_or_replacing_target_cancels_its_queued_close_test() -> Nil {
+  let router =
+    work_queue.new(overload.worker_limits(), overload.RouterQueue, False, fn() {
+      Nil
+    })
+  let previous =
+    work_queue.new(overload.worker_limits(), overload.SocketQueue, False, fn() {
+      Nil
+    })
+  let current =
+    work_queue.new(overload.worker_limits(), overload.SocketQueue, False, fn() {
+      Nil
+    })
+  work_queue.register_target(router, "socket", previous)
+  work_queue.close_target(router, "socket")
+  work_queue.remove_target(router, "socket")
+  work_queue.register_target(router, "socket", current)
+  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.is_open(previous) |> should.be_true()
+  work_queue.is_open(current) |> should.be_true()
+  work_queue.close_target(router, "socket")
+  work_queue.register_target(router, "socket", previous)
+  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.is_open(current) |> should.be_true()
+  work_queue.close_target(router, "socket")
+  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.is_open(previous) |> should.be_false()
+  work_queue.is_open(current) |> should.be_true()
+}
+
+pub fn selective_take_leaves_target_close_for_fifo_drain_test() -> Nil {
+  let router =
+    work_queue.new(overload.worker_limits(), overload.RouterQueue, False, fn() {
+      Nil
+    })
+  let target =
+    work_queue.new(overload.worker_limits(), overload.SocketQueue, False, fn() {
+      Nil
+    })
+  work_queue.register_target(router, "socket", target)
+  let assert Ok(first) = work_queue.publish(router, 1, 0)
+  work_queue.close_target(router, "socket")
+  let assert Ok(second) = work_queue.publish(router, 2, 0)
+  work_queue.take_matching(router, fn(value) { value == 2 })
+  |> should.equal(Ok(#(second, 2)))
+  work_queue.release(router, second)
+  work_queue.is_open(target) |> should.be_true()
+  work_queue.take(router) |> should.equal(Ok(#(first, 1)))
+  work_queue.release(router, first)
+  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.is_open(target) |> should.be_false()
+}
+
+pub fn target_close_survives_publisher_exit_before_wake_test() -> Nil {
+  let entered = process.new_subject()
+  let router =
+    work_queue.new(overload.worker_limits(), overload.RouterQueue, False, fn() {
+      process.send(entered, Nil)
+      process.receive_forever(process.new_subject())
+    })
+  let target =
+    work_queue.new(overload.worker_limits(), overload.SocketQueue, False, fn() {
+      Nil
+    })
+  work_queue.register_target(router, "socket", target)
+  let producer =
+    process.spawn_unlinked(fn() { work_queue.close_target(router, "socket") })
+  process.receive(entered, 1000) |> should.equal(Ok(Nil))
+  let monitor = process.monitor(producer)
+  process.kill(producer)
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(1000)
+  work_queue.is_open(target) |> should.be_true()
+  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.is_open(target) |> should.be_false()
+}
+
+pub fn dead_router_control_cannot_reach_replacement_router_test() -> Nil {
+  let ready = process.new_subject()
+  let target =
+    work_queue.new(overload.worker_limits(), overload.SocketQueue, False, fn() {
+      Nil
+    })
+  let owner =
+    process.spawn_unlinked(fn() {
+      let router =
+        work_queue.new(
+          overload.worker_limits(),
+          overload.RouterQueue,
+          False,
+          fn() { Nil },
+        )
+      work_queue.register_target(router, "socket", target)
+      work_queue.close_target(router, "socket")
+      process.send(ready, router)
+      process.receive_forever(process.new_subject())
+    })
+  let assert Ok(previous) = process.receive(ready, 1000)
+  let monitor = process.monitor(owner)
+  process.kill(owner)
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(1000)
+  let current =
+    work_queue.new(overload.worker_limits(), overload.RouterQueue, False, fn() {
+      Nil
+    })
+  work_queue.register_target(current, "socket", target)
+  work_queue.close_target(previous, "socket")
+  work_queue.take(current) |> should.equal(Error(Nil))
+  work_queue.is_open(target) |> should.be_true()
+  work_queue.close_target(current, "socket")
+  work_queue.take(current) |> should.equal(Error(Nil))
+  work_queue.is_open(target) |> should.be_false()
+}
+
 pub fn concurrent_publication_obeys_both_limits_test() -> Nil {
   let assert Ok(limits) = overload.limits(items: 8, bytes: 12)
   let queue = work_queue.new(limits, overload.WorkerQueue, False, fn() { Nil })
@@ -205,6 +386,7 @@ pub fn owner_crash_invalidates_queue_test() -> Nil {
   work_queue.publish(queue, 2, 1) |> should.equal(Error(overload.Unavailable))
   work_queue.snapshot(queue) |> should.equal(Error(overload.Unavailable))
   work_queue.release(queue, reservation)
+  work_queue.close_target(queue, "socket")
 }
 
 pub fn published_report_survives_producer_cleanup_test() -> Nil {

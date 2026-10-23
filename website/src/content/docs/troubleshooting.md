@@ -93,6 +93,14 @@ receive a reply or push.
 3. **Check the event name.** `Message` contains the event string from the
    client. Confirm that it matches the string in `update`.
 
+4. **Did the client close immediately after sending?** beryl processes frames
+   admitted before the disconnect before delivering `Closed`. This includes
+   frames still in the router queue. It does not guarantee that a reply reaches
+   a closed client. Wait for the application reply before closing if the client
+   needs confirmation. Overload, callback failure, heartbeat expiry, owner
+   death, or shutdown can interrupt the drain. See
+   [Disconnect input order](/architecture/runtime/#input-order-when-a-client-disconnects).
+
 ---
 
 ## Channel handler problems

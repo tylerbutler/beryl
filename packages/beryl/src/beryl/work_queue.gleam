@@ -63,6 +63,8 @@ pub fn close_with_error(queue: Queue(message), error: AdmissionError) -> Bool
 pub fn close_reason(queue: Queue(message)) -> option.Option(AdmissionError)
 
 /// Register an owned target for coalesced lifecycle requests.
+/// Each registration has a distinct incarnation and one lifecycle control slot.
+/// This slot does not reduce the owner's bounded data capacity.
 @external(erlang, "beryl_work_queue_ffi", "register_target")
 pub fn register_target(
   owner: Queue(message),
@@ -70,11 +72,14 @@ pub fn register_target(
   target: Queue(message),
 ) -> Nil
 
-/// Remove an owned target after its terminal transition.
+/// Remove an owned target and its queued close control after its terminal transition.
 @external(erlang, "beryl_work_queue_ffi", "remove_target")
 pub fn remove_target(owner: Queue(message), key: String) -> Nil
 
-/// Record one close intent. The target observes it on its wake or recovery tick.
+/// Append one coalesced close control behind the owner's pending data.
+/// The owner's `take` closes and wakes the captured target when it reaches the
+/// control. Repeated requests do not add controls or wake messages. Missing or
+/// stopped owners and removed targets are harmless.
 @external(erlang, "beryl_work_queue_ffi", "close_target")
 pub fn close_target(owner: Queue(message), key: String) -> Nil
 
@@ -190,10 +195,12 @@ pub fn activate_cleanup(
 ) -> Result(Nil, AdmissionError)
 
 /// Take the oldest item, retaining its reservation until `release`.
+/// First apply any target close controls at the head of the pending FIFO.
 @external(erlang, "beryl_work_queue_ffi", "take")
 pub fn take(queue: Queue(message)) -> Result(#(Reservation, message), Nil)
 
 /// Take the first eligible item without changing the order of other items.
+/// Target close controls remain pending until a normal `take` reaches them.
 @external(erlang, "beryl_work_queue_ffi", "take_matching")
 pub fn take_matching(
   queue: Queue(message),
