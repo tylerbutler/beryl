@@ -51,6 +51,27 @@ when the pinned Gleam release includes
 [gleam-lang/gleam#6246](https://github.com/gleam-lang/gleam/pull/6246).
 Run `just deps-test` to check cold preparation, changed dependencies, and cache reuse.
 
+### Codec benchmarks
+
+The optional `beryl_codec_bench` workspace member measures Phoenix text and
+binary codec calls. From the repository root:
+
+```bash
+just bench-codec-deps    # Install the mise-managed Elixir toolchain and package deps
+just bench-codec-check   # Strict build and fixture checks, without measurements
+just bench-codec         # Run time, heap allocation, and reduction measurements
+```
+
+Elixir is pinned in `benchmarks/codec/.mise.toml`, not in the root toolchain.
+Normal dependency preparation, builds, tests, docs, lint, and releases exclude
+the benchmark; formatting and cleanup include it. The dependency script also
+accepts explicit package names, such as
+`node scripts/prepare-gleam-deps.mjs beryl_codec_bench`.
+
+See the [codec benchmark guide](benchmarks/codec/README.md) for the input
+matrix, setup requirements, and measurement limits. Use the
+[k6 suite](load/README.md) for whole-system load measurements.
+
 ## Development Workflow
 
 ### Daily Development

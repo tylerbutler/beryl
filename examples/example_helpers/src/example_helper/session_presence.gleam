@@ -1,14 +1,13 @@
 //// Example-local, ETS-backed session snapshots.
 ////
-//// Mutations and counts use constant-time ETS operations, so app-side
-//// dispatch never waits on another actor. A small publisher process enqueues
-//// current snapshots through normal beryl broadcasts requested after each
-//// mutation.
+//// A small tracker process serializes mutations and monitors each session's
+//// owner. Counts read ETS directly. Roster publication uses normal beryl
+//// broadcasts and can be deferred until a join has committed.
 
 import beryl
 import beryl/overload
 import gleam/dict.{type Dict}
-import gleam/erlang/process.{type Pid, type Selector, type Subject}
+import gleam/erlang/process.{type Monitor, type Pid, type Selector, type Subject}
 import gleam/io
 import gleam/json
 import gleam/option.{type Option, None, Some}
@@ -40,6 +39,13 @@ type Store
 
 type Command {
   Configure(sockets: beryl.Sockets, reply: Subject(Nil))
+  Track(
+    owner: Pid,
+    topic: String,
+    session_id: String,
+    meta: json.Json,
+    reply: Subject(Nil),
+  )
   TrackIfBelow(
     owner: Pid,
     topic: String,
@@ -48,6 +54,7 @@ type Command {
     maximum: Int,
     reply: Subject(Result(Nil, TrackError)),
   )
+  Untrack(topic: String, session_id: String, reply: Subject(Nil))
   Publish(topic: String)
   Stop
 }
@@ -60,11 +67,14 @@ type StartEvent {
 type Event {
   Message(Command)
   OwnerDown
-  SessionOwnerDown(owner: Pid, topic: String, session_id: String)
+  SessionOwnerDown(monitor: Monitor, topic: String, session_id: String)
 }
 
 type State {
-  State(sockets: Option(beryl.Sockets), owners: Dict(#(String, String), Pid))
+  State(
+    sockets: Option(beryl.Sockets),
+    owners: Dict(#(String, String), Monitor),
+  )
 }
 
 @external(erlang, "example_session_presence_ffi", "new_store")
@@ -202,17 +212,20 @@ pub fn store_is_alive(tracker: Tracker) -> Bool {
   store_exists(tracker.table)
 }
 
+/// Track a session owned by the calling process and publish its roster.
+///
+/// The tracker removes the session automatically if its owner exits.
 pub fn track(
   tracker: Tracker,
   topic: String,
   session_id: String,
   meta: json.Json,
 ) -> Nil {
-  store_track(tracker.table, topic, session_id, meta)
+  track_without_publish(tracker, topic, session_id, meta)
   publish(tracker, topic)
 }
 
-/// Track a session without publishing a roster.
+/// Track a session owned by the calling process without publishing a roster.
 ///
 /// Use [`publish`](#publish) from a later socket turn, after the join has
 /// committed, so concurrent joins cannot deliver captured snapshots out of
@@ -223,7 +236,10 @@ pub fn track_without_publish(
   session_id: String,
   meta: json.Json,
 ) -> Nil {
-  store_track(tracker.table, topic, session_id, meta)
+  let owner = process.self()
+  process.call(tracker.subject, call_timeout_ms, fn(reply) {
+    Track(owner, topic, session_id, meta, reply)
+  })
 }
 
 /// Atomically track a session when the topic is below `maximum`.
@@ -253,9 +269,11 @@ pub fn publish(tracker: Tracker, topic: String) -> Nil {
   process.send(tracker.subject, Publish(topic))
 }
 
+/// Remove a session and its owner monitor, then publish the current roster.
 pub fn untrack(tracker: Tracker, topic: String, session_id: String) -> Nil {
-  store_untrack(tracker.table, topic, session_id)
-  publish(tracker, topic)
+  process.call(tracker.subject, call_timeout_ms, fn(reply) {
+    Untrack(topic, session_id, reply)
+  })
 }
 
 pub fn count(tracker: Tracker, topic: String) -> Int {
@@ -267,6 +285,13 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
     Message(Configure(sockets, reply)) -> {
       process.send(reply, Nil)
       loop(selector, table, State(..state, sockets: Some(sockets)))
+    }
+    Message(Track(owner, topic, session_id, meta, reply)) -> {
+      let monitor = process.monitor(owner)
+      let #(selector, state) =
+        track_session(selector, table, state, monitor, topic, session_id, meta)
+      process.send(reply, Nil)
+      loop(selector, table, state)
     }
     Message(TrackIfBelow(owner, topic, session_id, meta, maximum, reply)) -> {
       case store_count(table, topic) < maximum {
@@ -283,19 +308,29 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
               loop(selector, table, state)
             }
             True -> {
-              store_track(table, topic, session_id, meta)
-              let selector =
-                process.select_specific_monitor(selector, monitor, fn(_) {
-                  SessionOwnerDown(owner, topic, session_id)
-                })
-              let owners =
-                dict.insert(state.owners, #(topic, session_id), owner)
+              let #(selector, state) =
+                track_session(
+                  selector,
+                  table,
+                  state,
+                  monitor,
+                  topic,
+                  session_id,
+                  meta,
+                )
               process.send(reply, Ok(Nil))
-              loop(selector, table, State(..state, owners: owners))
+              loop(selector, table, state)
             }
           }
         }
       }
+    }
+    Message(Untrack(topic, session_id, reply)) -> {
+      let #(selector, state) = forget_owner(selector, state, topic, session_id)
+      store_untrack(table, topic, session_id)
+      broadcast_snapshot(state.sockets, topic, store_snapshot(table, topic))
+      process.send(reply, Nil)
+      loop(selector, table, state)
     }
     Message(Publish(topic)) -> {
       broadcast_snapshot(state.sockets, topic, store_snapshot(table, topic))
@@ -305,9 +340,10 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
     OwnerDown -> {
       Nil
     }
-    SessionOwnerDown(owner, topic, session_id) -> {
+    SessionOwnerDown(monitor, topic, session_id) -> {
+      let selector = process.deselect_specific_monitor(selector, monitor)
       case dict.get(state.owners, #(topic, session_id)) {
-        Ok(current_owner) if current_owner == owner -> {
+        Ok(current_monitor) if current_monitor == monitor -> {
           store_untrack(table, topic, session_id)
           broadcast_snapshot(state.sockets, topic, store_snapshot(table, topic))
           loop(
@@ -322,6 +358,43 @@ fn loop(selector: Selector(Event), table: Store, state: State) -> Nil {
         Ok(_) | Error(Nil) -> loop(selector, table, state)
       }
     }
+  }
+}
+
+fn track_session(
+  selector: Selector(Event),
+  table: Store,
+  state: State,
+  monitor: Monitor,
+  topic: String,
+  session_id: String,
+  meta: json.Json,
+) -> #(Selector(Event), State) {
+  let #(selector, state) = forget_owner(selector, state, topic, session_id)
+  store_track(table, topic, session_id, meta)
+  let selector =
+    process.select_specific_monitor(selector, monitor, fn(_) {
+      SessionOwnerDown(monitor, topic, session_id)
+    })
+  let owners = dict.insert(state.owners, #(topic, session_id), monitor)
+  #(selector, State(..state, owners: owners))
+}
+
+fn forget_owner(
+  selector: Selector(Event),
+  state: State,
+  topic: String,
+  session_id: String,
+) -> #(Selector(Event), State) {
+  case dict.get(state.owners, #(topic, session_id)) {
+    Ok(monitor) -> {
+      process.demonitor_process(monitor)
+      #(
+        process.deselect_specific_monitor(selector, monitor),
+        State(..state, owners: dict.delete(state.owners, #(topic, session_id))),
+      )
+    }
+    Error(Nil) -> #(selector, state)
   }
 }
 
