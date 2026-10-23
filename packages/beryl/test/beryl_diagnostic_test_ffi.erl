@@ -24,6 +24,12 @@ fail_with_stack(Shape) ->
         <<"invalid_location">> ->
             [{diagnostic_app, update, 2,
               [{file, [bad, 16#d800, 10]}, {line, 42}]}];
+        <<"improper_location">> ->
+            [{example, update, 1, [{line, 42} | bad]}];
+        <<"bounded_location">> ->
+            [{example, update, 1,
+              [{line, 42} | lists:duplicate(7, ignored) ++
+               [{file, "private-location-tail"} | bad]]}];
         _ -> lists:duplicate(64, Frame)
     end,
     erlang:raise(error, reason(Shape), Stack).
