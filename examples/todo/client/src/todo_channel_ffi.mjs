@@ -30,6 +30,7 @@ export const connect = (
   // Subscribe first, then read again: a mutation can race the join snapshot.
   const synchronize = () => {
     if (client.closed) return;
+    if (!channel.canPush()) return;
     if (client.syncing) {
       client.syncAgain = true;
       return;

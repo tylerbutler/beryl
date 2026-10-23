@@ -104,7 +104,13 @@ fn add_todo(
           )
         Error(store.UnknownTodo) ->
           reply_error(ref, "unknown_id", "The Todo ID does not exist.")
-        Error(store.Timeout) | Error(store.PublicationRejected) ->
+        Error(store.PublicationRejected) ->
+          reply_error(
+            ref,
+            "server_busy",
+            "The Todo update could not be published. Retry the change.",
+          )
+        Error(store.Timeout) ->
           reply_error(
             ref,
             "store_unavailable",
@@ -131,7 +137,13 @@ fn toggle_todo(
         Ok(item) -> reply_ok(ref, todo_json(item))
         Error(store.UnknownTodo) ->
           reply_error(ref, "unknown_id", "The Todo ID does not exist.")
-        Error(store.Timeout) | Error(store.PublicationRejected) ->
+        Error(store.PublicationRejected) ->
+          reply_error(
+            ref,
+            "server_busy",
+            "The Todo update could not be published. Retry the change.",
+          )
+        Error(store.Timeout) ->
           reply_error(
             ref,
             "store_unavailable",
@@ -160,7 +172,13 @@ fn delete_todo(
         Ok(deleted_id) -> reply_ok(ref, deleted_json(deleted_id))
         Error(store.UnknownTodo) ->
           reply_error(ref, "unknown_id", "The Todo ID does not exist.")
-        Error(store.Timeout) | Error(store.PublicationRejected) ->
+        Error(store.PublicationRejected) ->
+          reply_error(
+            ref,
+            "server_busy",
+            "The Todo update could not be published. Retry the change.",
+          )
+        Error(store.Timeout) ->
           reply_error(
             ref,
             "store_unavailable",

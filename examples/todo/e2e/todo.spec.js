@@ -77,7 +77,9 @@ test("rejects blank input and performs add, toggle, and delete", async ({
   await expect(page.getByRole("listitem")).toHaveCount(2);
   await expect(page.locator("#items-left")).toHaveText("2 items left");
 
-  await page.getByRole("checkbox", { name: "Write the guide" }).check();
+  const guide = page.getByRole("checkbox", { name: "Write the guide" });
+  await guide.click();
+  await expect(guide).toBeChecked();
   await expect(page.locator("#items-left")).toHaveText("1 item left");
 
   await page.getByRole("button", { name: "Delete Ship the example" }).click();
@@ -100,7 +102,8 @@ test("synchronizes canonical mutations between two browsers", async ({
       bob.page.getByRole("checkbox", { name: "Shared task" }),
     ).toBeVisible();
 
-    await bob.page.getByRole("checkbox", { name: "Shared task" }).check();
+    await bob.page.getByRole("checkbox", { name: "Shared task" }).click();
+    await expect(bob.page.getByRole("checkbox", { name: "Shared task" })).toBeChecked();
     await expect(
       alice.getByRole("checkbox", { name: "Shared task" }),
     ).toBeChecked();
@@ -119,9 +122,9 @@ test("late join receives the complete server snapshot", async ({
   const input = page.getByRole("textbox", { name: "New todo" });
   await input.fill("Already on the server");
   await input.press("Enter");
-  await page
-    .getByRole("checkbox", { name: "Already on the server" })
-    .check();
+  const existing = page.getByRole("checkbox", { name: "Already on the server" });
+  await existing.click();
+  await expect(existing).toBeChecked();
 
   const late = await openClient(browser);
   try {
