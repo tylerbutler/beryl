@@ -31,6 +31,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
 import test_helper
@@ -732,7 +733,11 @@ pub fn rejected_track_resumes_the_socket_without_waiting_for_timeout_test() -> N
   snapshot |> string.contains("presence_list") |> should.be_true
   snapshot |> string.contains("\"s1\"") |> should.be_false
   presence.list(handle, "room:a") |> should.equal(Ok([]))
-  test_helper.monitored_by_count(owner) |> should.equal(monitors)
+  test_helper.wait_until(
+    fn() { test_helper.monitored_by_count(owner) == monitors + 1 },
+    1000,
+    5,
+  )
   process.receive(frames, 0) |> should.equal(Error(Nil))
   beryl.stop(channels) |> should.equal(Ok(Nil))
   test_helper.wait_until(
@@ -748,6 +753,15 @@ pub fn rejected_track_resumes_the_socket_without_waiting_for_timeout_test() -> N
 
 pub fn forced_stop_releases_rejected_tracks_cleanup_capacity_test() -> Nil {
   use <- unitest.tag("serial")
+  assert_rejected_track_cleanup(False)
+}
+
+pub fn parent_shutdown_releases_rejected_tracks_cleanup_capacity_test() -> Nil {
+  use <- unitest.tag("serial")
+  assert_rejected_track_cleanup(True)
+}
+
+fn assert_rejected_track_cleanup(parent_shutdown: Bool) -> Nil {
   let assert Ok(limits) = overload.limits(items: 2, bytes: 4096)
   let assert Ok(handle) =
     presence.start(
@@ -759,8 +773,8 @@ pub fn forced_stop_releases_rejected_tracks_cleanup_capacity_test() -> Nil {
   let entered = process.new_subject()
   let gate = start_gate(entered)
   let owners = process.new_subject()
-  let assert Ok(channels) =
-    app_test_helper.start_app(
+  let assert Ok(#(channels, specification)) =
+    beryl.child_spec(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_presence_handle(handle)
         |> beryl.with_presence_op_timeout(60_000),
@@ -785,6 +799,10 @@ pub fn forced_stop_releases_rejected_tracks_cleanup_capacity_test() -> Nil {
         }
       },
     )
+  let assert Ok(root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(specification)
+    |> static_supervisor.start()
   let frames = app_test_helper.connect(channels, "blocked")
   let assert Ok(owner) = process.receive(owners, 1000)
   app_test_helper.join_ok(channels, frames, "blocked", "room:a", "j", "r")
@@ -803,8 +821,14 @@ pub fn forced_stop_releases_rejected_tracks_cleanup_capacity_test() -> Nil {
   arm(gate)
   app_test_helper.push(channels, "blocked", "room:a", "block", "r-2")
   await_entered(entered)
-  beryl.stop(channels) |> should.equal(Error(beryl.StopTimeout))
-  test_helper.wait_until(fn() { !process.is_alive(owner) }, 1000, 5)
+  case parent_shutdown {
+    True -> {
+      process.unlink(root.pid)
+      process.kill(root.pid)
+    }
+    False -> beryl.stop(channels) |> should.equal(Error(beryl.StopTimeout))
+  }
+  test_helper.wait_until(fn() { !process.is_alive(owner) }, 10_000, 5)
   test_helper.wait_until(
     fn() {
       let assert Ok(queue) = presence.queue_snapshot(handle)

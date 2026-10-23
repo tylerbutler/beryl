@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Yield between bounded disconnect-control batches so the router can handle shutdown messages, and abort later callback effects when broadcast admission fails."

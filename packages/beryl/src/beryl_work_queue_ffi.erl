@@ -7,6 +7,8 @@
          publish_with_cleanup/4, activate_cleanup/2,
          close/1, close_once/1, snapshot/1]).
 
+-define(TAKE_CONTROL_LIMIT, 16).
+
 new(MaxItems, MaxBytes, Boundary, Telemetry, Wake)
         when MaxItems > 0, MaxBytes > 0 ->
     Table = ets:new(?MODULE, [set, public, {read_concurrency, true}]),
@@ -428,11 +430,19 @@ publish(Queue = {_, _, MaxItems, MaxBytes, Boundary, _, _}, Message, Bytes)
             end)
     end.
 
-take(Queue = {Table, Owner, _, _, _, _, _}) when Owner =:= self() ->
+take(Queue = {_, Owner, _, _, _, _, _}) when Owner =:= self() ->
+    take(Queue, ?TAKE_CONTROL_LIMIT).
+
+take(Queue = {Table, _, _, _, _, _, _}, ControlsLeft) ->
     Result = update(Queue, fun(State) ->
         case queue:out(maps:get(pending, State)) of
             {empty, _} ->
-                {replace, State#{notified := false}, {error, nil}};
+                {replace, State#{notified := false}, {error, empty}};
+            {{value, {target_close, _, _, _}}, _} when ControlsLeft =:= 0 ->
+                %% Yield only between completed controls, with an even epoch.
+                %% Keep the next control and its dedupe entry untouched. The
+                %% caller must schedule another turn, not treat this as empty.
+                {return, {error, yielded}};
             {{value, Control = {target_close, _, _, _}}, _} ->
                 %% Exclude stale open-row readers before completing the control.
                 %% Leave the control and dedupe entry present until the row is closed.
@@ -461,7 +471,7 @@ take(Queue = {Table, Owner, _, _, _, _, _}) when Owner =:= self() ->
                        pending_closes := maps:remove(Key, maps:get(pending_closes, State))}
             end),
             case close_once(Target) of true -> Wake(); false -> nil end,
-            take(Queue);
+            take(Queue, ControlsLeft - 1);
         _ -> Result
     end.
 
