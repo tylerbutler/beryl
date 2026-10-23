@@ -108,7 +108,7 @@ fn monotonic_time_ms() -> Int {
 /// caller's node. Keep a `Presence` handle on the node where its child
 /// specification runs. From another BEAM node, synchronous mutations
 /// (`track`, `update`, `untrack`, and `untrack_all`) cannot reach the owning
-/// actor and panic as unavailable, while `list`, `get_by_key`, and `count`
+/// actor and return typed call errors, while `list`, `get_by_key`, and `count`
 /// return `Error(Nil)` because the read model is unavailable. Use PubSub
 /// replication (`with_pubsub`) to share presence state across nodes instead of
 /// moving the handle itself.
@@ -429,7 +429,16 @@ pub opaque type Config {
     on_diff: Option(fn(Diff) -> Nil),
     queue_limits: overload.Limits,
     telemetry: Bool,
+    local_clock: fn(Dict(String, Int), String) -> Result(Int, Nil),
   )
+}
+
+/// Errors from tracking a presence.
+pub type PresenceTrackError {
+  /// Admission failed, the actor exited, or the request timed out.
+  TrackRequestFailed(overload.CallError)
+  /// The CRDT did not expose its local clock after joining. Nothing changed.
+  TrackInvalidCrdtState
 }
 
 /// Errors from an update to a tracked presence.
@@ -437,6 +446,8 @@ pub type PresenceUpdateError {
   /// The ref is unknown, already removed, or was not returned by `track`.
   UnknownRef(ref: String)
   RequestFailed(overload.CallError)
+  /// The CRDT did not expose its local clock after joining. The old ref remains valid.
+  UpdateInvalidCrdtState
 }
 
 /// Messages that the presence actor handles.
@@ -459,7 +470,7 @@ pub opaque type Message {
     key: String,
     session_id: String,
     meta: json.Json,
-    reply: fn(String) -> Nil,
+    reply: fn(Result(String, PresenceTrackError)) -> Nil,
   )
   Update(
     ref: String,
@@ -528,6 +539,8 @@ pub type MutationOutcome {
   Tracked(ref: String, meta: json.Json)
   /// An untrack batch completed.
   Untracked
+  /// The CRDT local-clock lookup failed. No entry or replacement was committed.
+  TrackFailed
 }
 
 type RuntimeOwnerWatch {
@@ -735,7 +748,7 @@ type ActorState {
     /// `untrack` can locate the correct CRDT entry to leave. Populated on
     /// `Track` and pruned on `Untrack`/`UntrackAll`.
     refs: Dict(String, TrackedPresence),
-    /// Socket actors with runtime-owned presence and a live monitor process.
+    /// Socket actors with a reserved cleanup obligation and a live monitor.
     runtime_owners: Set(process.Pid),
     /// The ETS table backing the read model that `list`, `get_by_key`, and
     /// `count` read directly. Owned by this actor process; see `publish_topic`.
@@ -762,7 +775,17 @@ pub fn default_config(replica: String) -> Config {
     on_diff: None,
     queue_limits: overload.shared_limits(),
     telemetry: False,
+    local_clock: dict.get,
   )
+}
+
+/// Replace the local-clock lookup for deterministic dependency-failure tests.
+@internal
+pub fn with_local_clock_lookup(
+  config: Config,
+  lookup: fn(Dict(String, Int), String) -> Result(Int, Nil),
+) -> Config {
+  Config(..config, local_clock: lookup)
 }
 
 /// Enable PubSub replication for presence.
@@ -821,8 +844,9 @@ pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
 /// Set the timeout for synchronous presence mutations, in milliseconds.
 ///
 /// This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
-/// functions panic if the actor does not reply before the timeout. The default
-/// is 5000 ms.
+/// functions return typed timeout errors if the actor does not reply in time.
+/// Pending work is cancelled, but running mutations may still complete.
+/// The default is 5000 ms.
 pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
   Config(..config, call_timeout_ms: timeout_ms)
 }
@@ -1347,14 +1371,19 @@ fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
 /// Returns a typed call error on admission failure, owner exit, or timeout
 /// (5 seconds by default). A timeout cancels pending work, but a running
 /// mutation may still complete.
+///
+/// `TrackRequestFailed` wraps the call error. `TrackInvalidCrdtState` means the
+/// CRDT local-clock lookup failed; no entry, diff, or read-model change was made.
 pub fn track(
   presence: Presence,
   topic: String,
   key: String,
   session_id: String,
   meta: json.Json,
-) -> Result(String, overload.CallError) {
+) -> Result(String, PresenceTrackError) {
   call(presence, fn(reply) { Track(topic, key, session_id, meta, reply) })
+  |> result.map_error(TrackRequestFailed)
+  |> result.flatten
 }
 
 /// Replace the meta of a presence created by `track`.
@@ -1369,6 +1398,8 @@ pub fn track(
 ///
 /// `RequestFailed` wraps admission, owner-exit, and timeout errors. A timeout
 /// cancels pending work, but a running mutation may still complete.
+/// `UpdateInvalidCrdtState` means the CRDT local-clock lookup failed. The old
+/// entry and ref remain unchanged, and no diff is emitted.
 pub fn update(
   presence: Presence,
   ref: String,
@@ -1650,39 +1681,18 @@ fn handle_message(
       use #(new_state, ref, _meta) <- continue_with_track(
         actor_state,
         do_track(actor_state, topic, key, session_id, meta, SupersedeNothing),
+        fn() { reply(Error(TrackInvalidCrdtState)) },
       )
       log_tracked(logger, topic, key, session_id, ref)
       // The read model was published inside `do_track`, before this reply,
       // so a `track(); list()` caller always observes the entry it just
       // tracked.
-      reply(ref)
+      reply(Ok(ref))
       actor.continue(new_state)
     }
 
-    Update(ref, meta, reply) -> {
-      case dict.get(actor_state.refs, ref) {
-        Ok(TrackedPresence(topic, key, session_id, _, _, PublicOwner)) -> {
-          use #(new_state, new_ref, _meta) <- continue_with_track(
-            actor_state,
-            do_track(
-              actor_state,
-              topic,
-              key,
-              session_id,
-              meta,
-              SupersedePublicRef(ref),
-            ),
-          )
-          log_tracked(logger, topic, key, session_id, new_ref)
-          reply(Ok(new_ref))
-          actor.continue(new_state)
-        }
-        Ok(TrackedPresence(_, _, _, _, _, RuntimeOwner(_))) | Error(Nil) -> {
-          reply(Error(UnknownRef(ref)))
-          actor.continue(actor_state)
-        }
-      }
-    }
+    Update(ref, meta, reply) ->
+      handle_update(actor_state, ref, meta, reply, logger)
 
     TrackAsync(
       topic,
@@ -1706,6 +1716,7 @@ fn handle_message(
             logger,
           )
         True -> {
+          // A rejected mutation still owns its reserved cleanup capacity.
           let actor_state = monitor_runtime_owner(actor_state, owner)
           use #(new_state, ref, stored_meta) <- continue_with_track(
             actor_state,
@@ -1717,6 +1728,9 @@ fn handle_message(
               meta,
               SupersedeSameKey(explicit: replace, owner: owner),
             ),
+            fn() {
+              process.send(reply, MutationAck(tag, operation_id, TrackFailed))
+            },
           )
           log_tracked(logger, topic, key, session_id, ref)
           process.send(
@@ -1813,6 +1827,38 @@ fn handle_message(
   }
 }
 
+fn handle_update(
+  actor_state: ActorState,
+  ref: String,
+  meta: json.Json,
+  reply: fn(Result(String, PresenceUpdateError)) -> Nil,
+  logger: log.Logger,
+) -> actor.Next(ActorState, Message) {
+  case dict.get(actor_state.refs, ref) {
+    Ok(TrackedPresence(topic, key, session_id, _, _, PublicOwner)) -> {
+      use #(new_state, new_ref, _meta) <- continue_with_track(
+        actor_state,
+        do_track(
+          actor_state,
+          topic,
+          key,
+          session_id,
+          meta,
+          SupersedePublicRef(ref),
+        ),
+        fn() { reply(Error(UpdateInvalidCrdtState)) },
+      )
+      log_tracked(logger, topic, key, session_id, new_ref)
+      reply(Ok(new_ref))
+      actor.continue(new_state)
+    }
+    Ok(TrackedPresence(_, _, _, _, _, RuntimeOwner(_))) | Error(Nil) -> {
+      reply(Error(UnknownRef(ref)))
+      actor.continue(actor_state)
+    }
+  }
+}
+
 fn handle_dead_track_owner(
   actor_state: ActorState,
   owner: process.Pid,
@@ -1849,11 +1895,15 @@ type TrackMutationError {
 fn continue_with_track(
   actor_state: ActorState,
   tracked: Result(value, TrackMutationError),
+  failed: fn() -> Nil,
   next: fn(value) -> actor.Next(ActorState, Message),
 ) -> actor.Next(ActorState, Message) {
   case tracked {
     Ok(value) -> next(value)
-    Error(InvalidCrdtState(_)) -> actor.continue(actor_state)
+    Error(InvalidCrdtState(_)) -> {
+      failed()
+      actor.continue(actor_state)
+    }
     Error(PublicationFailed(_)) -> actor.stop()
   }
 }
@@ -2082,7 +2132,7 @@ fn do_track(
   // state.join inserts this clock. Keep the lookup fallible so a dependency
   // contract regression rejects the mutation instead of crashing the library.
   use clock <- result.try(
-    dict.get(state.compacted_clocks(new_crdt), replica)
+    actor_state.config.local_clock(state.compacted_clocks(new_crdt), replica)
     |> result.map_error(fn(error) {
       log.error(internal.logger("beryl.presence"), "Local CRDT clock missing", [
         #("replica", replica),
