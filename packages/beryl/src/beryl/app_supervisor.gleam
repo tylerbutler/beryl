@@ -168,7 +168,11 @@ fn handle_message(
   case message {
     WorkAvailable ->
       case work_queue.take(state.inbox) {
-        Error(Nil) -> actor.continue(state)
+        Error(work_queue.Empty) -> actor.continue(state)
+        Error(work_queue.Yielded) -> {
+          process.send(state.self_subject, WorkAvailable)
+          actor.continue(state)
+        }
         Ok(#(credit, request)) ->
           handle_message(State(..state, stop_credit: Some(credit)), request)
       }

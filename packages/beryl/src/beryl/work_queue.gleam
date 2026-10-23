@@ -17,6 +17,12 @@ pub type Queue(message)
 /// A reservation remains charged after dequeue, until completion.
 pub type Reservation
 
+/// Why a queue turn did not return data.
+pub type TakeError {
+  Empty
+  Yielded
+}
+
 @external(erlang, "beryl_work_queue_ffi", "new")
 fn new_queue(
   items: Int,
@@ -54,15 +60,25 @@ pub fn lookup(name: Name(message)) -> Result(Queue(message), AdmissionError)
 @external(erlang, "beryl_work_queue_ffi", "is_open")
 pub fn is_open(queue: Queue(message)) -> Bool
 
-/// Close once with a bounded admission failure as the terminal reason.
+/// Record the first admission failure and close ingress, returning `True` once.
+/// While open, any admission error can become the terminal reason. After normal
+/// closure, `Closed` is a no-op: late ingress must not abort the normal drain.
+/// `Unavailable`, `Overloaded`, and `ItemTooLarge` can still record the first
+/// failure after normal closure, so accepted work can trigger a fail-fast abort.
+/// No error replaces an existing reason. Missing queues return `False`.
+/// Reservations remain charged until the owner explicitly releases or drains them.
 @external(erlang, "beryl_work_queue_ffi", "close_with_error")
 pub fn close_with_error(queue: Queue(message), error: AdmissionError) -> Bool
 
-/// Read the first recorded admission failure, if the close was due to overload.
+/// Read the first recorded admission failure. Normal closure alone leaves `None`;
+/// a later failure other than `Closed` can set the reason without reopening input.
+/// Missing queues return `None`.
 @external(erlang, "beryl_work_queue_ffi", "close_reason")
 pub fn close_reason(queue: Queue(message)) -> option.Option(AdmissionError)
 
 /// Register an owned target for coalesced lifecycle requests.
+/// Each registration has a distinct incarnation and one lifecycle control slot.
+/// This slot does not reduce the owner's bounded data capacity.
 @external(erlang, "beryl_work_queue_ffi", "register_target")
 pub fn register_target(
   owner: Queue(message),
@@ -70,11 +86,14 @@ pub fn register_target(
   target: Queue(message),
 ) -> Nil
 
-/// Remove an owned target after its terminal transition.
+/// Remove an owned target and its queued close control after its terminal transition.
 @external(erlang, "beryl_work_queue_ffi", "remove_target")
 pub fn remove_target(owner: Queue(message), key: String) -> Nil
 
-/// Record one close intent. The target observes it on its wake or recovery tick.
+/// Append one coalesced close control behind the owner's pending data.
+/// The owner's `take` closes and wakes the captured target when it reaches the
+/// control. Repeated requests do not add controls or wake messages. Missing or
+/// stopped owners and removed targets are harmless.
 @external(erlang, "beryl_work_queue_ffi", "close_target")
 pub fn close_target(owner: Queue(message), key: String) -> Nil
 
@@ -190,10 +209,13 @@ pub fn activate_cleanup(
 ) -> Result(Nil, AdmissionError)
 
 /// Take the oldest item, retaining its reservation until `release`.
+/// Apply at most 16 target close controls before yielding to the owner's mailbox.
+/// On `Yielded`, schedule another turn; only `Empty` means the FIFO is drained.
 @external(erlang, "beryl_work_queue_ffi", "take")
-pub fn take(queue: Queue(message)) -> Result(#(Reservation, message), Nil)
+pub fn take(queue: Queue(message)) -> Result(#(Reservation, message), TakeError)
 
 /// Take the first eligible item without changing the order of other items.
+/// Target close controls remain pending until a normal `take` reaches them.
 @external(erlang, "beryl_work_queue_ffi", "take_matching")
 pub fn take_matching(
   queue: Queue(message),
@@ -207,10 +229,6 @@ pub fn release(queue: Queue(message), reservation: Reservation) -> Nil
 /// Stop admitting work. Existing reservations remain available to drain.
 @external(erlang, "beryl_work_queue_ffi", "close")
 pub fn close(queue: Queue(message)) -> Nil
-
-/// Close admission once. Only the first caller must initiate teardown.
-@external(erlang, "beryl_work_queue_ffi", "close_once")
-pub fn close_once(queue: Queue(message)) -> Bool
 
 /// Read occupancy and oldest outstanding age without asking the owner.
 @external(erlang, "beryl_work_queue_ffi", "snapshot")

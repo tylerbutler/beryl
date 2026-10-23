@@ -1,5 +1,6 @@
 import app_test_helper
 import beryl
+import beryl/overload
 import beryl/socket
 import beryl/transport/server
 import beryl/wire
@@ -562,4 +563,84 @@ pub fn runtime_death_closes_the_connection_test() -> Nil {
   |> should.equal(Error(Nil))
 
   stop_supervisor(server_pid)
+}
+
+pub fn websocket_push_then_close_drains_before_closed_test() -> Nil {
+  use <- unitest.tag("serial")
+  let senders = process.new_subject()
+  let entered = process.new_subject()
+  let events = process.new_subject()
+  let assert Ok(channels) =
+    app_test_helper.start(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(info) {
+        process.send(senders, info.self)
+        #(Nil, [])
+      },
+      update: fn(model, event) {
+        case event {
+          socket.Info("block") -> {
+            let release = process.new_subject()
+            process.send(entered, release)
+            process.receive_forever(release)
+            socket.Next(model, [])
+          }
+          socket.Join(_, _, ref) ->
+            socket.Next(model, [
+              socket.AcceptJoin(
+                ref,
+                Some(json.object([#("joined", json.bool(True))])),
+              ),
+            ])
+          socket.Message(_, name, _, Some(ref)) -> {
+            process.send(events, #(name, None))
+            socket.Next(model, [socket.DiscardReply(ref)])
+          }
+          socket.Closed("room:lobby", reason) -> {
+            process.send(events, #("closed", Some(reason)))
+            socket.Next(model, [])
+          }
+          _ -> socket.Next(model, [])
+        }
+      },
+    )
+  let #(port, server_pid) = start_mist_server(channels)
+  let serializer = json_serializer()
+  let client = connect_client(port) |> join_client(serializer, _)
+  let assert Ok(sender) = process.receive(senders, 1000)
+  socket.notify(sender, "block") |> should.equal(Ok(Nil))
+  let assert Ok(release) = process.receive(entered, 1000)
+  let assert Ok(client) =
+    send_text(
+      client,
+      serializer.event(
+        "join-ref",
+        "push-1",
+        "room:lobby",
+        "pushed",
+        json.null(),
+      ),
+    )
+  close(client)
+  wait_for_socket_input_close(sender, 200) |> should.be_true
+  process.send(release, Nil)
+  process.receive(events, 1000) |> should.equal(Ok(#("pushed", None)))
+  process.receive(events, 1000)
+  |> should.equal(Ok(#("closed", Some(socket.Normal))))
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+  stop_supervisor(server_pid)
+}
+
+fn wait_for_socket_input_close(
+  sender: socket.Sender(String),
+  attempts: Int,
+) -> Bool {
+  case socket.notify(sender, "probe") {
+    Error(overload.Closed) -> True
+    Ok(Nil) if attempts > 0 -> {
+      process.sleep(5)
+      wait_for_socket_input_close(sender, attempts - 1)
+    }
+    Ok(Nil) | Error(_) -> False
+  }
 }

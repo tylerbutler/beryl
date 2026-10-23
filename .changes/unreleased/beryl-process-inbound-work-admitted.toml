@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Drain admitted inbound work before delivering Closed on client disconnect, including frames waiting in the router queue."

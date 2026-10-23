@@ -1629,7 +1629,14 @@ fn schedule_work_recovery(subject: Subject(Message)) -> Nil {
 
 fn handle_available_work(state: ActorState) -> actor.Next(ActorState, Message) {
   case work_queue.take(state.inbox) {
-    Error(Nil) -> actor.continue(state)
+    Error(work_queue.Empty) -> actor.continue(state)
+    Error(work_queue.Yielded) -> {
+      case state.self_subject {
+        Some(subject) -> process.send(subject, WorkAvailable)
+        None -> Nil
+      }
+      actor.continue(state)
+    }
     Ok(#(reservation, message)) -> {
       case state.self_subject {
         Some(subject) -> process.send(subject, WorkAvailable)
