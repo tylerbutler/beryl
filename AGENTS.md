@@ -3,9 +3,8 @@
 ## Project Summary
 
 beryl is a Gleam library for type-safe real-time channels and presence on the
-Erlang/BEAM runtime. It's a trellis-managed monorepo with three packages — two
-of them currently publishable, since `beryl_ewe` is release-excluded — plus
-runnable examples and an Astro/Starlight documentation website.
+Erlang/BEAM runtime. It's a trellis-managed monorepo with three releasable
+packages, plus runnable examples and an Astro/Starlight documentation website.
 
 ## Essential Commands
 
@@ -13,16 +12,38 @@ runnable examples and an Astro/Starlight documentation website.
 just deps              # install all deps (gleam + pnpm workspaces)
 just check             # type check all packages
 just test              # run all tests (scope: `just test beryl_mist`)
+just build-strict      # build with Gleam warnings as errors
 just format            # format all packages
 just format-check      # check formatting (CI uses this)
 just lint              # glinter with warnings_as_errors
-just ci                # full CI: format-check, check, test, build-strict, examples-test
+just beam-check        # Dialyzer and Xref checks for Erlang FFI
+just ci                # full CI: format-check, BEAM analysis, tests, docs, examples
 just pr                # alias for ci — run before creating/updating PRs
+just main              # just ci plus documentation checks
 just change P K "B"    # create changelog fragment (trellis changelog new)
 just doctor            # validate workspace invariants
+just bench-codec-deps   # install optional codec benchmark tools and package deps
+just bench-codec-check  # strict benchmark build and fixture checks
+just bench-codec        # run codec microbenchmarks locally
 ```
 
-Run a single test: `cd packages/beryl && gleam test -- --filter "test_name"`
+Scope tests to one package with `just test beryl_mist`, or run a package
+directly with `cd packages/beryl && gleam test`. unitest supports filters after
+`--`, such as `gleam test -- --test module_name.test_name` or
+`gleam test -- --tag slow`.
+
+`just test` runs the parallel-safe core tests with unitest's automatic worker
+count, capped at four BEAM schedulers to avoid nested oversubscription, then
+runs tests tagged `serial` in a sequential lane. Tag a core test `serial` when
+it observes or changes process-wide state, such as `:telemetry` handlers, the
+Palabres capture handler, or Palabres's global logging level, or when it
+deliberately exercises VM-sensitive restart exhaustion or PubSub scope
+recovery. Also tag tests whose correctness depends on tightly controlled actor
+restart or delayed-ack scheduling. Direct `gleam test` remains a full
+sequential run.
+
+Do not run `just check` before a same-scope build or test; both already
+type-check. Use `just build-strict` when Gleam warnings must fail the check.
 
 ## Workspace Layout and Package Boundaries
 
@@ -30,8 +51,9 @@ Run a single test: `cd packages/beryl && gleam test -- --filter "test_name"`
 packages/
   beryl/           # core library (app dispatch, presence, pubsub, wire, transport SPI)
   beryl_mist/      # Mist WebSocket transport (depends on beryl via path)
-  beryl_ewe/       # Ewe WebSocket transport (depends on beryl via path; NOT published)
+  beryl_ewe/       # Ewe WebSocket transport (depends on beryl via path)
 examples/          # runnable example apps (workspace members, excluded from release)
+benchmarks/        # opt-in workspace members, excluded from release
 website/           # Astro/Starlight docs site (NOT a workspace member)
 docs/              # ADRs, design docs, architecture deck, security docs
 ```
@@ -127,7 +149,7 @@ delivery, etc.).
 
 ### Test Scope and Framework
 
-- Tests use `gleeunit` (Gleam's test framework)
+- Tests use unitest as the runner and `gleeunit/should` for assertions
 - Public socket/event behavior changes need integration coverage through the
   runtime and transport paths, not only pure helper tests
 - When replacing WebSocket transports, preserve existing Phoenix/WebSocket
@@ -140,9 +162,20 @@ Test directories contain `.erl` files for test-only FFI helpers (e.g.,
 `beryl_mist_transport_test_ffi.erl`). These provide BEAM-level capabilities
 not available in pure Gleam.
 
+Treat Erlang FFI declarations as representation boundaries. Do not
+identity-coerce an external tuple into a Gleam custom type unless it already
+has the exact Gleam constructor tag and field layout. Return a tuple and
+construct the value in Gleam, or use a small Erlang converter. Run
+`just beam-check` after changes to Erlang FFI or the Gleam code that declares
+it.
+
 ## Code Conventions
 
 - **Result types over exceptions** — all fallible APIs return `Result`
+- **No recoverable-path assertions** — released library code must not use
+  `let assert`, panic, or check-then-assert for recoverable or fallible paths;
+  match and propagate the error or use the established logging and recovery
+  path
 - **Exhaustive pattern matching** — Gleam enforces this; handle all cases
 - **Sentence-case website headings** — use sentence case for page titles,
   section headings, callout titles, and sidebar labels
@@ -152,12 +185,37 @@ not available in pure Gleam.
 - **`///` doc comments** on all public functions
 - **`@internal` annotation** — hides functions from public docs while keeping
   them accessible to sibling modules within the same package
+- **App dispatch changes** — follow the existing event and effect handling
+  patterns in `beryl/event` and `beryl/runtime`
 - **glinter** is enforced with `warnings_as_errors = true`. Key rules:
   `thrown_away_error`, `discarded_result`, `unused_exports`, `deep_nesting`,
   `prefer_guard_clause`, `error_context_lost`, `unqualified_import`,
   `stringly_typed_error`, `short_variable_name`, `string_inspect`
 
+## BEAM code reviews
+
+For code reviews that include Gleam (`.gleam`) or Erlang (`.erl`, `.hrl`),
+delegate the BEAM-specific review to `beam-vm-reviewer`, unless you are
+already running as that agent. Include every changed Gleam and Erlang file
+in the review scope, including tests and examples. This review supplements
+normal correctness and API review; it does not replace them.
+
+Edit `.apm/agents/beam-vm-reviewer.agent.md`, then run
+`apm install --frozen --only apm` to deploy it. `apm.yml` selects both Claude
+and Copilot. APM generates `.github/agents/beam-vm-reviewer.agent.md` and
+`.claude/agents/beam-vm-reviewer.md`; do not edit those copies directly.
+To request a review in either tool, ask:
+`Use beam-vm-reviewer to review the current diff.`
+
 ## Commit and Release Workflow
+
+Required GitHub Actions jobs must always start and report success. When
+path-filtering, skip only expensive steps and run a successful no-op step; do
+not skip the whole required job.
+
+Before creating or updating a PR, fetch the current default branch and validate
+the branch against it. PR CI tests the merge result, so local checks on an
+outdated branch can miss failures.
 
 ### Conventional Commits
 
@@ -167,11 +225,37 @@ Header max 72 chars. Body max line length 100 chars.
 
 ### Changelog Fragments
 
-Use `just change <package> <kind> "<body>"` for any public API, behavior,
-dependency, or user-visible change. Kinds: `Initial Release` (major),
-`Added`/`Changed`/`Removed` (minor), `Fixed`/`Performance`/`Deprecated`/`Security`/`Dependencies` (patch).
+Create a fragment with `just change <package> <kind> "<body>"`. Kinds:
+`Initial Release` (major), `Added`/`Changed`/`Removed` (minor),
+`Fixed`/`Performance`/`Deprecated`/`Security`/`Dependencies` (patch).
 
-PR CI enforces fragments via `trellis changelog check`.
+**A fragment applies only to what a released package ships** — its `src/`,
+`gleam.toml`, or `manifest.toml`. The fragment describes what a consumer of
+the published package receives. Write a fragment when you change a released
+package's:
+
+- public API (types, functions, labels, or signatures)
+- observable runtime behavior, or a bug in that behavior
+- dependency requirements in `gleam.toml` or `manifest.toml`
+- `///` or `////` doc comments, because these ship in the API reference
+
+**Do not write a fragment** for anything a package does not ship. The website,
+`docs/`, examples, and dev tooling reach no consumer, so a fragment for them
+bumps a version that nobody sees:
+
+- `website/` content, components, styles, or generator scripts
+- `docs/` ADRs, design notes, and decks
+- `examples/` (release-excluded workspace members)
+- `benchmarks/` (release-excluded development tools)
+- root config, `justfile`, `.github/` workflows, and audit or lint settings
+- `packages/*/test/`, internal refactors, and formatting that keep the
+  consumer-visible behavior the same
+
+All three packages under `packages/` are releasable, so each one takes its own
+fragments. `examples/**` and `benchmarks/**` are release-excluded.
+
+PR CI enforces fragments via `trellis changelog check`. Preview the effect of
+the current fragments with `just version-plan`.
 
 ### Release Flow
 
@@ -190,15 +274,14 @@ untracked artifacts — clean before staging.
 
 ### Tool Versions
 
-`.tool-versions` sets the floor and is what CI's version-file resolution uses:
-- Erlang 27.2.1, Gleam 1.16.0, just 1.50.0
+`.mise.toml` pins Erlang 28, Gleam 1.18.1, just 1.50.0, trellis, rebar3, and
+licence_audit for local development and CI.
+
+`benchmarks/codec/.mise.toml` additionally pins an OTP-28-compatible Elixir
+build. Install it with `just bench-codec-deps`; do not add Elixir to the root
+toolchain or released-package dependencies.
 
 CI additionally matrix-tests Erlang **27 and 28** (see `.github/workflows/ci.yml`).
-
-`.mise.toml` pins trellis (0.4.1) and rebar for local development, and
-deliberately pins `erlang = "28"` so local dev runs on the newer of the two
-matrix versions. That pin intentionally overrides `.tool-versions` for mise
-users; keep everything else in `.mise.toml` limited to mise-only helper tools.
 
 ### Dependency Rules
 
@@ -209,9 +292,18 @@ users; keep everything else in `.mise.toml` limited to mise-only helper tools.
 
 ### Trellis Exclusions
 
-`beryl_ewe` is excluded from release (`@release` key in `gleam.toml`) — it's
-built, tested, and linted but excluded from changelog, versioning, tagging,
-and publishing.
+`examples/**` and `benchmarks/**` are excluded from release (`@release` key
+in the root `gleam.toml`). Examples are built and tested, but they get no
+changelog, version, tag, or fragment. All three packages under `packages/` are
+releasable on the `git_only` lifecycle: they get tags and GitHub releases,
+but Hex.pm publishing is disabled.
+
+Benchmarks are workspace members with opt-in dependencies and execution.
+Default build, check, test, lint, docs, and deps tasks exclude them, while
+format and clean include them. `scripts/prepare-gleam-deps.mjs` also omits
+them unless selected by package name. Use `just bench-codec-deps`,
+`just bench-codec-check`, and `just bench-codec`; see
+`benchmarks/codec/README.md` for scope and measurement limits.
 
 ## Examples
 

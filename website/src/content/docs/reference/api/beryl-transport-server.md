@@ -21,7 +21,8 @@ Server-agnostic WebSocket transport infrastructure.
  its builders, the upgrade admission pipeline (path matching, origin
  policy, `?vsn` negotiation, connection limits, `on_connect`
  authentication), per-connection lifecycle choreography, and the inbound
- frame pipeline (size caps, frame-rate limiting, decoding, routing).
+ frame pipeline (size caps, frame-rate limiting, decoding, routing), plus
+ bounded outbound admission and write accounting.
 
  Transport packages such as `beryl_mist` and `beryl_ewe` supply only the
  server-specific glue: the WebSocket upgrade call, frame sending, and peer
@@ -35,7 +36,9 @@ Server-agnostic WebSocket transport infrastructure.
   <ul>
 <li><a href="#api-type-connecterror"><code>ConnectError</code></a></li>
 <li><a href="#api-type-connectionstate"><code>ConnectionState</code></a></li>
+<li><a href="#api-type-forcecloseerror"><code>ForceCloseError</code></a></li>
 <li><a href="#api-type-framedisposition"><code>FrameDisposition</code></a></li>
+<li><a href="#api-type-outboundconfigerror"><code>OutboundConfigError</code></a></li>
 <li><a href="#api-type-sendrequest"><code>SendRequest</code></a></li>
 <li><a href="#api-type-transportconfig"><code>TransportConfig</code></a></li>
   </ul>
@@ -46,6 +49,7 @@ Server-agnostic WebSocket transport infrastructure.
 <li><a href="#api-function-close_connection"><code>close_connection</code></a></li>
 <li><a href="#api-function-connect_seed"><code>connect_seed</code></a></li>
 <li><a href="#api-function-default_config"><code>default_config</code></a></li>
+<li><a href="#api-function-finish_outbound_write"><code>finish_outbound_write</code></a></li>
 <li><a href="#api-function-handle_binary_frame"><code>handle_binary_frame</code></a></li>
 <li><a href="#api-function-handle_text_frame"><code>handle_text_frame</code></a></li>
 <li><a href="#api-function-handler"><code>handler</code></a></li>
@@ -55,6 +59,7 @@ Server-agnostic WebSocket transport infrastructure.
 <li><a href="#api-function-with_allow_all_origins"><code>with_allow_all_origins</code></a></li>
 <li><a href="#api-function-with_allowed_origins"><code>with_allowed_origins</code></a></li>
 <li><a href="#api-function-with_on_connect"><code>with_on_connect</code></a></li>
+<li><a href="#api-function-with_outbound_limits"><code>with_outbound_limits</code></a></li>
   </ul>
 </section>
 </nav>
@@ -93,6 +98,18 @@ pub type ConnectionState
 
 State maintained per WebSocket connection.
 
+<div class="api-entry-anchor" id="api-type-forcecloseerror" aria-hidden="true"></div>
+
+### `ForceCloseError`
+
+```gleam
+pub type ForceCloseError {
+  ForceCloseFailed(reason: String)
+}
+```
+
+An unexpected error while forcibly closing a connection.
+
 <div class="api-entry-anchor" id="api-type-framedisposition" aria-hidden="true"></div>
 
 ### `FrameDisposition`
@@ -122,7 +139,56 @@ Keep the connection open with the updated state.
 Stop
 ```
 
-Close the connection (the frame exceeded the configured size cap).
+Close the connection after a frame limit or transport write failure.
+
+<div class="api-entry-anchor" id="api-type-outboundconfigerror" aria-hidden="true"></div>
+
+### `OutboundConfigError`
+
+```gleam
+pub type OutboundConfigError {
+  InvalidMaxOutboundFrames
+  InvalidMaxOutboundBytes
+  MaxOutboundFramesTooLarge
+  MaxOutboundBytesTooLarge
+}
+```
+
+Errors returned when configuring a connection's outbound budget.
+
+#### Constructors
+
+##### `InvalidMaxOutboundFrames`
+
+```gleam
+InvalidMaxOutboundFrames
+```
+
+The frame limit was less than one.
+
+##### `InvalidMaxOutboundBytes`
+
+```gleam
+InvalidMaxOutboundBytes
+```
+
+The byte limit was less than one.
+
+##### `MaxOutboundFramesTooLarge`
+
+```gleam
+MaxOutboundFramesTooLarge
+```
+
+The frame limit cannot fit in the transport's atomic counter.
+
+##### `MaxOutboundBytesTooLarge`
+
+```gleam
+MaxOutboundBytesTooLarge
+```
+
+The byte limit cannot fit in the transport's atomic counter.
 
 <div class="api-entry-anchor" id="api-type-sendrequest" aria-hidden="true"></div>
 
@@ -130,8 +196,14 @@ Close the connection (the frame exceeded the configured size cap).
 
 ```gleam
 pub type SendRequest {
-  SendText(String)
-  SendBinary(BitArray)
+  SendText(
+    String,
+    bytes: Int
+  )
+  SendBinary(
+    BitArray,
+    bytes: Int
+  )
   Close
 }
 ```
@@ -139,7 +211,9 @@ pub type SendRequest {
 Outbound requests from the runtime to a connection process.
 
  Transports receive these as custom or user WebSocket messages. They send
- the frame or close the connection.
+ the frame or close the connection. `bytes` is the retained binary charge,
+ not necessarily the frame's logical length. Pass it unchanged to
+ `finish_outbound_write`.
 
 #### Constructors
 
@@ -213,11 +287,33 @@ Create a default transport config with no connect hook.
  the `origin.SameOrigin` origin policy, which rejects cross-site WebSocket
  upgrades before the handshake as CSWSH protection. Same-origin upgrades and
  non-browser clients (no `Origin` header) are admitted without
- configuration.
+ configuration. Each connection also has an outbound budget of 256 frames
+ and 1 MiB of retained payload binaries. A connection that exceeds either
+ limit is closed.
 
  Add `with_on_connect` to authenticate connections and/or seed connect
  metadata. Use `with_allowed_origins` to set an explicit allow-list. Use
  `with_allow_all_origins` to opt out of origin checking entirely.
+
+<div class="api-entry-anchor" id="api-function-finish_outbound_write" aria-hidden="true"></div>
+
+### `finish_outbound_write`
+
+```gleam
+pub fn finish_outbound_write(
+  ConnectionState,
+  Int,
+  Bool
+) -> FrameDisposition
+```
+
+Complete one outbound write.
+
+ On success, this releases the frame and byte reservation and keeps the
+ connection open. On error, it releases the reservation, records the
+ connection as closed, logs the failure, and tells the transport to stop.
+ Pass the `bytes` from the corresponding `SendRequest` unchanged; do not
+ recompute it from the logical frame size.
 
 <div class="api-entry-anchor" id="api-function-handle_binary_frame" aria-hidden="true"></div>
 
@@ -279,6 +375,8 @@ pub fn init_connection(
   seed: socket.ConnectSeed,
   connection_permit: transport.ConnectionPermit,
   base_selector: process.Selector(SendRequest),
+  config: TransportConfig(a),
+  force_close: fn() -> Result(Nil, ForceCloseError),
   logger_name: String,
   telemetry: transport.Telemetry,
   codec: option.Option(codec.Codec)
@@ -296,10 +394,17 @@ Initialize a new WebSocket connection in its connection process.
 
  Returns the connection state and a selector (extending `base_selector`)
  that delivers `SendRequest` values from the runtime; the transport must
- select on it and act on each request. Call `close_connection` when the
- connection closes, and `logger_name` names the transport in decode
- warnings (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this
- socket; `None` inherits the app-wide codec.
+ select on it and act on each request. If the request owner died before the
+ transfer, the reservation bind fails, runtime admission is skipped, and
+ the selector immediately delivers `Close`. Call `close_connection` when
+ the connection closes. `logger_name` names the transport in decode warnings
+ (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this socket;
+ `None` inherits the app-wide codec.
+
+ `force_close` must immediately close the underlying socket. beryl calls
+ it if binding fails or the outbound budget is full, so a blocked writer
+ cannot retain an unbounded mailbox. Return an error when the close fails
+ unexpectedly; beryl logs that failure.
 
 <div class="api-entry-anchor" id="api-function-is_websocket_request" aria-hidden="true"></div>
 
@@ -338,7 +443,7 @@ Run the shared upgrade admission pipeline for a request.
  1. Applies the configured origin policy and the `?vsn` version check,
     rejecting failures with `reject(403)`.
  2. Acquires a connection slot for `request_ip(request)` (per-IP and
-    node-wide ceilings), rejecting with `reject(429)` when at a limit.
+    per-system ceilings), rejecting with `reject(429)` when at a limit.
  3. Runs any `on_connect` callback; on `Error(ConnectRejected)` the slot is
     released and the request is rejected with `reject(403)`.
  4. Hands admitted requests to `accept` with the callback's connect
@@ -369,15 +474,14 @@ Run the shared upgrade admission pipeline for a request.
  exhausted. Its state survives disconnects and app runtime restarts, so
  reconnecting does not refresh the configured burst.
 
- When `beryl.with_max_connections` is configured, a node-wide ceiling on
- concurrent connections across all IPs is likewise enforced with
- `reject(429)` before allocating any long-lived socket/runtime state. The
- two limits compose: a connection must be under both to be admitted. The
- node-wide ceiling bounds total resource use when a per-IP limit alone
- cannot (many distributed source addresses / IPv6 rotation). It is enforced
- per BEAM node, so across a load-balanced cluster the effective ceiling
- scales with the node count. Use the load balancer's controls for a
- cluster-wide cap.
+ When `beryl.with_max_connections` is configured, a ceiling on concurrent
+ connections across all IPs for the supplied `Sockets` system is likewise
+ enforced with `reject(429)` before allocating any long-lived socket/runtime
+ state. The two limits compose: a connection must be under both to be
+ admitted. The total ceiling bounds resource use when a per-IP limit alone
+ cannot (many distributed source addresses / IPv6 rotation). Each
+ independently constructed system has a separate limiter on its BEAM node.
+ Use the load balancer's controls for a cluster-wide cap.
 
 <div class="api-entry-anchor" id="api-function-with_allow_all_origins" aria-hidden="true"></div>
 
@@ -441,3 +545,30 @@ Set a socket-level connect/authentication callback on the transport config.
 
  `ConnectSeed.metadata` preserves callback order and duplicate keys.
  Transports never log metadata values.
+
+<div class="api-entry-anchor" id="api-function-with_outbound_limits" aria-hidden="true"></div>
+
+### `with_outbound_limits`
+
+```gleam
+pub fn with_outbound_limits(
+  TransportConfig(a),
+  max_frames: Int,
+  max_bytes: Int
+) -> Result(TransportConfig(a), OutboundConfigError)
+```
+
+Set the per-connection outbound frame and retained-payload-byte limits.
+
+ `max_frames` must be from 1 through 8,388,607. `max_bytes` must be from 1
+ through 1,099,511,627,775 (one byte less than 1 TiB). Before beryl enqueues
+ a text or binary frame, it reserves one frame and the payload's referenced
+ BEAM binary size. A sub-binary is charged for its full backing allocation,
+ not only its logical length. Shared backing allocations are charged once
+ per frame; beryl does not copy or deduplicate them.
+
+ If either limit would be exceeded, the frame is rejected and the slow
+ connection is closed. This transport reservation is independent of runtime
+ work reservations and lasts until a successful write, a write error, or
+ connection close. It is not a total-memory cap: process heaps, WebSocket
+ framing, and transport or kernel buffers are outside this budget.

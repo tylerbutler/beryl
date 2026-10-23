@@ -5,7 +5,8 @@
 //// its builders, the upgrade admission pipeline (path matching, origin
 //// policy, `?vsn` negotiation, connection limits, `on_connect`
 //// authentication), per-connection lifecycle choreography, and the inbound
-//// frame pipeline (size caps, frame-rate limiting, decoding, routing).
+//// frame pipeline (size caps, frame-rate limiting, decoding, routing), plus
+//// bounded outbound admission and write accounting.
 ////
 //// Transport packages such as `beryl_mist` and `beryl_ewe` supply only the
 //// server-specific glue: the WebSocket upgrade call, frame sending, and peer
@@ -16,6 +17,8 @@
 import beryl.{type Sockets}
 import beryl/internal
 import beryl/log
+import beryl/outbound_budget
+import beryl/overload
 import beryl/rate_limit
 import beryl/socket.{type ConnectSeed}
 import beryl/transport.{type ConnectionPermit}
@@ -33,6 +36,14 @@ import gleam/result
 import gleam/string
 
 // --- Transport configuration ---
+
+const default_max_outbound_frames = 256
+
+const default_max_outbound_bytes = 1_048_576
+
+const largest_max_outbound_frames = 8_388_607
+
+const largest_max_outbound_bytes = 1_099_511_627_775
 
 /// Configuration for a WebSocket transport.
 ///
@@ -58,6 +69,10 @@ pub opaque type TransportConfig(body) {
     /// Policy applied to the request `Origin` header before the WebSocket
     /// handshake. Defaults to `origin.SameOrigin`.
     origin_policy: OriginPolicy,
+    /// Maximum frames reserved for writes by one connection.
+    max_outbound_frames: Int,
+    /// Maximum payload bytes reserved for writes by one connection.
+    max_outbound_bytes: Int,
   )
 }
 
@@ -67,14 +82,32 @@ pub type ConnectError {
   ConnectRejected
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
+/// Errors returned when configuring a connection's outbound budget.
+pub type OutboundConfigError {
+  /// The frame limit was less than one.
+  InvalidMaxOutboundFrames
+  /// The byte limit was less than one.
+  InvalidMaxOutboundBytes
+  /// The frame limit cannot fit in the transport's atomic counter.
+  MaxOutboundFramesTooLarge
+  /// The byte limit cannot fit in the transport's atomic counter.
+  MaxOutboundBytesTooLarge
+}
+
+/// An unexpected error while forcibly closing a connection.
+pub type ForceCloseError {
+  ForceCloseFailed(reason: String)
+}
+
 /// Create a default transport config with no connect hook.
 ///
 /// The resulting configuration sets `ConnectSeed.metadata` to `[]` and applies
 /// the `origin.SameOrigin` origin policy, which rejects cross-site WebSocket
 /// upgrades before the handshake as CSWSH protection. Same-origin upgrades and
 /// non-browser clients (no `Origin` header) are admitted without
-/// configuration.
+/// configuration. Each connection also has an outbound budget of 256 frames
+/// and 1 MiB of retained payload binaries. A connection that exceeds either
+/// limit is closed.
 ///
 /// Add `with_on_connect` to authenticate connections and/or seed connect
 /// metadata. Use `with_allowed_origins` to set an explicit allow-list. Use
@@ -84,6 +117,8 @@ pub fn default_config(path: String) -> TransportConfig(body) {
     path: normalize_path(path),
     on_connect: None,
     origin_policy: origin.SameOrigin,
+    max_outbound_frames: default_max_outbound_frames,
+    max_outbound_bytes: default_max_outbound_bytes,
   )
 }
 
@@ -149,6 +184,46 @@ pub fn with_allow_all_origins(
   TransportConfig(..config, origin_policy: origin.AllowAll)
 }
 
+/// Set the per-connection outbound frame and retained-payload-byte limits.
+///
+/// `max_frames` must be from 1 through 8,388,607. `max_bytes` must be from 1
+/// through 1,099,511,627,775 (one byte less than 1 TiB). Before beryl enqueues
+/// a text or binary frame, it reserves one frame and the payload's referenced
+/// BEAM binary size. A sub-binary is charged for its full backing allocation,
+/// not only its logical length. Shared backing allocations are charged once
+/// per frame; beryl does not copy or deduplicate them.
+///
+/// If either limit would be exceeded, the frame is rejected and the slow
+/// connection is closed. This transport reservation is independent of runtime
+/// work reservations and lasts until a successful write, a write error, or
+/// connection close. It is not a total-memory cap: process heaps, WebSocket
+/// framing, and transport or kernel buffers are outside this budget.
+pub fn with_outbound_limits(
+  config: TransportConfig(body),
+  max_frames max_frames: Int,
+  max_bytes max_bytes: Int,
+) -> Result(TransportConfig(body), OutboundConfigError) {
+  case
+    max_frames < 1,
+    max_bytes < 1,
+    max_frames > largest_max_outbound_frames,
+    max_bytes > largest_max_outbound_bytes
+  {
+    True, _, _, _ -> Error(InvalidMaxOutboundFrames)
+    _, True, _, _ -> Error(InvalidMaxOutboundBytes)
+    _, _, True, _ -> Error(MaxOutboundFramesTooLarge)
+    _, _, _, True -> Error(MaxOutboundBytesTooLarge)
+    False, False, False, False ->
+      Ok(
+        TransportConfig(
+          ..config,
+          max_outbound_frames: max_frames,
+          max_outbound_bytes: max_bytes,
+        ),
+      )
+  }
+}
+
 // --- Upgrade admission pipeline ---
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -171,7 +246,7 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 /// 1. Applies the configured origin policy and the `?vsn` version check,
 ///    rejecting failures with `reject(403)`.
 /// 2. Acquires a connection slot for `request_ip(request)` (per-IP and
-///    node-wide ceilings), rejecting with `reject(429)` when at a limit.
+///    per-system ceilings), rejecting with `reject(429)` when at a limit.
 /// 3. Runs any `on_connect` callback; on `Error(ConnectRejected)` the slot is
 ///    released and the request is rejected with `reject(403)`.
 /// 4. Hands admitted requests to `accept` with the callback's connect
@@ -202,15 +277,14 @@ pub fn is_websocket_request(request: Request(body)) -> Bool {
 /// exhausted. Its state survives disconnects and app runtime restarts, so
 /// reconnecting does not refresh the configured burst.
 ///
-/// When `beryl.with_max_connections` is configured, a node-wide ceiling on
-/// concurrent connections across all IPs is likewise enforced with
-/// `reject(429)` before allocating any long-lived socket/runtime state. The
-/// two limits compose: a connection must be under both to be admitted. The
-/// node-wide ceiling bounds total resource use when a per-IP limit alone
-/// cannot (many distributed source addresses / IPv6 rotation). It is enforced
-/// per BEAM node, so across a load-balanced cluster the effective ceiling
-/// scales with the node count. Use the load balancer's controls for a
-/// cluster-wide cap.
+/// When `beryl.with_max_connections` is configured, a ceiling on concurrent
+/// connections across all IPs for the supplied `Sockets` system is likewise
+/// enforced with `reject(429)` before allocating any long-lived socket/runtime
+/// state. The two limits compose: a connection must be under both to be
+/// admitted. The total ceiling bounds resource use when a per-IP limit alone
+/// cannot (many distributed source addresses / IPv6 rotation). Each
+/// independently constructed system has a separate limiter on its BEAM node.
+/// Use the load balancer's controls for a cluster-wide cap.
 pub fn upgrade(
   request request: Request(body),
   sockets sockets: Sockets,
@@ -413,13 +487,18 @@ fn finish_upgrade(
 
 // --- Connection lifecycle ---
 
+@external(erlang, "binary", "referenced_byte_size")
+fn retained_bytes(data: BitArray) -> Int
+
 /// Outbound requests from the runtime to a connection process.
 ///
 /// Transports receive these as custom or user WebSocket messages. They send
-/// the frame or close the connection.
+/// the frame or close the connection. `bytes` is the retained binary charge,
+/// not necessarily the frame's logical length. Pass it unchanged to
+/// `finish_outbound_write`.
 pub type SendRequest {
-  SendText(String)
-  SendBinary(BitArray)
+  SendText(String, bytes: Int)
+  SendBinary(BitArray, bytes: Int)
   /// Runtime-initiated close (e.g. heartbeat eviction).
   Close
 }
@@ -441,6 +520,7 @@ pub opaque type ConnectionState {
     /// It is independent of the runtime's decoded-message limiter.
     frame_limiter: Option(rate_limit.Bucket),
     logger: log.Logger,
+    outbound_budget: outbound_budget.Budget,
   )
 }
 
@@ -477,43 +557,91 @@ pub fn connect_seed(
 ///
 /// Returns the connection state and a selector (extending `base_selector`)
 /// that delivers `SendRequest` values from the runtime; the transport must
-/// select on it and act on each request. Call `close_connection` when the
-/// connection closes, and `logger_name` names the transport in decode
-/// warnings (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this
-/// socket; `None` inherits the app-wide codec.
+/// select on it and act on each request. If the request owner died before the
+/// transfer, the reservation bind fails, runtime admission is skipped, and
+/// the selector immediately delivers `Close`. Call `close_connection` when
+/// the connection closes. `logger_name` names the transport in decode warnings
+/// (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this socket;
+/// `None` inherits the app-wide codec.
+///
+/// `force_close` must immediately close the underlying socket. beryl calls
+/// it if binding fails or the outbound budget is full, so a blocked writer
+/// cannot retain an unbounded mailbox. Return an error when the close fails
+/// unexpectedly; beryl logs that failure.
 pub fn init_connection(
   sockets sockets: Sockets,
   seed seed: ConnectSeed,
   connection_permit connection_permit: ConnectionPermit,
   base_selector base_selector: Selector(SendRequest),
+  config config: TransportConfig(body),
+  force_close force_close: fn() -> Result(Nil, ForceCloseError),
   logger_name logger_name: String,
   telemetry telemetry: transport.Telemetry,
   codec socket_codec: Option(Codec),
 ) -> #(ConnectionState, Selector(SendRequest)) {
-  // Bind the connection slot to this WebSocket process so it is reclaimed
-  // even if the process dies without running the transport's close callback.
-  transport.bind_connection_slot(connection_permit)
+  let bind_result = transport.bind_connection_slot(connection_permit)
 
   let socket_id = generate_socket_id()
   let send_subject = process.new_subject()
   let selector = process.select(base_selector, send_subject)
+  let budget = outbound_budget.new()
+  let logger = internal.logger(logger_name)
 
-  // Create send functions that the runtime can use.
+  // `Ok` means that the frame was admitted to the connection process mailbox.
+  // It does not mean that the frame was written or received by the peer.
   let send_fn = fn(text: String) -> Result(Nil, Nil) {
-    process.send(send_subject, SendText(text))
-    Ok(Nil)
+    let bytes = retained_bytes(bit_array.from_string(text))
+    case
+      outbound_budget.reserve_and_send(
+        budget,
+        send_subject,
+        SendText(text, bytes),
+        bytes,
+        config.max_outbound_frames,
+        config.max_outbound_bytes,
+      )
+    {
+      True -> Ok(Nil)
+      False -> {
+        force_close_logged(logger, socket_id, force_close)
+        Error(Nil)
+      }
+    }
   }
 
   let send_binary_fn = fn(data: BitArray) -> Result(Nil, Nil) {
-    process.send(send_subject, SendBinary(data))
-    Ok(Nil)
+    let bytes = retained_bytes(data)
+    case
+      outbound_budget.reserve_and_send(
+        budget,
+        send_subject,
+        SendBinary(data, bytes),
+        bytes,
+        config.max_outbound_frames,
+        config.max_outbound_bytes,
+      )
+    {
+      True -> Ok(Nil)
+      False -> {
+        force_close_logged(logger, socket_id, force_close)
+        Error(Nil)
+      }
+    }
   }
 
   // Capture and monitor the exact runtime before registration. Admission is
   // atomic: a restart between capture and registration rejects the socket
   // instead of redirecting it into the successor runtime.
-  let selector = case transport.runtime_pid(sockets) {
-    Ok(runtime_pid) -> {
+  let selector = case bind_result, transport.runtime_pid(sockets) {
+    Error(Nil), _ -> {
+      // A timed-out bind may still be queued. Release follows it from this
+      // process, so the limiter cannot retain a late transfer.
+      transport.release_connection_slot(connection_permit)
+      outbound_budget.close_and_send(budget, send_subject, Close)
+      force_close_logged(logger, socket_id, force_close)
+      selector
+    }
+    Ok(Nil), Ok(runtime_pid) -> {
       let monitor = process.monitor(runtime_pid)
       let selector =
         process.select_specific_monitor(selector, monitor, fn(_down) { Close })
@@ -526,12 +654,14 @@ pub fn init_connection(
           send_binary: send_binary_fn,
           codec: socket_codec,
           seed: seed,
-          close: fn() { process.send(send_subject, Close) },
+          close: fn() {
+            outbound_budget.close_and_send(budget, send_subject, Close)
+          },
         )
       selector
     }
-    Error(Nil) -> {
-      process.send(send_subject, Close)
+    Ok(Nil), Error(Nil) -> {
+      outbound_budget.close_and_send(budget, send_subject, Close)
       selector
     }
   }
@@ -546,18 +676,60 @@ pub fn init_connection(
       telemetry: telemetry,
       frame_limiter: beryl.frame_limits(sockets)
         |> option.map(rate_limit.new_bucket),
-      logger: internal.logger(logger_name),
+      logger: logger,
+      outbound_budget: budget,
     )
 
   #(state, selector)
+}
+
+fn force_close_logged(
+  logger: log.Logger,
+  socket_id: String,
+  force_close: fn() -> Result(Nil, ForceCloseError),
+) -> Nil {
+  case force_close() {
+    Ok(Nil) -> Nil
+    Error(ForceCloseFailed(reason)) ->
+      log.warn(logger, "Failed to force-close WebSocket connection", [
+        #("socket_id", socket_id),
+        #("error", reason),
+      ])
+  }
 }
 
 /// Clean up a closed connection.
 ///
 /// Release the held connection slot and report the disconnect to the runtime.
 pub fn close_connection(state: ConnectionState) -> Nil {
+  outbound_budget.cancel(state.outbound_budget)
   transport.release_connection_slot(state.connection_permit)
   transport.socket_disconnected(state.sockets, state.socket_id)
+}
+
+/// Complete one outbound write.
+///
+/// On success, this releases the frame and byte reservation and keeps the
+/// connection open. On error, it releases the reservation, records the
+/// connection as closed, logs the failure, and tells the transport to stop.
+/// Pass the `bytes` from the corresponding `SendRequest` unchanged; do not
+/// recompute it from the logical frame size.
+pub fn finish_outbound_write(
+  state: ConnectionState,
+  bytes: Int,
+  succeeded: Bool,
+) -> FrameDisposition {
+  outbound_budget.release(state.outbound_budget, bytes)
+  case succeeded {
+    True -> Continue(state)
+    False -> {
+      outbound_budget.cancel(state.outbound_budget)
+      log.warn(state.logger, "Failed to write outbound WebSocket frame", [
+        #("socket_id", state.socket_id),
+      ])
+      Stop
+    }
+  }
 }
 
 // --- Inbound frame pipeline ---
@@ -566,7 +738,7 @@ pub fn close_connection(state: ConnectionState) -> Nil {
 pub type FrameDisposition {
   /// Keep the connection open with the updated state.
   Continue(ConnectionState)
-  /// Close the connection (the frame exceeded the configured size cap).
+  /// Close the connection after a frame limit or transport write failure.
   Stop
 }
 
@@ -588,15 +760,13 @@ pub fn handle_text_frame(
     fn(state, started_at) {
       case codec.decode_text(state.codec)(text) {
         Ok(message) -> {
-          transport.route_decoded(state.sockets, state.socket_id, message)
-          emit_frame_stop(
+          finish_route(
             state,
             started_at,
             string.byte_size(text),
             transport.TextFrame,
-            transport.FrameRouted,
+            transport.route_decoded(state.sockets, state.socket_id, message),
           )
-          Continue(state)
         }
         Error(error) -> {
           log.warn(state.logger, "Failed to decode wire protocol message", [
@@ -617,7 +787,6 @@ pub fn handle_text_frame(
   )
 }
 
-// nolint: unused_exports -- transport SPI, consumed by sibling transports
 /// Check the size and rate of an inbound binary frame, then decode it in the
 /// connection process. A codec without a binary decoder keeps the raw
 /// `transport.route_binary` fan-out through the runtime.
@@ -629,33 +798,30 @@ pub fn handle_binary_frame(
   admit_frame(state, bytes, transport.BinaryFrame, fn(state, started_at) {
     case codec.decode_binary(state.codec) {
       None -> {
-        transport.route_binary(state.sockets, state.socket_id, data)
-        emit_frame_stop(
+        finish_route(
           state,
           started_at,
           bytes,
           transport.BinaryFrame,
-          transport.FrameRouted,
+          transport.route_binary(state.sockets, state.socket_id, data),
         )
-        Continue(state)
       }
       Some(decode_binary) ->
         case decode_binary(data) {
           Ok(message) -> {
-            transport.route_decoded_binary(
-              state.sockets,
-              state.socket_id,
-              message,
-            )
-            emit_frame_stop(
+            finish_route(
               state,
               started_at,
               bytes,
               transport.BinaryFrame,
-              transport.FrameRouted,
+              transport.route_decoded_binary(
+                state.sockets,
+                state.socket_id,
+                message,
+              ),
             )
-            Continue(state)
           }
+
           Error(error) -> {
             log.warn(
               state.logger,
@@ -677,6 +843,35 @@ pub fn handle_binary_frame(
         }
     }
   })
+}
+
+fn finish_route(
+  state: ConnectionState,
+  started_at: Int,
+  bytes: Int,
+  kind: transport.FrameKind,
+  admission: Result(Nil, overload.AdmissionError),
+) -> FrameDisposition {
+  case admission {
+    Ok(Nil) -> {
+      emit_frame_stop(state, started_at, bytes, kind, transport.FrameRouted)
+      Continue(state)
+    }
+    Error(error) -> {
+      log.warn(state.logger, "Connection closing: runtime admission rejected", [
+        #("socket_id", state.socket_id),
+        #("reason", overload.describe(error)),
+      ])
+      emit_frame_stop(
+        state,
+        started_at,
+        bytes,
+        kind,
+        transport.FrameAdmissionRejected,
+      )
+      Stop
+    }
+  }
 }
 
 fn admit_frame(

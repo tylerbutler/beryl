@@ -1,16 +1,148 @@
 -module(beryl_pubsub_ffi).
--export([start_pg_scope/1, join_group/3, leave_group/3,
-         get_members/2, get_local_members/2, send_to_pid/3,
-         scoped_to_message/1]).
+-export([start_pg_scope/1, start_memberships/1,
+         join_group/4, leave_group/4,
+         get_members/3, get_local_members/3,
+         registered_scope/1, is_local_pid/1,
+         try_pg_join/3, try_pg_leave/3, try_pg_local_members/2,
+         scoped_to_message/1, membership_actor_call/3,
+         new_membership_intent/0, set_membership_intent/3, take_membership_intent/1]).
 
-start_pg_scope(Scope) -> _ = pg:start(Scope), nil.
+new_membership_intent() ->
+    {ets:new(?MODULE, [set, protected]), self(), atomics:new(1, [])}.
 
-join_group(Scope, Group, Pid) -> _ = pg:join(Scope, Group, Pid), nil.
-leave_group(Scope, Group, Pid) -> _ = pg:leave(Scope, Group, Pid), nil.
-get_members(Scope, Group) -> pg:get_members(Scope, Group).
-get_local_members(Scope, Group) -> pg:get_local_members(Scope, Group).
-send_to_pid(Pid, Scope, {message, Topic, Event, Payload, From}) ->
-    Pid ! {Scope, Topic, Event, Payload, From}, nil.
+set_membership_intent({Table, Owner, Notify}, Topic, Joined) when Owner =:= self() ->
+    case Joined of
+        true -> ets:insert(Table, {Topic});
+        false -> ets:delete(Table, Topic)
+    end,
+    atomics:compare_exchange(Notify, 1, 0, 1) =:= ok.
+
+take_membership_intent({Table, _Owner, Notify}) ->
+    %% Clear before reading: an update during reconciliation queues one more wake.
+    atomics:put(Notify, 1, 0),
+    try {ok, [Topic || {Topic} <- ets:tab2list(Table)]}
+    catch error:badarg -> {error, nil}
+    end.
+
+start_pg_scope(Scope) ->
+    case beryl_pubsub_supervisor:start_scope(Scope) of
+        {ok, RegistryPid} ->
+            Registry = 'beryl@pubsub_membership':from_pid(RegistryPid),
+            case membership_call(fun() ->
+                'beryl@pubsub_membership':ready(Registry)
+            end) of
+                ok -> Registry;
+                {error, Reason} -> exit({pubsub_start_failed, Scope, Reason})
+            end;
+        {error, Reason} -> exit({pubsub_start_failed, Scope, Reason})
+    end.
+
+start_memberships(Scope) ->
+    case 'beryl@pubsub_membership':start(Scope) of
+        {ok, {started, Pid, _Registry}} -> {ok, Pid};
+        {error, Reason} -> {error, Reason}
+    end.
+
+join_group(Scope, Registry, Group, Pid) ->
+    membership_call(Scope, fun() ->
+        'beryl@pubsub_membership':join(Registry, Group, Pid)
+    end).
+
+leave_group(Scope, Registry, Group, Pid) ->
+    membership_call(Scope, fun() ->
+        'beryl@pubsub_membership':leave(Registry, Group, Pid)
+    end).
+
+membership_call(Scope, Operation) ->
+    case membership_call(Operation) of
+        ok -> nil;
+        {error, Reason} -> exit({pubsub_unavailable, Scope, Reason})
+    end.
+
+membership_call(Operation) ->
+    try Operation() of
+        {ok, nil} -> ok;
+        {error, Reason} -> {error, Reason}
+    catch
+        Class:Reason -> {error, {actor_call_failed, Class, Reason}}
+    end.
+
+%% A process alias drops late responses. The after block always removes the
+%% callee monitor, including timeout and process-down paths.
+membership_actor_call(Subject, Timeout, Request) ->
+    case subject_owner(Subject) of
+        undefined ->
+            erlang:error(membership_actor_unavailable);
+        Owner ->
+            Alias = erlang:alias(),
+            Tag = make_ref(),
+            Reply = {subject, Alias, Tag},
+            Monitor = erlang:monitor(process, Owner),
+            try
+                Owner ! subject_message(Subject, Request(Reply)),
+                receive
+                    {Tag, Value} -> Value;
+                    {'DOWN', Monitor, process, Owner, Reason} ->
+                        erlang:error({membership_actor_down, Reason})
+                after max(0, Timeout) ->
+                    erlang:error(membership_actor_timeout)
+                end
+            after
+                erlang:demonitor(Monitor, [flush]),
+                erlang:unalias(Alias),
+                receive {Tag, _} -> ok after 0 -> ok end
+            end
+    end.
+
+subject_owner({subject, Owner, _Tag}) ->
+    case is_process_alive(Owner) of
+        true -> Owner;
+        false -> undefined
+    end;
+subject_owner({named_subject, Name}) ->
+    whereis(Name).
+
+subject_message({subject, _Owner, Tag}, Message) ->
+    {Tag, Message};
+subject_message({named_subject, Name}, Message) ->
+    {Name, Message}.
+
+get_members(Scope, Registry, Group) ->
+    ensure_owner(Scope, Registry),
+    'beryl@pubsub_native':get_members(Scope, Group).
+get_local_members(Scope, Registry, Group) ->
+    ensure_owner(Scope, Registry),
+    'beryl@pubsub_native':get_local_members(Scope, Group).
+
+ensure_owner(Scope, Registry) ->
+    case 'beryl@pubsub_membership':is_alive(Registry) of
+        true -> ok;
+        false -> exit({pubsub_unavailable, Scope, owner_down})
+    end.
+
+registered_scope(Scope) ->
+    case whereis(Scope) of
+        undefined -> {error, nil};
+        Pid -> {ok, Pid}
+    end.
+
+is_local_pid(Pid) ->
+    is_pid(Pid) andalso node(Pid) =:= node().
+
+try_pg_join(Scope, Group, Pid) ->
+    try pg:join(Scope, Group, Pid), {ok, nil}
+    catch Class:Reason -> {error, {Class, Reason}}
+    end.
+
+try_pg_leave(Scope, Group, Pid) ->
+    try pg:leave(Scope, Group, Pid), {ok, nil}
+    catch Class:Reason -> {error, {Class, Reason}}
+    end.
+
+try_pg_local_members(Scope, Group) ->
+    try {ok, pg:get_local_members(Scope, Group)}
+    catch Class:Reason -> {error, {Class, Reason}}
+    end.
 
 scoped_to_message({_Scope, Topic, Event, Payload, From}) ->
     {message, Topic, Event, Payload, From}.

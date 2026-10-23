@@ -41,7 +41,7 @@ RUN apk add --no-cache libstdc++ ncurses-libs openssl ca-certificates
 WORKDIR /app
 COPY --from=build /src/examples/showcase/build/erlang-shipment ./
 
-# Railway injects PORT; bind to all interfaces so the proxy can reach us.
+# Bind to all interfaces so the hosting platform's proxy can reach us.
 ENV BIND_ADDRESS=0.0.0.0
 EXPOSE 8000
 

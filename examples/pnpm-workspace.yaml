@@ -2,6 +2,7 @@ packages:
   - cursors
   - chatrooms
   - collab_docs
+  - lustre_presence
   - showcase
 onlyBuiltDependencies:
   - esbuild

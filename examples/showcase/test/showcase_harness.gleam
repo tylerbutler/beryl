@@ -88,8 +88,8 @@ pub fn start(_replica: String) -> System {
 
 /// Stop the socket runtime and test-only presence publisher.
 pub fn stop(system: System) -> Nil {
-  session_presence.stop(system.presence)
   let assert Ok(Nil) = beryl.stop(system.sockets)
+  session_presence.stop(system.presence)
   Nil
 }
 
@@ -136,7 +136,9 @@ pub fn route(system: System, socket_id: String, raw: String) -> Nil {
   let assert Ok(decoded) =
     codec.decode_text(transport.active_codec(system.sockets))(raw)
     as "the test frame is valid phoenix wire format"
-  transport.route_decoded(system.sockets, socket_id, decoded)
+  let assert Ok(Nil) =
+    transport.route_decoded(system.sockets, socket_id, decoded)
+  Nil
 }
 
 /// Send a `phx_join` carrying a raw JSON payload.

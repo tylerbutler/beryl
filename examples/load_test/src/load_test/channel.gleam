@@ -19,7 +19,7 @@ pub fn init(_info: socket.ConnectInfo(message)) -> #(Nil, List(Effect)) {
 
 pub fn update(
   presence: session_presence.Tracker,
-  cost_us: Int,
+  callback_elapsed_us: Int,
   model: Nil,
   input: Input(message),
 ) -> Next(Nil) {
@@ -34,7 +34,7 @@ pub fn update(
         RejectJoin(ref, json.object([#("reason", json.string("unmatched"))])),
       ])
     Message(topic, event_name, payload, ref) -> {
-      bench.burn(cost_us)
+      bench.wait_elapsed(callback_elapsed_us)
       socket.Next(
         model,
         message_effects(presence, topic, event_name, payload, ref),
@@ -147,7 +147,7 @@ fn reply_error(
 /// topology. `message_effects` defines the behavior of each event.
 pub fn handlers(
   presence: session_presence.Tracker,
-  cost_us: Int,
+  callback_elapsed_us: Int,
 ) -> List(channel.Handler) {
   [
     channel.handler("guardrail:forbidden", fn(_context) {
@@ -156,7 +156,7 @@ pub fn handlers(
     channel.handler("bench:*", fn(context) {
       channel.accept(Nil)
       |> channel.on_message(fn(_state, message) {
-        bench.burn(cost_us)
+        bench.wait_elapsed(callback_elapsed_us)
         channel.next(Nil, actions(presence, context.topic, message))
       })
     }),
@@ -182,6 +182,7 @@ fn actions(
         Ok(channel.reply_ok(message.reply, payload))
       socket.ReplyError(payload: payload, ..) ->
         Ok(channel.reply_error(message.reply, payload))
+      socket.DiscardReply(..) -> Ok(channel.discard_reply(message.reply))
       socket.Broadcast(event: event, payload: payload, ..) ->
         Ok(channel.broadcast(event, payload))
       // `message_effects` does not produce these effects. This list makes a

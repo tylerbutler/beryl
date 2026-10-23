@@ -4,8 +4,10 @@
 //// prevents callers from putting topics, socket IDs, payloads, or arbitrary
 //// error text into metadata.
 
+import beryl/overload
 import gleam/bool
 import gleam/int
+import rasa/monotonic
 
 /// Transport implementations supported by beryl's telemetry schema.
 pub type Transport {
@@ -22,6 +24,7 @@ pub type JoinOutcome {
   JoinTopicLimit
   JoinRateLimited
   JoinCallbackFailed
+  JoinAdmissionRejected
   JoinSocketMissing
 }
 
@@ -33,6 +36,7 @@ pub type MessageOutcome {
   MessageInvalid
   MessageRateLimited
   MessageCallbackFailed
+  MessageAdmissionRejected
   MessageSocketMissing
 }
 
@@ -52,6 +56,7 @@ pub type TransportFrameOutcome {
   FrameOversized
   FrameRateLimited
   FrameDecodeFailed
+  FrameAdmissionRejected
 }
 
 /// WebSocket frame kinds.
@@ -65,6 +70,7 @@ pub type MessageKind {
   TextMessage
   BinaryMessage
   InfoMessage
+  PresenceMessage
   HeartbeatMessage
 }
 
@@ -77,6 +83,7 @@ pub type CallbackResult {
   Push
   Stop
   CallbackFailed
+  CallbackAdmissionRejected
 }
 
 /// Closed socket-disconnect reason vocabulary.
@@ -85,6 +92,7 @@ pub type DisconnectReason {
   HeartbeatTimeout
   ShutdownDisconnect
   CallbackDisconnect
+  AdmissionDisconnect
 }
 
 /// Whether a broadcast originated on this node or a remote node.
@@ -94,7 +102,14 @@ pub type BroadcastOrigin {
 }
 
 /// Stable, low-cardinality beryl telemetry events.
+pub type QueueOutcome {
+  QueueChanged
+  QueueRejected
+}
+
+/// Stable, low-cardinality beryl telemetry events.
 pub type Event {
+  QueueOccupancy(occupancy: overload.Occupancy, outcome: QueueOutcome)
   TransportUpgradeStop(
     duration: Int,
     transport: Transport,
@@ -121,16 +136,18 @@ pub type Event {
     callback_result: CallbackResult,
   )
   BroadcastStop(duration: Int, recipients: Int, origin: BroadcastOrigin)
+  PresenceSyncRejected
 }
 
 @external(erlang, "beryl_telemetry_ffi", "execute")
 fn execute(event: Event) -> Nil
 
-@external(erlang, "beryl_telemetry_ffi", "monotonic_time")
-fn monotonic_time() -> Int
-
 @external(erlang, "beryl_telemetry_ffi", "mailbox_length")
 fn current_mailbox_length() -> Int
+
+fn monotonic_time() -> Int {
+  monotonic.time(monotonic.Native)
+}
 
 /// Emit a typed event when telemetry is enabled.
 ///

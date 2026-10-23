@@ -8,7 +8,8 @@
 import app_test_helper
 import beryl
 import beryl/socket.{
-  type ReplyRef, AcceptJoin, Info, Join, Message, Next, ReplyOk,
+  type ReplyRef, AcceptJoin, DiscardReply, Info, Join, Message, Next, ReplyError,
+  ReplyOk,
 }
 import beryl/wire
 import gleam/erlang/process
@@ -18,16 +19,23 @@ import gleam/string
 import gleeunit/should
 
 pub type AppMessage {
+  Barrier(process.Subject(Nil))
+  DiscardPrevious
+  DiscardStashed
   ReplyStashed
+  ReplyPrevious
 }
 
 type Model {
-  Model(stashed: Option(ReplyRef))
+  Model(stashed: Option(ReplyRef), previous: Option(ReplyRef))
 }
 
 /// - "double": reply to the same ref twice in one effects list (single-use).
 /// - "stash": store the ref without replying (deferred reply).
+/// - `Info(DiscardStashed)`: discard the stored ref without a wire reply.
+/// - `Info(DiscardPrevious)`: attempt to discard the previous ref.
 /// - `Info(ReplyStashed)`: reply with the stored ref later.
+/// - `Info(ReplyPrevious)`: attempt both reply effects with the previous ref.
 fn start_system(
   senders: process.Subject(socket.Sender(AppMessage)),
 ) -> beryl.Sockets {
@@ -36,23 +44,46 @@ fn start_system(
       beryl.config(wire.phoenix_codec()),
       init: fn(info) {
         process.send(senders, info.self)
-        #(Model(None), [])
+        #(Model(None, None), [])
       },
       update: fn(model: Model, event) {
         case event {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          Info(Barrier(done)) -> {
+            process.send(done, Nil)
+            Next(model, [])
+          }
           Message(_topic, "double", _payload, Some(ref)) ->
             Next(model, [
               ReplyOk(ref, json.object([#("n", json.int(1))])),
               ReplyOk(ref, json.object([#("n", json.int(2))])),
             ])
           Message(_topic, "stash", _payload, Some(ref)) ->
-            Next(Model(Some(ref)), [])
+            Next(Model(Some(ref), model.stashed), [])
+          Info(DiscardStashed) ->
+            case model.stashed {
+              Some(ref) -> Next(model, [DiscardReply(ref)])
+              None -> Next(model, [])
+            }
+          Info(DiscardPrevious) ->
+            case model.previous {
+              Some(ref) -> Next(model, [DiscardReply(ref)])
+              None -> Next(model, [])
+            }
           Info(ReplyStashed) ->
             case model.stashed {
               Some(ref) ->
                 Next(model, [
                   ReplyOk(ref, json.object([#("late", json.bool(True))])),
+                ])
+              None -> Next(model, [])
+            }
+          Info(ReplyPrevious) ->
+            case model.previous {
+              Some(ref) ->
+                Next(model, [
+                  ReplyOk(ref, json.string("stale ok")),
+                  ReplyError(ref, json.string("stale error")),
                 ])
               None -> Next(model, [])
             }
@@ -97,7 +128,7 @@ pub fn deferred_reply_from_info_is_delivered_test() -> Nil {
   app_test_helper.recv_none(frames)
 
   // A later turn answers the stored ref — still valid.
-  socket.notify(sender, ReplyStashed)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
   let reply = app_test_helper.recv(frames)
   reply |> string.contains("phx_reply") |> should.be_true
   reply |> string.contains("r-2") |> should.be_true
@@ -125,17 +156,129 @@ pub fn duplicate_outstanding_ref_is_rejected_then_reusable_test() -> Nil {
   duplicate |> string.contains("duplicate_ref") |> should.be_true
 
   // Completing the original request frees the key.
-  socket.notify(sender, ReplyStashed)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
   let first_reply = app_test_helper.recv(frames)
   first_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
 
   // The same effective key can be used again after completion.
   app_test_helper.push(channels, "s1", "room:a", "stash", "r-2")
   app_test_helper.recv_none(frames)
-  socket.notify(sender, ReplyStashed)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
   let reused_reply = app_test_helper.recv(frames)
   reused_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
   reused_reply |> string.contains("\"late\":true") |> should.be_true
+}
+
+pub fn completed_reply_ref_cannot_consume_reused_wire_key_test() -> Nil {
+  let #(channels, senders) = start()
+  let frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(sender) = process.receive(senders, 500)
+  app_test_helper.join_ok(channels, frames, "s1", "room:a", "jr-1", "r-1")
+
+  app_test_helper.push(channels, "s1", "room:a", "stash", "r-2")
+  app_test_helper.recv_none(frames)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+
+  // Keep the completed handle alongside a new handle with identical wire fields.
+  app_test_helper.push(channels, "s1", "room:a", "stash", "r-2")
+  app_test_helper.recv_none(frames)
+  assert_current_ref_survives_stale_replies(channels, sender, frames)
+}
+
+pub fn discarded_reply_ref_cannot_consume_reused_wire_key_test() -> Nil {
+  let #(channels, senders) = start()
+  let frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(sender) = process.receive(senders, 500)
+  app_test_helper.join_ok(channels, frames, "s1", "room:a", "jr-1", "r-1")
+
+  app_test_helper.push(channels, "s1", "room:a", "stash", "r-2")
+  app_test_helper.recv_none(frames)
+  let assert Ok(_) = socket.notify(sender, DiscardStashed)
+  wait_for_barrier(sender)
+  app_test_helper.recv_none(frames)
+
+  // A discarded key is reusable, but the old capability cannot consume it.
+  app_test_helper.push(channels, "s1", "room:a", "stash", "r-2")
+  app_test_helper.recv_none(frames)
+  let assert Ok(_) = socket.notify(sender, DiscardPrevious)
+  wait_for_barrier(sender)
+  app_test_helper.recv_none(frames)
+
+  app_test_helper.route(
+    channels,
+    "s1",
+    "[\"jr-1\",\"r-2\",\"room:a\",\"stash\",{}]",
+  )
+  let duplicate = app_test_helper.recv(frames)
+  duplicate |> string.contains("duplicate_ref") |> should.be_true
+
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
+  app_test_helper.recv(frames)
+  |> should.equal(
+    "[\"jr-1\",\"r-2\",\"room:a\",\"phx_reply\","
+    <> "{\"status\":\"ok\",\"response\":{\"late\":true}}]",
+  )
+}
+
+fn wait_for_barrier(sender: socket.Sender(AppMessage)) -> Nil {
+  let done = process.new_subject()
+  let assert Ok(_) = socket.notify(sender, Barrier(done))
+  process.receive(done, 1000) |> should.equal(Ok(Nil))
+}
+
+pub fn closed_reply_ref_cannot_consume_rejoined_wire_key_test() -> Nil {
+  let #(channels, senders) = start()
+  let frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(sender) = process.receive(senders, 500)
+  app_test_helper.join_ok(channels, frames, "s1", "room:a", "jr-1", "r-1")
+
+  app_test_helper.push(channels, "s1", "room:a", "stash", "r-2")
+  app_test_helper.route(
+    channels,
+    "s1",
+    "[\"jr-1\",\"r-3\",\"room:a\",\"phx_leave\",{}]",
+  )
+  let _leave_reply = app_test_helper.recv(frames)
+  app_test_helper.recv(frames)
+  |> string.contains("phx_close")
+  |> should.be_true
+
+  // Reuse the join ref as well as the message ref from the closed instance.
+  app_test_helper.join_ok(channels, frames, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.push(channels, "s1", "room:a", "stash", "r-2")
+  app_test_helper.recv_none(frames)
+  assert_current_ref_survives_stale_replies(channels, sender, frames)
+}
+
+fn assert_current_ref_survives_stale_replies(
+  channels: beryl.Sockets,
+  sender: socket.Sender(AppMessage),
+  frames: process.Subject(String),
+) -> Nil {
+  let assert Ok(_) = socket.notify(sender, ReplyPrevious)
+  app_test_helper.recv_none(frames)
+
+  // Rejecting the stale effects must leave the new request outstanding.
+  app_test_helper.route(
+    channels,
+    "s1",
+    "[\"jr-1\",\"r-2\",\"room:a\",\"stash\",{}]",
+  )
+  let duplicate = app_test_helper.recv(frames)
+  duplicate |> string.contains("\"status\":\"error\"") |> should.be_true
+  duplicate |> string.contains("duplicate_ref") |> should.be_true
+
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
+  app_test_helper.recv(frames)
+  |> should.equal(
+    "[\"jr-1\",\"r-2\",\"room:a\",\"phx_reply\","
+    <> "{\"status\":\"ok\",\"response\":{\"late\":true}}]",
+  )
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
+  app_test_helper.recv_none(frames)
 }
 
 pub fn reply_after_topic_close_is_dropped_test() -> Nil {
@@ -159,7 +302,7 @@ pub fn reply_after_topic_close_is_dropped_test() -> Nil {
 
   // The stored ref is stale now that its topic closed: the late reply is
   // dropped rather than sent.
-  socket.notify(sender, ReplyStashed)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
   app_test_helper.recv_none(frames)
 }
 
@@ -187,6 +330,6 @@ pub fn reply_after_rejoin_is_dropped_test() -> Nil {
   // The socket is joined again, but the ref stashed under the previous
   // instance is stale: replying with it is dropped, not delivered against
   // the new join.
-  socket.notify(sender, ReplyStashed)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
   app_test_helper.recv_none(frames)
 }

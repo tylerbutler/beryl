@@ -13,7 +13,9 @@ Ensure you have the following installed:
 | just | 1.50.0+ | Task runner |
 | [trellis](https://trellis.tylerbutler.com) | 0.10.3+ | Gleam workspace manager (tasks, versions, publishing) |
 
-**Recommended:** Use [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/) with the provided `.tool-versions` file. trellis is pinned in `.mise.toml` (mise's GitHub backend); it can also be installed via its shell installer or Homebrew. Note that `.mise.toml` also pins `erlang = "28"`, so mise users build on Erlang 28 while `.tool-versions` sets the 27.2.1 floor; CI matrix-tests both.
+**Recommended:** Use [mise](https://mise.jdx.dev/) with the provided
+`.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
+licence_audit. CI matrix-tests Erlang 27 and 28.
 
 This repository is a trellis-managed workspace: three packages live under
 `packages/` — `beryl`, `beryl_mist`, and `beryl_ewe` — with
@@ -23,11 +25,7 @@ excluded from release via the `@release` key, so the other two packages are
 publishable. `just` recipes fan out across the workspace through `trellis run`.
 
 ```bash
-# With mise
 mise install
-
-# With asdf
-asdf install
 ```
 
 ## Getting Started
@@ -44,6 +42,36 @@ just deps
 just ci
 ```
 
+`just deps-gleam` uses Node.js 22.12+ to prepare workspace and documentation
+snippet dependencies in sequence. Gleam 1.18.1 updates only one changed path
+dependency fingerprint per call. Preparation repeats until the manifest and
+fingerprints stop changing, retries Hex rate-limit failures with bounded
+backoff, then CI caches that state for all jobs. This workaround can be removed
+when the pinned Gleam release includes
+[gleam-lang/gleam#6246](https://github.com/gleam-lang/gleam/pull/6246).
+Run `just deps-test` to check cold preparation, changed dependencies, and cache reuse.
+
+### Codec benchmarks
+
+The optional `beryl_codec_bench` workspace member measures Phoenix text and
+binary codec calls. From the repository root:
+
+```bash
+just bench-codec-deps    # Install the mise-managed Elixir toolchain and package deps
+just bench-codec-check   # Strict build and fixture checks, without measurements
+just bench-codec         # Run time, heap allocation, and reduction measurements
+```
+
+Elixir is pinned in `benchmarks/codec/.mise.toml`, not in the root toolchain.
+Normal dependency preparation, builds, tests, docs, lint, and releases exclude
+the benchmark; formatting and cleanup include it. The dependency script also
+accepts explicit package names, such as
+`node scripts/prepare-gleam-deps.mjs beryl_codec_bench`.
+
+See the [codec benchmark guide](benchmarks/codec/README.md) for the input
+matrix, setup requirements, and measurement limits. Use the
+[k6 suite](load/README.md) for whole-system load measurements.
+
 ## Development Workflow
 
 ### Daily Development
@@ -54,6 +82,9 @@ just check
 
 # Run tests
 just test
+
+# Run Dialyzer and Xref against Erlang FFI
+just beam-check
 
 # Format code (do this before committing)
 just format
@@ -144,6 +175,12 @@ case result {
 
 ### Documentation
 
+The website installation example selects the highest published `vMAJOR.MINOR`
+tag with `git ls-remote` during rendering. Website builds need Git and network
+access to GitHub; they fail if the lookup fails or no minor tag exists. Local
+tags and shallow clone depth do not affect the selected ref. Rebuild the
+website after publishing a new minor tag to update the example.
+
 Document all public functions with `///` comments:
 
 ```gleam
@@ -170,13 +207,50 @@ pub fn parse(input: String) -> Result(Value, ParseError)
 # Run all tests
 just test
 
+# Run the core package sequentially
+cd packages/beryl && gleam test
+
+# Run real-node PubSub and presence recovery from the repository root
+just test-distributed
+
 # Run with verbose output
 gleam test -- --verbose
 ```
 
+The root `just test` command runs the parallel-safe `beryl` tests with
+unitest's automatic worker count, capped at four BEAM schedulers to avoid
+nested oversubscription, then runs its `serial` tag in a separate sequential
+lane. It then runs the EUnit distributed matrix on real Erlang peer nodes.
+Package-scoped commands keep the same behavior: `just test beryl` runs all
+three core lanes, while `just test beryl_mist` does not run core tests.
+
+`gleam test` uses unitest, which discovers `.gleam` tests only. It does not
+run `beryl_presence_distributed_test.erl`. Use `just test-distributed` for that
+suite, or `just test beryl` for complete core coverage. The source CI job runs
+the three lanes on both Erlang 27 and 28.
+
+The distributed harness controls peers through standard I/O so test queries
+cannot heal a distribution partition. It waits for `pg` membership, snapshot
+rounds, and exact entry identities; broadcast barriers make sender-exclusion
+and scope-isolation checks deterministic. Each test stops its peers in cleanup
+blocks, including on failure. The retirement case waits for the production
+60-second retention period, so the suite takes at least one minute.
+
+### Tutorial browser demos
+
+Run `just site-demos-test` to build the documentation site and test its three
+tutorial simulations with Playwright. After a site build, run
+`pnpm --dir website test:demos` to repeat only the browser tests. To select
+one demo, append its test file, such as `e2e/socket-loop.spec.ts`.
+
+The tests start a local preview on port 4329. Stop any other service on that
+port before running them. Install Chromium with
+`pnpm --dir website exec playwright install chromium` if Playwright reports
+a missing browser. Test reports and traces stay in ignored website directories.
+
 ### Writing Tests
 
-Tests use the `gleeunit` framework:
+Tests use unitest as the runner and `gleeunit/should` for assertions:
 
 ```gleam
 import gleeunit/should
@@ -191,6 +265,33 @@ pub fn error_case_test() {
   beryl.parse("invalid")
   |> should.be_error()
 }
+```
+
+Tests that observe or change process-wide state must use the `serial` tag:
+
+```gleam
+import unitest
+
+pub fn captures_global_telemetry_test() {
+  use <- unitest.tag("serial")
+  // Test code
+}
+```
+
+This includes tests that attach `:telemetry` handlers, install the Palabres
+capture handler, change Palabres's global logging level, or deliberately
+exercise VM-sensitive restart exhaustion, PubSub scope recovery, or tightly
+controlled actor restart and delayed-ack scheduling. Do not tag tests that can
+use unique subjects, scopes, socket IDs, or exact mailbox selectors for
+isolation.
+
+Filter tests by name, file, line, or tag by passing unitest arguments after
+`--`:
+
+```bash
+gleam test -- --test my_module.my_feature_test
+gleam test -- test/my_module_test.gleam:12
+gleam test -- --tag slow
 ```
 
 ## Commit Messages
@@ -233,6 +334,22 @@ test: add edge case tests for topic matching
 
 Releases are driven by trellis changelog fragments (TOML files in
 `.changes/unreleased/` with `project`, `kind`, and `body` fields).
+
+### When a fragment is required
+
+A fragment applies only to what a released package ships — its `src/`,
+`gleam.toml`, or `manifest.toml`. It describes what a consumer of the
+published package receives. Add a fragment when you change a package's public
+API, its observable behavior, its dependency requirements, or its `///` doc
+comments (these ship in the API reference).
+
+Do not add a fragment for anything a package does not ship. The `website/`,
+`docs/`, and `examples/` directories and the dev tooling reach no consumer, so
+a fragment for them bumps a version that nobody sees. Test files, internal
+refactors, and formatting that keep the consumer-visible behavior the same
+also need no fragment.
+
+### Steps
 
 1. Make changes following the commit message convention
 2. Add a changelog entry: `just change <package> <kind> "<body>"`

@@ -49,6 +49,24 @@ function collectFrames(page, eventName) {
 }
 
 test.describe("Collaborative Cursors Demo", () => {
+  test.afterEach(async ({ page, request }) => {
+    if ((await page.locator("#user-list").count()) > 0) {
+      await expect
+        .poll(async () => {
+          const response = await request.get("/api/users");
+          return response.json();
+        })
+        .toBeGreaterThan(0);
+    }
+    await page.close();
+    await expect
+      .poll(async () => {
+        const response = await request.get("/api/users");
+        return response.json();
+      })
+      .toBe(0);
+  });
+
   test.describe("Page structure", () => {
     test("renders the page title", async ({ page }) => {
       await page.goto("/");

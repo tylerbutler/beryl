@@ -1,5 +1,7 @@
 import app_test_helper
 import beryl
+import beryl/channel
+import beryl/presence
 import beryl/pubsub
 import beryl/socket.{
   AcceptJoin, Binary, Closed, Info, Join, Message, Next, Push, RejectJoin,
@@ -8,10 +10,12 @@ import beryl/socket.{
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
+import channel_dispatch_helper
 import gleam/erlang/process
 import gleam/json
 import gleam/option.{None, Some}
 import gleeunit/should
+import unitest
 
 /// Opaque handle to the attached :telemetry capture handler, produced and
 /// consumed only by the test FFI — never inspected from Gleam.
@@ -58,6 +62,32 @@ type AppMessage {
   Tick
 }
 
+pub fn presence_callbacks_use_the_presence_telemetry_kind_test() -> Nil {
+  let capture = attach()
+  let assert Ok(presence) = presence.start(presence.default_config("telemetry"))
+  let sockets =
+    channel_dispatch_helper.start(
+      telemetry_config() |> beryl.with_presence_handle(presence),
+      handlers: [
+        channel.handler("room:*", fn(_) {
+          channel.accept(Nil)
+          |> channel.on_presence(fn(state, _) { channel.stay(state) })
+        }),
+      ],
+    )
+  let frames = channel_dispatch_helper.connect(sockets, "s1")
+  channel_dispatch_helper.join(sockets, "s1", "room:a", "join", "1")
+  let _reply = channel_dispatch_helper.recv(frames)
+  expect_connected(capture) |> should.be_true
+  expect_join(capture, "accepted") |> should.be_true
+  expect_message(capture, "presence", "handled", "no_reply") |> should.be_true
+  expect_none(capture) |> should.be_true
+  detach(capture)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  let _close = channel_dispatch_helper.recv(frames)
+  Nil
+}
+
 fn telemetry_config() -> beryl.Config {
   beryl.config(wire.phoenix_codec())
   |> beryl.with_telemetry
@@ -100,6 +130,7 @@ fn route_heartbeat(sockets: beryl.Sockets, socket_id: String) -> Nil {
 }
 
 pub fn lifecycle_and_callback_results_emit_once_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let sockets = start(telemetry_config())
   let frames = app_test_helper.connect(sockets, "socket-1")
@@ -138,6 +169,7 @@ pub fn lifecycle_and_callback_results_emit_once_test() -> Nil {
 }
 
 pub fn join_terminal_outcomes_are_reported_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let sockets = start(telemetry_config())
   let frames = app_test_helper.connect(sockets, "join-outcomes")
@@ -174,6 +206,7 @@ pub fn join_terminal_outcomes_are_reported_test() -> Nil {
 }
 
 pub fn message_rejection_rate_limit_and_crash_are_terminal_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let limited =
     start(
@@ -206,6 +239,7 @@ pub fn message_rejection_rate_limit_and_crash_are_terminal_test() -> Nil {
 }
 
 pub fn decoded_binary_route_preserves_message_kind_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let sockets = start(telemetry_config())
   let frames = app_test_helper.connect(sockets, "decoded-binary")
@@ -218,7 +252,8 @@ pub fn decoded_binary_route_preserves_message_kind_test() -> Nil {
   let text_event = "[\"join-ref\",\"text-ref\",\"room:lobby\",\"noop\",{}]"
   let assert Ok(text_message) =
     codec.decode_text(transport.active_codec(sockets))(text_event)
-  transport.route_decoded(sockets, "decoded-binary", text_message)
+  let assert Ok(_) =
+    transport.route_decoded(sockets, "decoded-binary", text_message)
   expect_message(handler, "text", "handled", "no_reply") |> should.be_true
 
   let binary_event = <<
@@ -236,7 +271,8 @@ pub fn decoded_binary_route_preserves_message_kind_test() -> Nil {
   let assert Some(decode_binary) =
     codec.decode_binary(transport.active_codec(sockets))
   let assert Ok(binary_message) = decode_binary(binary_event)
-  transport.route_decoded_binary(sockets, "decoded-binary", binary_message)
+  let assert Ok(_) =
+    transport.route_decoded_binary(sockets, "decoded-binary", binary_message)
   expect_message(handler, "binary", "handled", "no_reply") |> should.be_true
 
   expect_none(handler) |> should.be_true
@@ -257,6 +293,7 @@ fn raw_binary_codec() -> codec.Codec {
 }
 
 pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let pubsub_instance = pubsub.start(pubsub.default_config())
   let senders = process.new_subject()
@@ -278,12 +315,13 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
   let _joined = app_test_helper.recv(frames)
   expect_join(handler, "accepted") |> should.be_true
 
-  transport.route_binary(sockets, "ok", <<1, 2, 3>>)
+  let assert Ok(_) = transport.route_binary(sockets, "ok", <<1, 2, 3>>)
   expect_message(handler, "binary", "handled", "no_reply") |> should.be_true
-  socket.notify(sender, Tick)
+  let assert Ok(_) = socket.notify(sender, Tick)
   expect_message(handler, "info", "handled", "no_reply") |> should.be_true
 
-  beryl.broadcast(sockets, "room:lobby", "event", json.object([]))
+  let assert Ok(_) =
+    beryl.broadcast(sockets, "room:lobby", "event", json.object([]))
   let _local = app_test_helper.recv(frames)
   expect_broadcast(handler, "local", 1) |> should.be_true
 
@@ -296,6 +334,7 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
 }
 
 pub fn shutdown_reason_and_disabled_runtime_are_reported_test() -> Nil {
+  use <- unitest.tag("serial")
   let handler = attach()
   let enabled = start(telemetry_config())
   let _frames = app_test_helper.connect(enabled, "shutdown")

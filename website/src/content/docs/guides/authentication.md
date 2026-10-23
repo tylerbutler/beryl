@@ -70,9 +70,6 @@ Implement `verify_token` with your token library. For example, use
 [`gleam_crypto`](https://hexdocs.pm/gleam_crypto/) to check an HMAC signature.
 You can also use a JWT library for signed identity-provider tokens. The
 function must validate the signature and expiry and return typed `Claims`.
-Token creation is a separate process. An OAuth2 library such as
-[`vestibule`](https://vestibule.tylerbutler.com) can provide an authenticated
-identity for token creation.
 
 ```gleam
 import beryl_mist as mist_transport
@@ -225,8 +222,9 @@ See [Use the typed sender](/guides/channels/#read-joincontext-and-use-its-typed-
   time and return the result as `on_connect` metadata. The `Join` branches in
   `update` should only apply authorization rules to the verified claims.
 - **Cookie sessions need origin checks.** If you authenticate from a cookie
-  instead of a token, always pair it with `with_allowed_origins` to prevent
-  Cross-Site WebSocket Hijacking. See
+  instead of a token, keep the default same-origin policy or configure an
+  explicit `with_allowed_origins` list to prevent Cross-Site WebSocket
+  Hijacking. See
   [Block Cross-Site WebSocket Hijacking](/guides/websocket#block-cross-site-websocket-hijacking-cswsh).
 - **Rejection response.** For the client-visible error when a join or connection is
   refused, see [Reject a connection during authentication](/guides/error-handling#reject-a-connection-during-authentication).

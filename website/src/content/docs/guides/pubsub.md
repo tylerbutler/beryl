@@ -22,6 +22,14 @@ The scope maps to a `pg` scope atom and identifies the PubSub instance.
 Different scopes are isolated and can use different payload types in one
 process mailbox. All handles in one scope must use the same payload type.
 
+beryl starts a node-owned supervisor with a separate subtree for each scope.
+The subtree owns a membership registry and the `pg` process. Repeated `start`
+calls share that registry; the service outlives its first caller. Start the
+scope on each participating node rather than sending a handle between nodes.
+
+Startup errors cause an OTP exit. beryl rejects a scope name already owned by
+an external `pg` process; it does not adopt or stop that process.
+
 :::danger[Use a fixed scope name]
 The scope name is converted to an Erlang atom. Atoms are never
 garbage-collected; exhausting the BEAM atom table crashes the VM. The scope
@@ -30,6 +38,39 @@ request, tenant, database row, or any other source that can create unlimited
 names. A deployment-controlled value is safe only when you validate it or
 select it from a fixed set.
 :::
+
+### Same-scope payload contract
+
+Payload compatibility is a **caller obligation**, not a runtime-enforced
+guarantee. All handles and subscribers for one scope on all connected nodes
+must use the same payload type and compatible native term representation.
+Repeated `start` calls for one scope do not create isolated instances.
+Different topics in that scope do not provide type isolation.
+
+Give incompatible payload types distinct, bounded configuration scopes:
+
+```gleam
+let numbers: pubsub.PubSub(Int) =
+  pubsub.start(pubsub.config_with_scope("my_app_numbers"))
+let text: pubsub.PubSub(String) =
+  pubsub.start(pubsub.config_with_scope("my_app_text"))
+```
+
+These names are fixed deployment constants. A type annotation does not
+register a schema or check other handles. An incompatible same-scope handle
+can deliver a value of the wrong type or crash a subscriber. Only trusted
+BEAM peers may participate.
+
+Use a separate fixed scope for presence replication: `presence.with_pubsub`
+carries presence sync payloads, while `beryl.with_pubsub` carries JSON
+broadcasts. Presence's versioned sync requests reject unknown versions; they
+do not validate arbitrary BEAM terms or snapshot state.
+
+This contract retains the existing five-element wire tuple and same-scope
+sharing. It introduces no wire migration. Applications that mix incompatible
+payload types must move them to distinct fixed scopes on every participating
+node; coordinate that configuration change because different scopes cannot
+communicate.
 
 ## Subscribing
 
@@ -49,9 +90,45 @@ let selector =
 pubsub.leave(subscriber, "room:lobby")
 ```
 
-PubSub records arrive as raw BEAM messages. `selecting` validates their types
-and matches the subscriber scope. One process can select subscribers with
-different payload types if their scopes differ.
+PubSub records arrive as raw BEAM messages. `selecting` checks only the scope
+tag and tuple arity, not the topic, event, sender, or payload field types.
+Malformed outer tuples do not match the selector and remain in the mailbox.
+One process can select subscribers with different payload types if their
+scopes differ.
+
+Repeated or concurrent joins to the same topic create one membership per
+owner process and scope, even when you use multiple subscriber handles.
+The owner receives each broadcast once and counts as one subscriber.
+One `leave` removes that membership; further leaves are harmless. Leaving
+does not affect other owners, scopes, or topics.
+
+## Scope recovery
+
+After a `pg` process crash, the scope supervisor restarts it. The surviving
+membership registry restores the topics of live local subscriber owners.
+You can keep existing handles. New joins and repeated joins use the same
+registry, and one leave removes the owner's membership and recovery intent.
+The registry monitors subscriber owners and drops their topics when they exit.
+An ordinary `pg` crash does not restart another scope.
+
+During recovery, a broadcast or subscriber query can see empty or partial
+membership. A broadcast returns `Nil` without confirming delivery. beryl does
+not buffer or replay broadcasts, and local recovery does not wait for
+cluster-wide convergence.
+
+Startup, joins, and leaves can exit with an OTP error during recovery or
+service failure. Membership calls use a five-second registry timeout.
+A failed or timed-out join or leave may have recorded its intent; failure does
+not roll it back. Retrying the operation is idempotent. Handle these exits at
+your application's OTP supervision boundary.
+
+The registry is in-memory state. If the registry itself is lost, including
+when repeated failures exhaust the supervisor's restart budget, old handles
+become invalid. Their membership, broadcast, and subscriber-query calls exit
+instead of silently using a replacement with no subscriptions. Call `start`
+again, create new subscribers, and rejoin. Selector-only receivers do not get a
+separate recovery notification. Service and node failures do not preserve
+subscriptions.
 
 ## Message format
 
@@ -169,7 +246,7 @@ let assert Ok(#(channels, runtime_specification)) =
 // Add `runtime_specification` to your application supervisor before using
 // `channels`.
 
-// beryl.broadcast() now sends to all nodes automatically
+// beryl.broadcast() sends to all nodes automatically
 beryl.broadcast(channels, "room:lobby", "event", payload)
 ```
 

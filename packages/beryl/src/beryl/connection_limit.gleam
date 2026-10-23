@@ -3,28 +3,41 @@
 //// Enforces three independent dimensions in a single serialized actor:
 ////
 //// - a per-IP ceiling (`max_per_ip`), which throttles a single peer, and
-//// - a node-wide ceiling (`max_total`), which caps concurrent connections
-////   across every IP so distributed/rotating source addresses cannot exhaust
-////   the node's process, socket, and runtime budget, and
+//// - a per-system total ceiling (`max_total`) on one node, which caps
+////   concurrent connections across every IP so distributed/rotating source
+////   addresses cannot exhaust that system's process, socket, and runtime
+////   budget, and
 //// - a per-IP token bucket, which prevents reconnect churn from repeatedly
 ////   refreshing per-connection frame and message bursts.
 ////
 //// All three are checked atomically inside `handle_message` on acquire, so
 //// concurrent opens cannot race past either ceiling. A single `Permit` tracks
-//// both dimensions and the same process monitor reclaims both when the holder
-//// dies without releasing. Counts and rate buckets are checkpointed to an ETS
-//// table with a supervisor-scoped heir, so they survive reconnects and worker
-//// restarts, then expire once idle long enough to have fully refilled.
+//// concurrency dimensions and the same process monitor reclaims both when the
+//// holder dies without releasing. Counts and rate buckets are checkpointed
+//// to an ETS table with an heir, so a replacement limiter worker can recover
+//// live holders and per-IP rate history. Disconnects release concurrency
+//// capacity without resetting the IP's rate bucket. Idle rate buckets expire
+//// once their allowance has fully refilled.
+////
+//// The heir stops with the enclosing beryl supervisor. This state survives
+//// router and limiter-worker restarts, but not shutdown or replacement of
+//// that supervisor, or a node restart.
 
+import beryl/atomic_token
+import beryl/log
 import beryl/rate_limit
 import gleam/bool
 import gleam/dict.{type Dict}
+import gleam/dynamic/decode
 import gleam/erlang/process.{type Monitor, type Pid, type Subject}
+import gleam/erlang/reference
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
+import heirloom
+import rasa/monotonic
 
 const registry_call_timeout_ms = 100
 
@@ -32,9 +45,39 @@ const bucket_sweep_interval_ms = 60_000
 
 const one_second_ns = 1_000_000_000
 
-/// Erlang monotonic time in nanoseconds.
-@external(erlang, "beryl_ffi", "monotonic_time_ns")
-fn monotonic_time_ns() -> Int
+fn monotonic_time_ns() -> Int {
+  monotonic.time(monotonic.Nanosecond)
+}
+
+type ReservationToken =
+  atomic_token.Token
+
+fn new_reservation_token() -> ReservationToken {
+  atomic_token.new()
+}
+
+fn cancel_reservation_token(token: ReservationToken) -> Bool {
+  atomic_token.cancel(token)
+}
+
+fn reservation_token_pending(token: ReservationToken) -> Bool {
+  atomic_token.pending(token)
+}
+
+type CallError {
+  CallTimedOut
+  CallOwnerUnavailable
+}
+
+@external(erlang, "beryl_ffi", "connection_limit_call")
+fn call(
+  subject: Subject(Message),
+  timeout_ms: Int,
+  request: fn(Subject(reply)) -> Message,
+) -> Result(reply, CallError)
+
+@external(erlang, "beryl_ffi", "connection_limit_send")
+fn send_if_alive(subject: Subject(Message), message: Message) -> Bool
 
 /// Opaque connection limiter registry.
 pub opaque type ConnectionLimiter {
@@ -43,19 +86,57 @@ pub opaque type ConnectionLimiter {
 
 /// A checked-out connection slot. Release it when the socket closes.
 pub opaque type Permit {
-  Permit(limiter: ConnectionLimiter, ip: String)
+  Permit(
+    limiter: ConnectionLimiter,
+    reservation: reference.Reference,
+    token: ReservationToken,
+  )
 }
 
 type RateBucket {
   RateBucket(bucket: rate_limit.Bucket, last_seen_ns: Int)
 }
 
+type Reservation {
+  Reservation(ip: String, owner: Pid, monitor: Monitor, token: ReservationToken)
+}
+
+type CheckpointTable =
+  heirloom.Table(String, State)
+
+type CheckpointRegistryKey
+
+type CheckpointMessage {
+  CheckpointAnnounced(CheckpointTable)
+  CheckpointTransferred(
+    Result(
+      heirloom.Transfer(String, State, decode.Dynamic),
+      heirloom.TransferDecodeError,
+    ),
+  )
+  CheckpointSupervisorDown(process.Down)
+}
+
+type CheckpointState {
+  CheckpointState(key: CheckpointRegistryKey, table: Option(CheckpointTable))
+}
+
+@internal
+pub opaque type CheckpointHeir {
+  CheckpointHeir(
+    pid: Pid,
+    subject: Subject(CheckpointMessage),
+    key: CheckpointRegistryKey,
+  )
+}
+
 type State {
   State(
     store_key: process.Name(Message),
+    checkpoint: Option(CheckpointTable),
     /// Per-IP ceiling; 0 disables the per-IP check.
     max_per_ip: Int,
-    /// Node-wide ceiling across all IPs; 0 disables the global check.
+    /// Per-system ceiling across all IPs; 0 disables the total check.
     max_total: Int,
     /// Per-IP connection-attempt rate limit; `None` disables it.
     connection_rate: Option(rate_limit.RateLimitConfig),
@@ -66,37 +147,199 @@ type State {
     total: Int,
     counts: Dict(String, Int),
     rate_buckets: Dict(String, RateBucket),
-    /// Monitors on bound permit-holder processes, so slots self-release when
-    /// the holder dies without running its close path (crash, brutal kill).
-    monitors: Dict(Monitor, #(Pid, String)),
-    /// Reverse index from holder pid to its monitor, so an explicit release
-    /// can drop the monitor and never double-decrement.
-    holders: Dict(Pid, Monitor),
+    /// Every acquired reservation has an owner and monitor. The unique
+    /// reservation identity keeps release, cancellation, and transfer
+    /// idempotent when their messages race.
+    reservations: Dict(reference.Reference, Reservation),
+    monitors: Dict(Monitor, reference.Reference),
   )
 }
 
 pub opaque type Message {
   Acquire(
+    reservation: reference.Reference,
     ip: String,
     limiter: ConnectionLimiter,
+    owner: Pid,
+    token: ReservationToken,
     reply: Subject(Result(Permit, Nil)),
   )
-  Bind(ip: String, owner: Pid)
-  Release(ip: String, owner: Pid)
+  Bind(
+    reservation: reference.Reference,
+    owner: Pid,
+    reply: Subject(Result(Nil, Nil)),
+  )
+  Cancel(reservation: reference.Reference)
+  Release(reservation: reference.Reference)
   HolderDown(down: process.Down)
   Sweep(subject: Subject(Message))
   Stop(reply: Subject(Nil))
 }
 
-@external(erlang, "beryl_ffi", "connection_limit_state_open")
-fn open_state(store_key: process.Name(Message), initial: State) -> State
+@external(erlang, "beryl_ffi", "connection_limit_checkpoint_supervisor")
+fn checkpoint_supervisor() -> Pid
 
-@external(erlang, "beryl_ffi", "connection_limit_state_put")
-fn put_state(store_key: process.Name(Message), state: State) -> Nil
+@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_key")
+fn checkpoint_registry_key(
+  supervisor: Pid,
+  store_key: process.Name(message),
+) -> CheckpointRegistryKey
+
+@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_get")
+fn checkpoint_registry_get(
+  key: CheckpointRegistryKey,
+) -> Option(heirloom.Table(table_key, value))
+
+@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_put")
+fn checkpoint_registry_put(
+  key: CheckpointRegistryKey,
+  table: heirloom.Table(table_key, value),
+) -> Nil
+
+@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_compare_erase")
+fn checkpoint_registry_compare_erase(
+  key: CheckpointRegistryKey,
+  table: heirloom.Table(table_key, value),
+) -> Nil
 
 fn persist(state: State) -> State {
-  put_state(state.store_key, state)
+  let assert Some(table) = state.checkpoint
+  let assert Ok(Nil) = heirloom.insert(table, "state", state)
   state
+}
+
+fn open_state(store_key: process.Name(Message), initial: State) -> State {
+  let supervisor = checkpoint_supervisor()
+  let key = checkpoint_registry_key(supervisor, store_key)
+  case checkpoint_registry_get(key) {
+    Some(table) ->
+      case heirloom.exists(table) {
+        True -> {
+          let assert Ok(Some(state)) = heirloom.lookup(table, "state")
+          State(..state, checkpoint: Some(table))
+        }
+        False -> new_state_checkpoint(supervisor, key, initial)
+      }
+    None -> new_state_checkpoint(supervisor, key, initial)
+  }
+}
+
+fn new_state_checkpoint(
+  supervisor: Pid,
+  key: CheckpointRegistryKey,
+  initial: State,
+) -> State {
+  let assert Ok(checkpoint_heir) = start_checkpoint_heir(supervisor, key)
+  let specification =
+    heirloom.spec("beryl_connection_limit_state", heirloom.Set)
+    |> heirloom.with_access(heirloom.Public)
+    |> heirloom.with_heir(checkpoint_heir.pid, initial.store_key)
+  let assert Ok(table): Result(CheckpointTable, _) =
+    heirloom.create(specification)
+  let state = State(..initial, checkpoint: Some(table))
+  let assert Ok(Nil) = heirloom.insert(table, "state", state)
+  checkpoint_registry_put(key, table)
+  process.send(checkpoint_heir.subject, CheckpointAnnounced(table))
+  state
+}
+
+fn handle_checkpoint_message(
+  state: CheckpointState,
+  message: CheckpointMessage,
+) -> actor.Next(CheckpointState, CheckpointMessage) {
+  case message {
+    CheckpointAnnounced(table) ->
+      actor.continue(CheckpointState(..state, table: Some(table)))
+    CheckpointTransferred(Ok(heirloom.Transfer(table:, ..))) ->
+      actor.continue(CheckpointState(..state, table: Some(table)))
+    CheckpointTransferred(Error(_error)) -> {
+      log.warn(
+        log.new("beryl.connection_limit"),
+        "Invalid ETS transfer ignored",
+        [],
+      )
+      actor.continue(state)
+    }
+    CheckpointSupervisorDown(_) -> {
+      cleanup_checkpoint(state)
+      actor.stop()
+    }
+  }
+}
+
+fn cleanup_checkpoint(state: CheckpointState) -> Nil {
+  let self = process.self()
+  case state.table {
+    Some(table) -> checkpoint_registry_compare_erase(state.key, table)
+    None ->
+      case checkpoint_registry_get(state.key) {
+        Some(table) ->
+          case heirloom.heir(table) {
+            Ok(Some(pid)) if pid == self ->
+              checkpoint_registry_compare_erase(state.key, table)
+            Ok(Some(_)) | Ok(None) -> Nil
+            Error(heirloom.TableDoesNotExist) -> Nil
+            Error(heirloom.AccessDenied) -> Nil
+          }
+        None -> Nil
+      }
+  }
+}
+
+fn start_checkpoint_heir(
+  supervisor: Pid,
+  key: CheckpointRegistryKey,
+) -> Result(CheckpointHeir, actor.StartError) {
+  actor.new_with_initialiser(1000, fn(subject) {
+    let monitor = process.monitor(supervisor)
+    let selector =
+      process.new_selector()
+      |> process.select(subject)
+      |> process.select_specific_monitor(monitor, CheckpointSupervisorDown)
+      |> heirloom.select_transfers(decode.dynamic, CheckpointTransferred)
+    actor.initialised(CheckpointState(key: key, table: None))
+    |> actor.selecting(selector)
+    |> actor.returning(subject)
+    |> Ok
+  })
+  |> actor.on_message(handle_checkpoint_message)
+  |> actor.start
+  |> result.map(fn(started) {
+    process.unlink(started.pid)
+    CheckpointHeir(pid: started.pid, subject: started.data, key: key)
+  })
+}
+
+@internal
+pub fn start_checkpoint_heir_for_test(
+  supervisor: Pid,
+  store_key: process.Name(message),
+) -> Result(CheckpointHeir, actor.StartError) {
+  start_checkpoint_heir(
+    supervisor,
+    checkpoint_registry_key(supervisor, store_key),
+  )
+}
+
+@internal
+pub fn checkpoint_heir_pid(heir: CheckpointHeir) -> Pid {
+  heir.pid
+}
+
+@internal
+pub fn checkpoint_registry_put_for_test(
+  heir: CheckpointHeir,
+  table: heirloom.Table(key, value),
+) -> Nil {
+  checkpoint_registry_put(heir.key, table)
+}
+
+@internal
+pub fn checkpoint_registry_exists_for_test(heir: CheckpointHeir) -> Bool {
+  case checkpoint_registry_get(heir.key) {
+    Some(_) -> True
+    None -> False
+  }
 }
 
 fn handle_message(
@@ -104,42 +347,27 @@ fn handle_message(
   message: Message,
 ) -> actor.Next(State, Message) {
   case message {
-    Acquire(ip, limiter, reply) -> {
-      let #(state, outcome) = acquire_slot(state, ip, limiter)
+    Acquire(reservation, ip, limiter, owner, token, reply) -> {
+      let #(state, outcome) =
+        acquire_slot(state, reservation, ip, limiter, owner, token)
       let state = persist(state)
       process.send(reply, outcome)
       actor.continue(state)
     }
-    Bind(ip, owner) -> actor.continue(bind_holder(state, ip, owner) |> persist)
-    Release(ip, owner) -> {
-      // Drop the holder's monitor (when bound) before decrementing, so a
-      // later exit of the same process cannot decrement this IP twice.
-      let state = case dict.get(state.holders, owner) {
-        Ok(monitor) -> {
-          process.demonitor_process(monitor)
-          State(
-            ..state,
-            monitors: dict.delete(state.monitors, monitor),
-            holders: dict.delete(state.holders, owner),
-          )
-        }
-        Error(Nil) -> state
-      }
-      actor.continue(release_slot(state, ip) |> persist)
+    Bind(reservation, owner, reply) -> {
+      let #(state, outcome) = bind_holder(state, reservation, owner)
+      let state = persist(state)
+      process.send(reply, outcome)
+      actor.continue(state)
     }
+    Cancel(reservation) | Release(reservation) ->
+      actor.continue(release_reservation(state, reservation) |> persist)
     HolderDown(down) ->
       case down {
-        process.ProcessDown(monitor, pid, _reason) ->
+        process.ProcessDown(monitor, _pid, _reason) ->
           case dict.get(state.monitors, monitor) {
-            Ok(#(_owner, ip)) -> {
-              let state =
-                State(
-                  ..state,
-                  monitors: dict.delete(state.monitors, monitor),
-                  holders: dict.delete(state.holders, pid),
-                )
-              actor.continue(release_slot(state, ip) |> persist)
-            }
+            Ok(reservation) ->
+              actor.continue(release_reservation(state, reservation) |> persist)
             // Already explicitly released (or an unrelated monitor).
             Error(Nil) -> actor.continue(state)
           }
@@ -158,9 +386,17 @@ fn handle_message(
 
 fn acquire_slot(
   state: State,
+  reservation: reference.Reference,
   ip: String,
   limiter: ConnectionLimiter,
+  owner: Pid,
+  reservation_token: ReservationToken,
 ) -> #(State, Result(Permit, Nil)) {
+  use <- bool.guard(
+    when: !process.is_alive(owner)
+      || !reservation_token_pending(reservation_token),
+    return: #(state, Error(Nil)),
+  )
   let current =
     dict.get(state.counts, ip)
     |> result.unwrap(0)
@@ -168,17 +404,34 @@ fn acquire_slot(
   let total_full = state.max_total > 0 && state.total >= state.max_total
   use <- bool.guard(when: ip_full || total_full, return: #(state, Error(Nil)))
 
-  let #(state, token) = take_connection_token(state, ip)
-  case token {
+  let #(state, connection_token) = take_connection_token(state, ip)
+  case connection_token {
     Error(Nil) -> #(state, Error(Nil))
-    Ok(Nil) -> #(
-      State(
-        ..state,
-        total: state.total + 1,
-        counts: dict.insert(state.counts, ip, current + 1),
-      ),
-      Ok(Permit(limiter: limiter, ip: ip)),
-    )
+    Ok(Nil) -> {
+      use <- bool.guard(
+        when: !reservation_token_pending(reservation_token),
+        return: #(state, Error(Nil)),
+      )
+      let monitor = process.monitor(owner)
+      #(
+        State(
+          ..state,
+          total: state.total + 1,
+          counts: dict.insert(state.counts, ip, current + 1),
+          reservations: dict.insert(
+            state.reservations,
+            reservation,
+            Reservation(ip:, owner:, monitor:, token: reservation_token),
+          ),
+          monitors: dict.insert(state.monitors, monitor, reservation),
+        ),
+        Ok(Permit(
+          limiter: limiter,
+          reservation: reservation,
+          token: reservation_token,
+        )),
+      )
+    }
   }
 }
 
@@ -228,19 +481,59 @@ fn schedule_sweep(
   }
 }
 
-/// Monitor a permit holder so its slot is reclaimed if the process dies
-/// without releasing. Rebinding the same pid is a no-op.
-fn bind_holder(state: State, ip: String, owner: Pid) -> State {
-  use <- bool.guard(when: dict.has_key(state.holders, owner), return: state)
-  let monitor = process.monitor(owner)
-  State(
-    ..state,
-    monitors: dict.insert(state.monitors, monitor, #(owner, ip)),
-    holders: dict.insert(state.holders, owner, monitor),
-  )
+/// Transfer a reservation to the connection process. Monitor the new owner
+/// before dropping the old monitor so the reservation is never unowned.
+fn bind_holder(
+  state: State,
+  reservation: reference.Reference,
+  owner: Pid,
+) -> #(State, Result(Nil, Nil)) {
+  case dict.get(state.reservations, reservation) {
+    Error(Nil) -> #(state, Error(Nil))
+    Ok(Reservation(ip, current_owner, current_monitor, token)) ->
+      case reservation_token_pending(token), current_owner == owner {
+        False, _ -> #(release_reservation(state, reservation), Error(Nil))
+        True, True -> #(state, Ok(Nil))
+        True, False -> {
+          let monitor = process.monitor(owner)
+          process.demonitor_process(current_monitor)
+          #(
+            State(
+              ..state,
+              reservations: dict.insert(
+                state.reservations,
+                reservation,
+                Reservation(ip:, owner:, monitor:, token:),
+              ),
+              monitors: state.monitors
+                |> dict.delete(current_monitor)
+                |> dict.insert(monitor, reservation),
+            ),
+            Ok(Nil),
+          )
+        }
+      }
+  }
 }
 
-/// Reclaim a slot in both dimensions: decrement the node-wide total and the
+fn release_reservation(
+  state: State,
+  reservation: reference.Reference,
+) -> State {
+  case dict.get(state.reservations, reservation) {
+    Error(Nil) -> state
+    Ok(Reservation(ip, _owner, monitor, _token)) -> {
+      process.demonitor_process(monitor)
+      State(
+        ..release_slot(state, ip),
+        reservations: dict.delete(state.reservations, reservation),
+        monitors: dict.delete(state.monitors, monitor),
+      )
+    }
+  }
+}
+
+/// Reclaim a slot in both dimensions: decrement the per-system total and the
 /// per-IP count. Every acquire increments both, so every release (explicit or
 /// via a holder's death) decrements both symmetrically.
 fn release_slot(state: State, ip: String) -> State {
@@ -258,17 +551,21 @@ fn release_slot(state: State, ip: String) -> State {
 }
 
 fn recover_holders(state: State) -> State {
-  let holders = dict.values(state.monitors)
-  let state = State(..state, monitors: dict.new(), holders: dict.new())
-  list.fold(holders, state, fn(state, holder) {
-    let #(owner, ip) = holder
-    case process.is_alive(owner) {
+  let reservations = dict.to_list(state.reservations)
+  let state = State(..state, reservations: dict.new(), monitors: dict.new())
+  list.fold(reservations, state, fn(state, entry) {
+    let #(reservation, Reservation(ip, owner, _old_monitor, token)) = entry
+    case process.is_alive(owner) && reservation_token_pending(token) {
       True -> {
         let monitor = process.monitor(owner)
         State(
           ..state,
-          monitors: dict.insert(state.monitors, monitor, #(owner, ip)),
-          holders: dict.insert(state.holders, owner, monitor),
+          reservations: dict.insert(
+            state.reservations,
+            reservation,
+            Reservation(ip:, owner:, monitor:, token:),
+          ),
+          monitors: dict.insert(state.monitors, monitor, reservation),
         )
       }
       False -> release_slot(state, ip)
@@ -277,18 +574,35 @@ fn recover_holders(state: State) -> State {
 }
 
 fn request(
+  limiter: ConnectionLimiter,
+  ip: String,
   subject: Subject(Message),
-  build_message: fn(Subject(Result(Permit, Nil))) -> Message,
 ) -> Result(Permit, Nil) {
-  case process.subject_owner(subject) {
-    Error(Nil) -> Error(Nil)
-    Ok(_) -> {
-      let reply_subject = process.new_subject()
-      process.send(subject, build_message(reply_subject))
-      case process.receive(reply_subject, registry_call_timeout_ms) {
-        Ok(value) -> value
-        Error(Nil) -> Error(Nil)
-      }
+  let reservation = reference.new()
+  let token = new_reservation_token()
+  case
+    call(subject, registry_call_timeout_ms, fn(reply_subject) {
+      Acquire(
+        reservation: reservation,
+        ip: ip,
+        limiter: limiter,
+        owner: process.self(),
+        token: token,
+        reply: reply_subject,
+      )
+    })
+  {
+    Ok(value) -> value
+    Error(CallTimedOut) -> {
+      let _cancelled = cancel_reservation_token(token)
+      // Signals from one process arrive in order. If Acquire is still queued,
+      // this cancellation follows it and reclaims any late slot.
+      let _sent = send_if_alive(subject, Cancel(reservation))
+      Error(Nil)
+    }
+    Error(CallOwnerUnavailable) -> {
+      let _cancelled = cancel_reservation_token(token)
+      Error(Nil)
     }
   }
 }
@@ -315,6 +629,7 @@ fn build(
   let state =
     State(
       store_key: name,
+      checkpoint: None,
       max_per_ip: max_per_ip,
       max_total: max_total,
       connection_rate: rate_config,
@@ -325,8 +640,8 @@ fn build(
       total: 0,
       counts: dict.new(),
       rate_buckets: dict.new(),
+      reservations: dict.new(),
       monitors: dict.new(),
-      holders: dict.new(),
     )
   actor.new_with_initialiser(1000, fn(subject) {
     schedule_sweep(subject, rate_config)
@@ -375,9 +690,7 @@ pub fn enabled(max_per_ip: Int, max_total: Int, connection_rate: Int) -> Bool {
 
 /// Acquire a connection slot, failing when the IP already has too many sockets.
 fn acquire(limiter: ConnectionLimiter, ip: String) -> Result(Permit, Nil) {
-  request(limiter.subject, fn(reply) {
-    Acquire(ip: ip, limiter: limiter, reply: reply)
-  })
+  request(limiter, ip, limiter.subject)
 }
 
 /// Acquire from an optional limiter. `None` means unlimited.
@@ -393,24 +706,29 @@ pub fn acquire_optional(
 
 /// Bind a permit to the calling process (the long-lived connection process),
 /// so its slot is reclaimed if that process dies without releasing.
-fn bind(permit: Permit) -> Nil {
-  process.send(permit.limiter.subject, Bind(permit.ip, process.self()))
+fn bind(permit: Permit) -> Result(Nil, Nil) {
+  case
+    call(permit.limiter.subject, registry_call_timeout_ms, fn(reply) {
+      Bind(permit.reservation, process.self(), reply)
+    })
+  {
+    Ok(outcome) -> outcome
+    Error(CallTimedOut) | Error(CallOwnerUnavailable) -> Error(Nil)
+  }
 }
 
 /// Bind a slot to the calling process if one was acquired.
-pub fn bind_optional(permit: Option(Permit)) -> Nil {
+pub fn bind_optional(permit: Option(Permit)) -> Result(Nil, Nil) {
   case permit {
     Some(permit) -> bind(permit)
-    None -> Nil
+    None -> Ok(Nil)
   }
 }
 
 /// Release a previously acquired slot.
-///
-/// Call from the process the permit was bound to (or from an unbound
-/// process, e.g. when the handshake fails before binding).
 fn release(permit: Permit) -> Nil {
-  process.send(permit.limiter.subject, Release(permit.ip, process.self()))
+  let _cancelled = cancel_reservation_token(permit.token)
+  process.send(permit.limiter.subject, Release(permit.reservation))
 }
 
 /// Release a slot if one was acquired.

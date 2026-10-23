@@ -61,6 +61,7 @@ Types for building app-side dispatch systems with `beryl.child_spec`.
   <ul>
 <li><a href="#api-function-empty_seed"><code>empty_seed</code></a></li>
 <li><a href="#api-function-notify"><code>notify</code></a></li>
+<li><a href="#api-function-queue_snapshot"><code>queue_snapshot</code></a></li>
 <li><a href="#api-function-reply_ok"><code>reply_ok</code></a></li>
   </ul>
 </section>
@@ -126,6 +127,7 @@ pub type Effect {
     ref: ReplyRef,
     payload: json.Json
   )
+  DiscardReply(ref: ReplyRef)
   Push(
     topic: String,
     event: String,
@@ -214,6 +216,18 @@ ReplyError(
 ```
 
 Reply with an error to a client message ref.
+
+##### `DiscardReply`
+
+```gleam
+DiscardReply(ref: ReplyRef)
+```
+
+Discard a client message ref without sending a reply.
+
+ Use this when the application intentionally will not answer a referenced
+ message. It releases the retained socket capacity and permits later reuse
+ of the same wire ref. A completed or stale ref has no effect.
 
 ##### `Push`
 
@@ -499,10 +513,11 @@ pub type ReplyRef
 
 A client message reply correlation handle.
 
- Pass it back in `ReplyOk` or `ReplyError`. You can store reply refs in the
- model and answer them in a later `update` turn, for example after an
- asynchronous lookup. They are single-use. They remain valid only while
- the topic instance that received the message stays open.
+ Pass it back in `ReplyOk`, `ReplyError`, or `DiscardReply`. You can store
+ reply refs in the model and answer them in a later `update` turn, for
+ example after an asynchronous lookup. They do not expire. They are
+ single-use and remain valid only while the topic instance that received
+ the message stays open.
 
 <div class="api-entry-anchor" id="api-type-sender" aria-hidden="true"></div>
 
@@ -528,6 +543,7 @@ pub type StopReason {
   Shutdown
   HeartbeatTimeout
   Errored(String)
+  AdmissionRejected(overload.AdmissionError)
 }
 ```
 
@@ -573,6 +589,14 @@ An error stopped the socket or topic. The name `Errored` prevents an
  unqualified import from shadowing the prelude's `Result` `Error`
  constructor.
 
+##### `AdmissionRejected`
+
+```gleam
+AdmissionRejected(overload.AdmissionError)
+```
+
+A local queue or callback result exceeded its admission budget.
+
 ## Functions
 
 <div class="api-entry-anchor" id="api-function-empty_seed" aria-hidden="true"></div>
@@ -593,13 +617,24 @@ Return an empty connect seed for tests and transports with no request data.
 pub fn notify(
   Sender(a),
   a
-) -> Nil
+) -> Result(Nil, overload.AdmissionError)
 ```
 
 Send a typed server-side message to a socket.
 
  The socket's `update` function receives `Info(message)`. The runtime
- ignores the message if the socket has disconnected.
+ reports an admission error if the socket is closed or its queue is full.
+ `Ok` means admitted, not handled by the application's callback.
+
+<div class="api-entry-anchor" id="api-function-queue_snapshot" aria-hidden="true"></div>
+
+### `queue_snapshot`
+
+```gleam
+pub fn queue_snapshot(Sender(a)) -> Result(overload.Occupancy, overload.AdmissionError)
+```
+
+Read socket queue accounting without waiting for its callback.
 
 <div class="api-entry-anchor" id="api-function-reply_ok" aria-hidden="true"></div>
 

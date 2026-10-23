@@ -18,10 +18,10 @@ import gleam/option.{None, Some}
 import gleam/otp/actor
 import gleam/otp/static_supervisor.{type Supervisor}
 import gleam/result
-import gleeunit
 import gleeunit/should
 import gluegun/websocket
 import mist
+import unitest
 
 const socket_path = "/socket/websocket"
 
@@ -44,7 +44,7 @@ type TestEvent {
 fn stop_supervisor(pid: process.Pid) -> Nil
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 pub fn start_test_server_uses_dynamic_port_test() -> Nil {
@@ -212,12 +212,13 @@ pub fn aquamarine_client_receives_server_broadcast_test() -> Nil {
   let assert Ok(Nil) = receive_joined(events, "test:lobby")
   process.sleep(25)
 
-  beryl.broadcast(
-    server.channels,
-    "test:lobby",
-    "tick",
-    json.object([#("n", json.int(42))]),
-  )
+  let assert Ok(_) =
+    beryl.broadcast(
+      server.channels,
+      "test:lobby",
+      "tick",
+      json.object([#("n", json.int(42))]),
+    )
 
   let assert Ok(incoming) = aquamarine.receive(channel, receive_timeout_ms)
   incoming.event |> should.equal("tick")

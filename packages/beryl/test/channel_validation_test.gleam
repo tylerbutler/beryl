@@ -6,11 +6,11 @@ import beryl
 import beryl/channel
 import beryl/topic
 import beryl/wire
-import gleeunit
 import gleeunit/should
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 fn stub(pattern: String) -> channel.Handler {

@@ -20,7 +20,12 @@ deps: deps-gleam
 
 # Download gleam dependencies for every workspace member
 deps-gleam:
-    trellis run deps --serial
+    node scripts/prepare-gleam-deps.mjs
+    node website/scripts/check-snippets.mjs --deps-only
+
+# Check dependency preparation and cache reuse
+deps-test:
+    node --test scripts/prepare-gleam-deps.test.mjs
 
 # === BUILD ===
 
@@ -35,8 +40,14 @@ build-strict:
 # === TESTING ===
 
 # Run all tests (optionally scope to packages: `just test beryl_mist`)
-test *ARGS:
-    trellis run test {{ ARGS }}
+test *PACKAGES:
+    BERYL_PARALLEL_TESTS=1 trellis run test {{ PACKAGES }}
+    @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) cd packages/beryl && gleam test -- --tag serial ;; esac
+    @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) just test-distributed ;; esac
+
+# Real-node PubSub and presence recovery, including the 60-second retirement policy
+test-distributed:
+    cd packages/beryl && gleam build && erl +S 4:4 -noshell -pa build/dev/erlang/*/ebin -eval 'case eunit:test(beryl_presence_distributed_test, [verbose]) of ok -> halt(0); _ -> halt(1) end.'
 
 # === CODE QUALITY ===
 
@@ -55,6 +66,17 @@ check:
 # Run the glinter linter (packages only; examples are excluded)
 lint:
     trellis run lint
+
+# Analyze package Erlang sources against their compiled Gleam modules
+dialyzer: build-strict
+    bash scripts/check-ffi-dialyzer.sh
+
+# Check package Erlang sources for undefined function calls
+xref: build-strict
+    bash scripts/check-ffi-xref.sh
+
+# Run all BEAM FFI checks
+beam-check: dialyzer xref
 
 # Check workspace invariants (members, graph, versions, fragments)
 doctor:
@@ -129,6 +151,12 @@ site-build: site-reference
 site-check: site-reference
     pnpm -C website check:astro
 
+# Check, build, and exercise the browser-only tutorial demos
+site-demos-test:
+    pnpm -C website check:astro
+    CI=1 pnpm -C website build:site
+    pnpm -C website test:demos
+
 # Clean website build artifacts
 site-clean:
     pnpm -C website clean
@@ -141,11 +169,12 @@ examples-list:
 
 # Build all examples
 examples-build: examples-client-build
-    trellis run build chatroom collab_document cursor example_helper showcase load_test live_poll collab_docs_client
+    trellis run build chatroom collab_document cursor example_helper showcase load_test live_poll collab_docs_client lustre_presence_client
 
 # Build JavaScript clients used by examples
 examples-client-build:
     pnpm -C examples/collab_docs build:client
+    pnpm -C examples/lustre_presence build:client
 
 # Install example test dependencies (Playwright)
 examples-deps:
@@ -156,6 +185,7 @@ examples-test: examples-build
     pnpm -C examples/cursors test
     pnpm -C examples/chatrooms test
     pnpm -C examples/collab_docs test
+    pnpm -C examples/lustre_presence test
     pnpm -C examples/showcase test
 
 # Build the cursors example Docker image (must run from repo root for path-based beryl dep)
@@ -183,7 +213,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: format-check check docs site-snippets test build-strict examples-test
+ci: format-check docs site-snippets beam-check test examples-test site-demos-test
 
 # Alias for PR checks
 alias pr := ci
@@ -192,6 +222,25 @@ alias pr := ci
 main: ci docs
 
 # === LOAD TESTING ===
+
+# Install the optional codec benchmark toolchain and package dependencies
+bench-codec-deps:
+    cd benchmarks/codec && mise install elixir
+    cd benchmarks/codec && mise exec -- mix local.hex --force --if-missing
+    cd benchmarks/codec && mise exec -- node ../../scripts/prepare-gleam-deps.mjs beryl_codec_bench
+
+# Check codec benchmark fixtures without running measurements
+bench-codec-check:
+    cd benchmarks/codec && mise exec -- gleam format --check
+    cd benchmarks/codec && mise exec -- gleam build --warnings-as-errors
+    cd benchmarks/codec && mise exec -- gleam test
+
+# Measure codec operations locally; first run bench-codec-deps
+bench-codec:
+    git rev-parse HEAD
+    cd benchmarks/codec && mise exec -- gleam --version
+    cd benchmarks/codec && mise exec -- elixir --version
+    cd benchmarks/codec && mise exec -- gleam run -m beryl_codec_bench
 
 # Parse every local k6 JavaScript file without contacting a target
 load-syntax:
