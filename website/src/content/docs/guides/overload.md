@@ -90,6 +90,9 @@ already started the request. Caller death also reclaims pending work and
 holders when the limiter resumes. Every 100 ms, the limiter checks holder
 tokens to reclaim cancelled permits, even if a failed-bind caller dies before
 sending its release notification. The original owner need not exit or retry.
+Before rejecting an acquire at a connection ceiling, it also checks holder
+tokens so released capacity can be reused before the release notification is
+processed. These checks take time proportional to the number of live holders.
 After a worker restart, acknowledged live holders survive; pending requests
 and unacknowledged grants do not. The queue does not limit live-holder state
 or per-IP rate history.

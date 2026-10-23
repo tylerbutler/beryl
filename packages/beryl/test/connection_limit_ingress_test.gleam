@@ -58,6 +58,17 @@ fn abandon_request(sockets: beryl.Sockets, expected_items: Int) -> Nil {
 
 pub fn timed_out_work_and_cancellations_stay_bounded_test() -> Nil {
   use <- unitest.tag("serial")
+  // The sequential runner can retain messages from earlier tests.
+  let completed = process.new_subject()
+  let _caller =
+    process.spawn_unlinked(fn() {
+      timed_out_work_and_cancellations_stay_bounded()
+      process.send(completed, Nil)
+    })
+  process.receive(completed, 5000) |> should.equal(Ok(Nil))
+}
+
+fn timed_out_work_and_cancellations_stay_bounded() -> Nil {
   let sockets = start(6, 4096)
   let assert Ok(limiter) = beryl.app_limiter_pid(sockets)
   test_helper.suspend_process(limiter)

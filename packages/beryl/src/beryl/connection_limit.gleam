@@ -424,12 +424,15 @@ fn acquire_slot(
       || !reservation_token_active(reservation_token),
     return: #(state, Error(Nil)),
   )
+  let state = case at_capacity(state, ip) {
+    // A queued drain can overtake Release, but its token is already cancelled.
+    True -> reclaim_cancelled_holders(state)
+    False -> state
+  }
+  use <- bool.guard(when: at_capacity(state, ip), return: #(state, Error(Nil)))
   let current =
     dict.get(state.counts, ip)
     |> result.unwrap(0)
-  let ip_full = state.max_per_ip > 0 && current >= state.max_per_ip
-  let total_full = state.max_total > 0 && state.total >= state.max_total
-  use <- bool.guard(when: ip_full || total_full, return: #(state, Error(Nil)))
 
   let #(state, connection_token) = take_connection_token(state, ip)
   case connection_token {
@@ -460,6 +463,14 @@ fn acquire_slot(
       )
     }
   }
+}
+
+fn at_capacity(state: State, ip: String) -> Bool {
+  let current = dict.get(state.counts, ip) |> result.unwrap(0)
+  state.max_per_ip > 0
+  && current >= state.max_per_ip
+  || state.max_total > 0
+  && state.total >= state.max_total
 }
 
 fn take_connection_token(
@@ -813,7 +824,7 @@ fn bind(permit: Permit, after_cancel: fn() -> Nil) -> Result(Nil, Nil) {
   case outcome {
     Ok(Nil) -> Ok(Nil)
     Error(Nil) -> {
-      release(permit, after_cancel)
+      release_with_cancel_hook(permit, after_cancel)
       Error(Nil)
     }
   }
@@ -855,8 +866,12 @@ fn pin_subject(
   subject: Subject(message),
 ) -> Result(#(Subject(message), Pid), Nil)
 
-/// Release a previously acquired slot.
-fn release(permit: Permit, after_cancel: fn() -> Nil) -> Nil {
+/// Test seam for interruption after release cancellation, before notification.
+@internal
+pub fn release_with_cancel_hook(
+  permit: Permit,
+  after_cancel: fn() -> Nil,
+) -> Nil {
   use <- bool.guard(when: !cancel_reservation_token(permit.token), return: Nil)
   after_cancel()
   // Cancel before resolving the owner so live and restart recovery can reclaim it.
@@ -869,7 +884,7 @@ fn release(permit: Permit, after_cancel: fn() -> Nil) -> Nil {
 /// Release a slot if one was acquired.
 pub fn release_optional(permit: Option(Permit)) -> Nil {
   case permit {
-    Some(permit) -> release(permit, fn() { Nil })
+    Some(permit) -> release_with_cancel_hook(permit, fn() { Nil })
     None -> Nil
   }
 }
