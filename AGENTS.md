@@ -274,7 +274,7 @@ untracked artifacts — clean before staging.
 
 ### Tool Versions
 
-`.mise.toml` pins Erlang 28, Gleam 1.18.1, just 1.50.0, trellis, rebar3, and
+`.mise.toml` pins Erlang 28, Gleam 1.19.2, just 1.50.0, trellis, rebar3, and
 licence_audit for local development and CI.
 
 `benchmarks/codec/.mise.toml` additionally pins an OTP-28-compatible Elixir

@@ -157,7 +157,7 @@ cd packages/beryl && gleam test   # Directly
 
 Managed via `.mise.toml`:
 - Erlang 28
-- Gleam 1.18.1
+- Gleam 1.19.2
 - just 1.50.0
 
 CI matrix-tests Erlang 27 and 28.
