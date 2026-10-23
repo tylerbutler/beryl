@@ -41,7 +41,7 @@ fn rejected_index_closes(disconnect_first: Bool) -> Nil {
       },
       update: fn(model, input) {
         case input {
-          socket.Join("room:a", _, _) -> {
+          socket.Join("room:a", _, _) | socket.Join("room:existing", _, _) -> {
             let release = process.new_subject()
             process.send(entered, release)
             process.receive_forever(release)
@@ -61,6 +61,14 @@ fn rejected_index_closes(disconnect_first: Bool) -> Nil {
       },
     )
   let healthy = helper.connect(sockets, "healthy")
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = snapshot.queue(sockets)
+      queue.items == 0
+    },
+    1000,
+    5,
+  )
   helper.join(sockets, "healthy", "room:a", "j", "r")
   let assert Ok(healthy_release) = process.receive(entered, 1000)
   // AcceptJoin must not compete with its inbound join's router reservation.
@@ -102,8 +110,28 @@ fn rejected_index_closes(disconnect_first: Bool) -> Nil {
       close: fn() { process.send(closed, Nil) },
     )
   let assert Ok(sender) = process.receive(senders, 1000)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = snapshot.queue(sockets)
+      queue.items == 0
+    },
+    1000,
+    5,
+  )
   helper.join(sockets, "rejected", "room:existing", "existing", "first")
-  let _ = helper.recv(frames)
+  let assert Ok(existing_release) = process.receive(entered, 1000)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = snapshot.queue(sockets)
+      queue.items == 0
+    },
+    1000,
+    5,
+  )
+  process.send(existing_release, Nil)
+  helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   test_helper.wait_until(
     fn() {
       let assert Ok(queue) = snapshot.queue(sockets)
