@@ -33,18 +33,77 @@ pin_subject({subject, Pid, _Tag} = Subject) when is_pid(Pid) ->
 
 %% Run a callback, converting any crash (error/exit/throw) into an
 %% {error, Description} result so a crashing callback cannot take down the
-%% runtime actor running it. The description is depth-limited and truncated so
-%% client-triggered crashes cannot bloat log metadata.
+%% runtime actor running it. Reserve half the diagnostic for call sites, so a
+%% large reason cannot hide them. Never pass stack arguments to the formatter.
 rescue(Fun) ->
     try
         {ok, Fun()}
     catch
-        Class:Reason ->
-            Formatted = unicode:characters_to_binary(
-                io_lib:format(
-                    "~p:~P", [Class, Reason, 10], [{chars_limit, 512}])),
-            {error, binary:copy(string:slice(Formatted, 0, 512))}
+        Class:Reason:Stacktrace ->
+            Description = diagnostic_format("~p:~tP", [Class, Reason, 10], 256),
+            Frames = [stack_frame(Frame) ||
+                      Frame <- lists:sublist(Stacktrace, 3)],
+            Stack = diagnostic_format(" stack: ~ts",
+                                      [lists:join(" <- ", Frames)], 256),
+            {error, binary:copy(<<Description/binary, Stack/binary>>)}
     end.
+
+%% Limit code points, not graphemes: a combining sequence can be arbitrarily
+%% large. The copied result is valid UTF-8, <=512 code points / 2048 bytes.
+diagnostic_format(Format, Arguments, Limit) ->
+    Text = io_lib:format(Format, Arguments, [{chars_limit, Limit}]),
+    unicode:characters_to_binary(
+        lists:sublist(unicode:characters_to_list(Text), Limit)).
+
+stack_frame({Module, Function, Arguments, Location})
+        when is_atom(Module), is_atom(Function) ->
+    Arity = stack_arity(Arguments, 0),
+    ModuleName = diagnostic_format("~tp", [Module], 28),
+    FunctionName = diagnostic_format("~tp", [Function], 28),
+    Call = unicode:characters_to_list([ModuleName, ":", FunctionName, "/", Arity]),
+    Source = stack_location(lists:sublist(Location, 8), 80 - length(Call)),
+    unicode:characters_to_binary([Call, Source]);
+stack_frame({Function, Arguments, Location}) when is_function(Function) ->
+    {module, Module} = erlang:fun_info(Function, module),
+    {name, Name} = erlang:fun_info(Function, name),
+    stack_frame({Module, Name, Arguments, Location});
+stack_frame(_) ->
+    <<"unknown">>.
+
+stack_arity(Arity, 0) when is_integer(Arity), Arity >= 0, Arity =< 255 ->
+    integer_to_list(Arity);
+stack_arity([], Count) ->
+    integer_to_list(Count);
+stack_arity([_ | Rest], Count) when Count < 255 ->
+    stack_arity(Rest, Count + 1);
+stack_arity(_, _) ->
+    "?".
+
+stack_location(Location, Budget) ->
+    Line = case proplists:get_value(line, Location) of
+        Number when is_integer(Number), Number >= 0, Number =< 16#7fffffff ->
+            ":" ++ integer_to_list(Number);
+        _ -> []
+    end,
+    File = case proplists:get_value(file, Location) of
+        Path when is_list(Path) ->
+            %% Compiler paths can be absolute. Bound even caller-supplied
+            %% paths and replace invalid code points before formatting.
+            Name = filename:basename(stack_path(Path, 1024)),
+            Limit = Budget - length(Line),
+            diagnostic_format(" ~ts", [lists:sublist(Name, Limit - 1)], Limit);
+        _ -> <<>>
+    end,
+    [File, Line].
+
+stack_path(_, 0) -> [];
+stack_path([Character | Rest], Remaining)
+        when is_integer(Character), Character >= 32, Character =< 16#10ffff,
+             (Character < 16#d800 orelse Character > 16#dfff) ->
+    [Character | stack_path(Rest, Remaining - 1)];
+stack_path([_ | Rest], Remaining) ->
+    [$? | stack_path(Rest, Remaining - 1)];
+stack_path(_, _) -> [].
 
 %% Deactivating the reply alias drops responses that arrive after this call
 %% returns, while the monitor reports limiter death without waiting for timeout.

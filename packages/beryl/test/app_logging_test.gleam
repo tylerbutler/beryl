@@ -9,10 +9,15 @@ import beryl
 import beryl/socket.{AcceptJoin, Join, Next}
 import beryl/wire
 import gleam/dict
+import gleam/dynamic/decode
 import gleam/option.{None}
+import gleam/string
 import gleeunit/should
 import test_helper
 import unitest
+
+@external(erlang, "beryl_diagnostic_test_ffi", "fail_operation")
+fn fail_operation(value: String) -> Nil
 
 pub fn start_warns_when_no_abuse_controls_configured_test() -> Nil {
   use <- unitest.tag("serial")
@@ -95,4 +100,69 @@ pub fn inbound_routing_log_omits_payload_by_default_test() -> Nil {
 
   let _ = beryl.stop(channels)
   test_helper.stop_capture()
+}
+
+/// A non-panic callback failure reaches the error log and preserves recovery.
+pub fn erlang_update_failure_logs_call_site_and_recovers_test() -> Nil {
+  use <- unitest.tag("serial")
+  let selector = test_helper.begin_capture()
+  let assert Ok(channels) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) { #(Nil, []) },
+      update: fn(model, input: socket.Input(Nil)) {
+        case input {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          socket.Message(_, "bad_number", payload, _) -> {
+            let assert Ok(value) = decode.run(payload, decode.string)
+            fail_operation(value)
+            Next(model, [])
+          }
+          socket.Message(..)
+          | socket.Binary(..)
+          | socket.Closed(..)
+          | socket.Info(..) -> Next(model, [])
+        }
+      },
+    )
+  let frames = app_test_helper.connect(channels, "erlang-failure")
+  app_test_helper.join_ok(
+    channels,
+    frames,
+    "erlang-failure",
+    "room:failure",
+    "jr-1",
+    "r-1",
+  )
+  app_test_helper.route(
+    channels,
+    "erlang-failure",
+    "[\"jr-1\",\"r-2\",\"room:failure\",\"bad_number\",\"private-request-payload\"]",
+  )
+  app_test_helper.recv(frames)
+  |> string.contains("\"phx_error\"")
+  |> should.be_true
+
+  let assert Ok(captured) =
+    test_helper.receive_log(selector, "Update crashed; closing topic", 20)
+  let assert Ok(crash) = dict.get(captured.metadata, "crash")
+  string.starts_with(crash, "error:badarg") |> should.be_true
+  string.contains(crash, "erlang:binary_to_integer/1") |> should.be_true
+  string.contains(crash, "beryl_diagnostic_test_ffi:fail_operation/1")
+  |> should.be_true
+  string.contains(crash, "beryl_diagnostic_test_ffi.erl") |> should.be_true
+  string.contains(crash, "private-request-payload") |> should.be_false
+
+  // The failed topic was removed, and the same socket can join it again.
+  app_test_helper.join_ok(
+    channels,
+    frames,
+    "erlang-failure",
+    "room:failure",
+    "jr-2",
+    "r-3",
+  )
+  let _ = beryl.stop(channels)
+  test_helper.stop_capture()
+  restore_default_logging_level()
 }
