@@ -444,16 +444,33 @@ pub fn handler_rejects_connections_over_per_ip_limit_test() -> Nil {
   let #(port, server_pid) = start_limited_server()
 
   let assert Ok(client) = connect_websocket(port, "/socket")
+  // HTTP 101 precedes Ewe's WebSocket process initialization and socket handoff.
+  let assert Ok(client) =
+    send_text(client, "[null,\"ready\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(client, 1000) |> should.be_ok
 
   websocket_upgrade_status(port, "/socket")
   |> should.equal(Ok(429))
 
   close(client)
-  process.sleep(50)
 
-  let assert Ok(next_client) = connect_websocket(port, "/socket")
+  let assert Ok(next_client) = reconnect_when_released(port, 50)
   close(next_client)
   stop_supervisor(server_pid)
+}
+
+fn reconnect_when_released(
+  port: Int,
+  attempts: Int,
+) -> Result(WebsocketClient, Nil) {
+  case connect_websocket(port, "/socket") {
+    Ok(client) -> Ok(client)
+    Error(Nil) if attempts > 1 -> {
+      process.sleep(20)
+      reconnect_when_released(port, attempts - 1)
+    }
+    Error(Nil) -> Error(Nil)
+  }
 }
 
 pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() -> Nil {
