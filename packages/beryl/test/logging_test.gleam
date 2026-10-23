@@ -347,7 +347,7 @@ pub fn debug_join_log_carries_metadata_without_payload_preview_test() -> Nil {
     beryl.config(wire.phoenix_codec())
     |> beryl.with_logging(beryl.logging_config(
       level: beryl.DebugLevel,
-      include_payloads: False,
+      include_payloads: True,
     ))
   let channels = start_accepting_app(config)
 
@@ -654,4 +654,108 @@ pub fn repeated_transport_decode_drops_are_debug_and_callback_errors_remain_erro
     1000,
   )
   |> should.be_true
+}
+
+pub fn shared_text_decode_preview_honors_grapheme_limit_and_opt_in_test() -> Nil {
+  use <- unitest.tag("serial")
+  use selector <- test_helper.with_capture()
+  let combining = "e" <> string.repeat("\u{301}", 300)
+  list.each(
+    [
+      #("abcdef", 3, "abc"),
+      #("abcdef", 0, ""),
+      #("abcdef", -1, ""),
+      #("👨‍👩‍👧‍👦étail", 2, "👨‍👩‍👧‍👦é"),
+      #(combining <> "tail", 1, combining),
+    ],
+    fn(example) {
+      let config =
+        beryl.config(wire.phoenix_codec())
+        |> beryl.with_logging(
+          beryl.logging_config(beryl.DebugLevel, True)
+          |> beryl.with_payload_preview_bytes(example.1),
+        )
+      use channels <- with_config(config)
+      use state <- with_transport(channels, "preview-enabled")
+      let assert server.Continue(_) = server.handle_text_frame(state, example.0)
+      let assert Ok(captured) =
+        test_helper.receive_log(
+          selector,
+          "Failed to decode wire protocol message",
+          30,
+        )
+      dict.get(captured.metadata, "frame_preview")
+      |> should.equal(Ok(example.2))
+      dict.get(captured.metadata, "payload") |> should.equal(Error(Nil))
+      dict.get(captured.metadata, "headers") |> should.equal(Error(Nil))
+      dict.get(captured.metadata, "connect_metadata")
+      |> should.equal(Error(Nil))
+    },
+  )
+}
+
+pub fn shared_decode_preview_is_absent_without_opt_in_and_for_binary_test() -> Nil {
+  use <- unitest.tag("serial")
+  use selector <- test_helper.with_capture()
+  list.each([False, True], fn(include_payloads) {
+    let config =
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_logging(beryl.logging_config(
+        beryl.DebugLevel,
+        include_payloads,
+      ))
+    use channels <- with_config(config)
+    use state <- with_transport(channels, "preview-policy")
+    case include_payloads {
+      False -> {
+        let assert server.Continue(_) =
+          server.handle_text_frame(state, "private-text")
+        let assert Ok(captured) =
+          test_helper.receive_log(
+            selector,
+            "Failed to decode wire protocol message",
+            30,
+          )
+        dict.get(captured.metadata, "frame_preview")
+        |> should.equal(Error(Nil))
+        dict.get(captured.metadata, "payload")
+        |> should.equal(Error(Nil))
+      }
+      True -> Nil
+    }
+    let assert server.Continue(_) =
+      server.handle_binary_frame(state, <<"private-binary":utf8>>)
+    let assert Ok(captured) =
+      test_helper.receive_log(
+        selector,
+        "Failed to decode binary wire protocol message",
+        30,
+      )
+    dict.get(captured.metadata, "frame_preview") |> should.equal(Error(Nil))
+    dict.get(captured.metadata, "payload") |> should.equal(Error(Nil))
+  })
+}
+
+pub fn preview_opt_in_does_not_bypass_system_or_host_debug_threshold_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each(
+    [#(log.Info, beryl.DebugLevel), #(log.Debug, beryl.InfoLevel)],
+    fn(levels) {
+      use host <- with_host(levels.0)
+      let config =
+        beryl.config(wire.phoenix_codec())
+        |> beryl.with_logging(beryl.logging_config(levels.1, True))
+      use channels <- with_config(config)
+      use state <- with_transport(channels, "disabled-preview")
+      let assert server.Continue(_) = server.handle_text_frame(state, "private")
+      receive_host_log(
+        host,
+        "Failed to decode wire protocol message",
+        "logger",
+        "disabled-preview",
+        0,
+      )
+      |> should.be_false
+    },
+  )
 }
