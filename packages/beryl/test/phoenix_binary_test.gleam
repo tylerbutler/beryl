@@ -82,6 +82,20 @@ pub fn decode_binary_rejects_truncated_frame_test() -> Nil {
   Nil
 }
 
+pub fn decode_binary_names_invalid_join_ref_utf8_test() -> Nil {
+  let frame = <<0, 1, 2, 3, 3, 255, "r1":utf8, "t:1":utf8, "evt":utf8>>
+
+  wire.decode_binary_message(frame)
+  |> should.equal(Error(codec.InvalidFormat("join_ref is not valid UTF-8")))
+}
+
+pub fn decode_binary_names_invalid_ref_utf8_test() -> Nil {
+  let frame = <<0, 2, 1, 3, 3, "j1":utf8, 255, "t:1":utf8, "evt":utf8>>
+
+  wire.decode_binary_message(frame)
+  |> should.equal(Error(codec.InvalidFormat("ref is not valid UTF-8")))
+}
+
 // === Encoder spec vectors ===
 
 pub fn binary_push_encodes_spec_shape_test() -> Nil {
