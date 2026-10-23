@@ -105,7 +105,7 @@ pub fn inbound_routing_log_omits_payload_by_default_test() -> Nil {
 /// A non-panic callback failure reaches the error log and preserves recovery.
 pub fn erlang_update_failure_logs_call_site_and_recovers_test() -> Nil {
   use <- unitest.tag("serial")
-  let selector = test_helper.begin_capture()
+  use selector <- test_helper.with_capture()
   let assert Ok(channels) =
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
@@ -164,5 +164,4 @@ pub fn erlang_update_failure_logs_call_site_and_recovers_test() -> Nil {
   )
   let _ = beryl.stop(channels)
   test_helper.stop_capture()
-  restore_default_logging_level()
 }
