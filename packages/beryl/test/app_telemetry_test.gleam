@@ -767,6 +767,7 @@ fn assert_faulty_sender_fanout(
   |> should.be_true
   expect_message(handler, "heartbeat", "handled", "not_applicable")
   |> should.be_true
+  expect_disconnect(handler, "socket_process_down", 1) |> should.be_true
   expect_none(handler) |> should.be_true
   detach(handler)
   beryl.stop(local) |> should.equal(Ok(Nil))
@@ -932,7 +933,7 @@ pub fn killed_socket_reports_lifetime_and_sweeps_presence_test() -> Nil {
   let _reply = app_test_helper.recv(frames)
   let _presence = app_test_helper.recv(frames)
   expect_join(handler, "accepted") |> should.be_true
-  expect_broadcast(handler, "local", 0) |> should.be_true
+  expect_broadcast(handler, "local", 1) |> should.be_true
   test_helper.wait_until(
     fn() {
       let assert Ok(entries) = presence.list(tracker, "room:crash")
