@@ -1,3 +1,4 @@
 {
-	"extends": "astro/tsconfigs/strictest"
+	"extends": "astro/tsconfigs/strictest",
+	"exclude": ["interactive/build", "interactive/.lustre", "node_modules"]
 }

@@ -7,6 +7,13 @@
 # on the local beryl package and the three example projects via relative
 # paths.
 
+# Service variables to set in the Railway UI:
+#   ALLOWED_ORIGINS=https://demo.beryl.tylerbutler.com,https://beryl.tylerbutler.com
+#     Exact WebSocket Origin allow-list. The documentation site embeds the
+#     presence lab cross-origin, and the showcase pages need their own host.
+#   BERYL_VERSION=<released beryl version>
+#     Reported by /v1/status.
+
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "examples/showcase/Dockerfile"

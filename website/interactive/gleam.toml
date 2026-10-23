@@ -1,0 +1,13 @@
+name = "beryl_site"
+version = "0.1.0"
+description = "Lustre components for the beryl documentation site"
+gleam = ">= 1.16.0"
+target = "javascript"
+
+[dependencies]
+gleam_json = ">= 3.1.0 and < 4.0.0"
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+lustre = ">= 5.7.0 and < 6.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
