@@ -456,6 +456,7 @@ type PresenceOperation {
     topic: String,
     key: String,
     replaced: List(presence.PresenceEntry),
+    previous_ref: Option(String),
   )
   /// A `PresenceUntrack` (`automatic: False`) or the automatic cleanup of
   /// a closing topic (`automatic: True`). The leaves are already known
@@ -5343,7 +5344,7 @@ fn fail_presence_admission(
 
 fn presence_operation_topic(operation: PresenceOperation) -> String {
   case operation {
-    TrackOperation(topic_name, _, _) -> topic_name
+    TrackOperation(topic_name, _, _, _) -> topic_name
     UntrackOperation(topic_name, _, _) -> topic_name
   }
 }
@@ -5369,7 +5370,8 @@ fn finish_presence_operation(
   outcome: Result(presence.MutationOutcome, PresenceGiveUp),
 ) -> State(model, message) {
   case operation, outcome {
-    TrackOperation(topic_name, key, replaced), Ok(presence.Tracked(ref, meta))
+    TrackOperation(topic_name, key, replaced, _),
+      Ok(presence.Tracked(ref, meta))
     -> {
       let state =
         store_presence_ref(state, socket_id, topic_name, key, ref, meta)
@@ -5381,7 +5383,7 @@ fn finish_presence_operation(
       )
       state
     }
-    TrackOperation(topic_name, _key, replaced), Error(PresenceStopping) -> {
+    TrackOperation(topic_name, _key, replaced, _), Error(PresenceStopping) -> {
       // Already logged (as a warning) where shutdown decided not to wait;
       // nothing more to log here.
       case replaced {
@@ -5390,7 +5392,7 @@ fn finish_presence_operation(
       }
       state
     }
-    TrackOperation(topic_name, key, replaced), Error(PresenceTimedOut) -> {
+    TrackOperation(topic_name, key, replaced, _), Error(PresenceTimedOut) -> {
       let state = failed_track(state, socket_id, topic_name, key, replaced)
       // The mutation did reach the presence actor and may still be
       // applied: remember that an acknowledgement — and with it a ref only
@@ -5401,10 +5403,28 @@ fn finish_presence_operation(
     // acknowledgement for a track is a protocol impossibility (an
     // acknowledgement only ever reaches the operation it was minted for).
     // Neither can leave an entry behind, so neither is owed compensation.
-    TrackOperation(topic_name, key, replaced), Error(PresenceNotRunning)
-    | TrackOperation(topic_name, key, replaced), Ok(presence.Untracked)
+    TrackOperation(topic_name, key, replaced, _), Error(PresenceNotRunning)
+    | TrackOperation(topic_name, key, replaced, _), Ok(presence.Untracked)
     -> failed_track(state, socket_id, topic_name, key, replaced)
-    UntrackOperation(topic_name, leaves, _), Ok(_) -> {
+    TrackOperation(topic_name, key, replaced, previous_ref),
+      Ok(presence.TrackFailed)
+    -> {
+      state.logger
+      |> log.error("PresenceTrack rejected: invalid CRDT state", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+        #("key", key),
+      ])
+      case previous_ref, replaced {
+        Some(ref), [entry] ->
+          store_presence_ref(state, socket_id, topic_name, key, ref, entry.meta)
+        None, _ | Some(_), _ -> state
+      }
+    }
+    UntrackOperation(topic_name, leaves, _), Ok(presence.Untracked)
+    | UntrackOperation(topic_name, leaves, _), Ok(presence.Tracked(..))
+    | UntrackOperation(topic_name, leaves, _), Ok(presence.TrackFailed)
+    -> {
       broadcast_presence_diff(state, topic_name, [], leaves)
       state
     }
@@ -5620,6 +5640,8 @@ fn compensate_stale_acknowledgement(
 ) -> State(model, message) {
   case acknowledgement.outcome {
     presence.Untracked -> state
+    presence.TrackFailed ->
+      clear_unacknowledged_track(state, acknowledgement.tag)
     // The acknowledgement this socket was still owed has now arrived, so
     // shutdown no longer has to sweep its session — whether or not a
     // presence actor is still around to act on the ref it carries.
@@ -5776,6 +5798,9 @@ fn start_presence_track(
         TrackOperation(
           topic: topic_name,
           key: key,
+          previous_ref: option.from_result(
+            result.map(previous, fn(entry) { entry.0 }),
+          ),
           replaced: case previous, dropping_for_stop {
             Ok(_), True | Error(Nil), True -> []
             Ok(#(_ref, old_meta)), False -> [
