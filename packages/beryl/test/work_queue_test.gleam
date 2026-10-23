@@ -37,7 +37,7 @@ pub fn registered_targets_do_not_grow_the_data_ledger_test() -> Nil {
   let assert Ok(reservation) = work_queue.publish(router, "data", 4)
   work_queue.take(router) |> should.equal(Ok(#(reservation, "data")))
   work_queue.release(router, reservation)
-  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.take(router) |> should.equal(Error(work_queue.Empty))
   int.range(from: 1, to: 1001, with: Nil, run: fn(_, key) {
     work_queue.remove_target(router, int.to_string(key))
   })
@@ -132,7 +132,7 @@ pub fn cancel_pending_preserves_fifo_test() -> Nil {
   work_queue.release(queue, cancelled)
   work_queue.take(queue) |> should.equal(Ok(#(first, 1)))
   work_queue.take(queue) |> should.equal(Ok(#(third, 3)))
-  work_queue.take(queue) |> should.equal(Error(Nil))
+  work_queue.take(queue) |> should.equal(Error(work_queue.Empty))
   let assert Ok(snapshot) = work_queue.snapshot(queue)
   snapshot.cancelled |> should.equal(1)
 }
@@ -149,7 +149,7 @@ pub fn wake_is_coalesced_test() -> Nil {
   process.receive(wakes, 0) |> should.equal(Error(Nil))
   let assert Ok(_) = work_queue.take(queue)
   let assert Ok(_) = work_queue.take(queue)
-  let assert Error(Nil) = work_queue.take(queue)
+  let assert Error(work_queue.Empty) = work_queue.take(queue)
   let assert Ok(_) = work_queue.publish(queue, 3, 0)
   process.receive(wakes, 0) |> should.equal(Ok(Nil))
 }
@@ -208,7 +208,7 @@ pub fn normal_close_ignores_late_closed_then_records_overload_once_test() -> Nil
   let assert Ok(empty) = work_queue.snapshot(queue)
   empty.items |> should.equal(0)
   empty.bytes |> should.equal(0)
-  work_queue.take(queue) |> should.equal(Error(Nil))
+  work_queue.take(queue) |> should.equal(Error(work_queue.Empty))
   work_queue.release(router, router_work)
 }
 
@@ -258,7 +258,7 @@ pub fn normal_close_can_record_unavailable_or_item_too_large_test() -> Nil {
       charged.items |> should.equal(1)
       charged.bytes |> should.equal(8)
       work_queue.release(queue, pending)
-      work_queue.take(queue) |> should.equal(Error(Nil))
+      work_queue.take(queue) |> should.equal(Error(work_queue.Empty))
       let assert Ok(empty) = work_queue.snapshot(queue)
       empty.items |> should.equal(0)
       empty.bytes |> should.equal(0)
@@ -285,7 +285,7 @@ pub fn target_close_waits_for_router_fifo_without_using_data_capacity_test() -> 
   work_queue.take(router) |> should.equal(Ok(#(second, "second")))
   work_queue.is_open(target) |> should.be_false()
   work_queue.release(router, second)
-  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.take(router) |> should.equal(Error(work_queue.Empty))
   let assert Ok(empty) = work_queue.snapshot(router)
   empty.items |> should.equal(0)
   empty.bytes |> should.equal(0)
@@ -319,10 +319,10 @@ pub fn concurrent_target_closes_coalesce_until_removal_test() -> Nil {
   process.receive(wakes, 0) |> should.equal(Ok(Nil))
   process.receive(wakes, 0) |> should.equal(Error(Nil))
   work_queue.is_open(target) |> should.be_true()
-  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.take(router) |> should.equal(Error(work_queue.Empty))
   process.receive(closed, 0) |> should.equal(Ok(Nil))
   work_queue.close_target(router, "socket")
-  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.take(router) |> should.equal(Error(work_queue.Empty))
   process.receive(wakes, 0) |> should.equal(Error(Nil))
   process.receive(closed, 0) |> should.equal(Error(Nil))
   work_queue.remove_target(router, "socket")
@@ -345,15 +345,15 @@ pub fn removing_or_replacing_target_cancels_its_queued_close_test() -> Nil {
   work_queue.close_target(router, "socket")
   work_queue.remove_target(router, "socket")
   work_queue.register_target(router, "socket", current)
-  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.take(router) |> should.equal(Error(work_queue.Empty))
   work_queue.is_open(previous) |> should.be_true()
   work_queue.is_open(current) |> should.be_true()
   work_queue.close_target(router, "socket")
   work_queue.register_target(router, "socket", previous)
-  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.take(router) |> should.equal(Error(work_queue.Empty))
   work_queue.is_open(current) |> should.be_true()
   work_queue.close_target(router, "socket")
-  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.take(router) |> should.equal(Error(work_queue.Empty))
   work_queue.is_open(previous) |> should.be_false()
   work_queue.is_open(current) |> should.be_true()
 }
@@ -377,7 +377,7 @@ pub fn selective_take_leaves_target_close_for_fifo_drain_test() -> Nil {
   work_queue.is_open(target) |> should.be_true()
   work_queue.take(router) |> should.equal(Ok(#(first, 1)))
   work_queue.release(router, first)
-  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.take(router) |> should.equal(Error(work_queue.Empty))
   work_queue.is_open(target) |> should.be_false()
 }
 
@@ -403,7 +403,7 @@ pub fn target_close_survives_publisher_exit_before_wake_test() -> Nil {
     |> process.select_specific_monitor(monitor, fn(down) { down })
     |> process.selector_receive(1000)
   work_queue.is_open(target) |> should.be_true()
-  work_queue.take(router) |> should.equal(Error(Nil))
+  work_queue.take(router) |> should.equal(Error(work_queue.Empty))
   work_queue.is_open(target) |> should.be_false()
 }
 
@@ -440,10 +440,10 @@ pub fn dead_router_control_cannot_reach_replacement_router_test() -> Nil {
     })
   work_queue.register_target(current, "socket", target)
   work_queue.close_target(previous, "socket")
-  work_queue.take(current) |> should.equal(Error(Nil))
+  work_queue.take(current) |> should.equal(Error(work_queue.Empty))
   work_queue.is_open(target) |> should.be_true()
   work_queue.close_target(current, "socket")
-  work_queue.take(current) |> should.equal(Error(Nil))
+  work_queue.take(current) |> should.equal(Error(work_queue.Empty))
   work_queue.is_open(target) |> should.be_false()
 }
 
@@ -603,7 +603,7 @@ pub fn cleanup_is_reserved_and_coalesced_under_saturation_test() -> Nil {
   work_queue.release(queue, other)
   let assert Ok(#(cleanup, "cleanup")) = work_queue.take(queue)
   work_queue.release(queue, cleanup)
-  work_queue.take(queue) |> should.equal(Error(Nil))
+  work_queue.take(queue) |> should.equal(Error(work_queue.Empty))
   let assert Ok(empty) = work_queue.snapshot(queue)
   empty.items |> should.equal(0)
   let assert Ok(next) =

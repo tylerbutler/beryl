@@ -597,9 +597,9 @@ pub fn rejected_router_broadcast_sends_no_inline_copy_or_success_event_test() ->
   expect_join(handler, "accepted") |> should.be_true
   app_test_helper.push(sockets, "rejected", "room:lobby", "cast_oversized", "2")
   expect_message(handler, "text", "handled", "push") |> should.be_true
-  expect_disconnect(handler, "normal", 1) |> should.be_true
+  expect_disconnect(handler, "admission_rejected", 1) |> should.be_true
   app_test_helper.recv(frames)
-  |> should.equal("[\"j\",\"j\",\"room:lobby\",\"phx_close\",{}]")
+  |> should.equal("[\"j\",\"j\",\"room:lobby\",\"phx_error\",{}]")
   app_test_helper.recv_none(frames)
   expect_none(handler) |> should.be_true
   detach(handler)
