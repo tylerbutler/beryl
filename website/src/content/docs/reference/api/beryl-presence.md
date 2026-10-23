@@ -83,6 +83,7 @@ Distributed presence tracking with a CRDT
 <li><a href="#api-type-message"><code>Message</code></a></li>
 <li><a href="#api-type-presence"><code>Presence</code></a></li>
 <li><a href="#api-type-presenceentry"><code>PresenceEntry</code></a></li>
+<li><a href="#api-type-presencetrackerror"><code>PresenceTrackError</code></a></li>
 <li><a href="#api-type-presenceupdateerror"><code>PresenceUpdateError</code></a></li>
   </ul>
 </section>
@@ -226,7 +227,7 @@ A running Presence instance.
  caller's node. Keep a `Presence` handle on the node where its child
  specification runs. From another BEAM node, synchronous mutations
  (`track`, `update`, `untrack`, and `untrack_all`) cannot reach the owning
- actor and panic as unavailable, while `list`, `get_by_key`, and `count`
+ actor and return typed call errors, while `list`, `get_by_key`, and `count`
  return `Error(Nil)` because the read model is unavailable. Use PubSub
  replication (`with_pubsub`) to share presence state across nodes instead of
  moving the handle itself.
@@ -250,6 +251,37 @@ A presence entry returned from queries and diff accessors.
  This type is transparent. Callers can inspect query results and construct
  entries for `diff`.
 
+<div class="api-entry-anchor" id="api-type-presencetrackerror" aria-hidden="true"></div>
+
+### `PresenceTrackError`
+
+```gleam
+pub type PresenceTrackError {
+  TrackRequestFailed(overload.CallError)
+  TrackInvalidCrdtState
+}
+```
+
+Errors from tracking a presence.
+
+#### Constructors
+
+##### `TrackRequestFailed`
+
+```gleam
+TrackRequestFailed(overload.CallError)
+```
+
+Admission failed, the actor exited, or the request timed out.
+
+##### `TrackInvalidCrdtState`
+
+```gleam
+TrackInvalidCrdtState
+```
+
+The CRDT did not expose its local clock after joining. Nothing changed.
+
 <div class="api-entry-anchor" id="api-type-presenceupdateerror" aria-hidden="true"></div>
 
 ### `PresenceUpdateError`
@@ -258,6 +290,7 @@ A presence entry returned from queries and diff accessors.
 pub type PresenceUpdateError {
   UnknownRef(ref: String)
   RequestFailed(overload.CallError)
+  UpdateInvalidCrdtState
 }
 ```
 
@@ -272,6 +305,14 @@ UnknownRef(ref: String)
 ```
 
 The ref is unknown, already removed, or was not returned by `track`.
+
+##### `UpdateInvalidCrdtState`
+
+```gleam
+UpdateInvalidCrdtState
+```
+
+The CRDT did not expose its local clock after joining. The old ref remains valid.
 
 ## Functions
 
@@ -472,7 +513,7 @@ pub fn track(
   String,
   String,
   json.Json
-) -> Result(String, overload.CallError)
+) -> Result(String, PresenceTrackError)
 ```
 
 Track a presence in a topic.
@@ -489,6 +530,9 @@ Track a presence in a topic.
  Returns a typed call error on admission failure, owner exit, or timeout
  (5 seconds by default). A timeout cancels pending work, but a running
  mutation may still complete.
+
+ `TrackRequestFailed` wraps the call error. `TrackInvalidCrdtState` means the
+ CRDT local-clock lookup failed; no entry, diff, or read-model change was made.
 
 <div class="api-entry-anchor" id="api-function-untrack" aria-hidden="true"></div>
 
@@ -552,6 +596,8 @@ Replace the meta of a presence created by `track`.
 
  `RequestFailed` wraps admission, owner-exit, and timeout errors. A timeout
  cancels pending work, but a running mutation may still complete.
+ `UpdateInvalidCrdtState` means the CRDT local-clock lookup failed. The old
+ entry and ref remain unchanged, and no diff is emitted.
 
 <div class="api-entry-anchor" id="api-function-with_broadcast_interval" aria-hidden="true"></div>
 
@@ -588,8 +634,9 @@ pub fn with_call_timeout(
 Set the timeout for synchronous presence mutations, in milliseconds.
 
  This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
- functions panic if the actor does not reply before the timeout. The default
- is 5000 ms.
+ functions return typed timeout errors if the actor does not reply in time.
+ Pending work is cancelled, but running mutations may still complete.
+ The default is 5000 ms.
 
 <div class="api-entry-anchor" id="api-function-with_on_diff" aria-hidden="true"></div>
 

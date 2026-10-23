@@ -436,8 +436,12 @@ retirement_revokes_old_replies_and_requires_fresh_rejoin_test_() ->
             Elapsed = call(B, erlang, monotonic_time, [millisecond]) - Started,
             ?assert(Elapsed >= 60000),
             ?assertNot(call(B, ?MODULE, pending_request, [Receiver, OldPid])),
-            ?assertNot(call(B, ?MODULE, pending_request,
-                [PendingOnly, UnconfirmedPid])),
+            %% Independent actors run retirement ticks on their own schedule.
+            %% Wait for this actor to revoke its request before releasing it.
+            await({unconfirmed_request_expiry, element(2, B)}, fun() ->
+                not call(B, ?MODULE, pending_request,
+                    [PendingOnly, UnconfirmedPid])
+            end),
             nil = call(B, ?MODULE, release_replies, [PendingGate]),
             await_view(B, PendingOnly, []),
             nil = call(B, ?MODULE, release_replies, [Proxy]),

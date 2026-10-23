@@ -31,6 +31,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
 import test_helper
@@ -515,9 +516,13 @@ pub fn saturated_presence_cancels_pending_calls_but_retains_running_work_test() 
   )
   presence.list(handle, "room:a") |> should.equal(Ok([]))
   process.receive(first, 1000)
-  |> should.equal(Ok(Error(overload.RequestTimedOut)))
+  |> should.equal(
+    Ok(Error(presence.TrackRequestFailed(overload.RequestTimedOut))),
+  )
   process.receive(pending, 1000)
-  |> should.equal(Ok(Error(overload.RequestTimedOut)))
+  |> should.equal(
+    Ok(Error(presence.TrackRequestFailed(overload.RequestTimedOut))),
+  )
   list.each([1, 2, 3], fn(_) {
     presence.untrack_all(handle, "s1")
     |> should.equal(Error(overload.RequestTimedOut))
@@ -701,6 +706,210 @@ fn identity_config(config: beryl.Config) -> beryl.Config {
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
+
+pub fn rejected_track_resumes_the_socket_without_waiting_for_timeout_test() -> Nil {
+  let assert Ok(handle) =
+    presence.start(
+      presence.default_config("missing-clock")
+      |> presence.with_local_clock_lookup(fn(_, _) { Error(Nil) }),
+    )
+  let events = process.new_subject()
+  let actors = process.new_subject()
+  let channels =
+    start_system_reporting_actor(
+      handle,
+      events,
+      beryl.with_presence_op_timeout(_, 60_000),
+      Some(actors),
+    )
+  let frames = app_test_helper.connect(channels, "s1")
+  let assert Ok(owner) = process.receive(actors, 1000)
+  let monitors = test_helper.monitored_by_count(owner)
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+  let assert Ok(snapshot) = process.receive(frames, 1000)
+  snapshot |> string.contains("presence_list") |> should.be_true
+  snapshot |> string.contains("\"s1\"") |> should.be_false
+  presence.list(handle, "room:a") |> should.equal(Ok([]))
+  test_helper.wait_until(
+    fn() { test_helper.monitored_by_count(owner) == monitors + 1 },
+    1000,
+    5,
+  )
+  process.receive(frames, 0) |> should.equal(Error(Nil))
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = presence.queue_snapshot(handle)
+      queue.items == 0
+    },
+    1000,
+    5,
+  )
+  test_helper.kill_presence(handle)
+}
+
+pub fn forced_stop_releases_rejected_tracks_cleanup_capacity_test() -> Nil {
+  use <- unitest.tag("serial")
+  assert_rejected_track_cleanup(False)
+}
+
+pub fn parent_shutdown_releases_rejected_tracks_cleanup_capacity_test() -> Nil {
+  use <- unitest.tag("serial")
+  assert_rejected_track_cleanup(True)
+}
+
+fn assert_rejected_track_cleanup(parent_shutdown: Bool) -> Nil {
+  let assert Ok(limits) = overload.limits(items: 2, bytes: 4096)
+  let assert Ok(handle) =
+    presence.start(
+      presence.default_config("missing-clock")
+      |> presence.with_queue_limits(limits)
+      |> presence.with_local_clock_lookup(fn(_, _) { Error(Nil) }),
+    )
+  let assert Ok(baseline) = presence.queue_snapshot(handle)
+  let entered = process.new_subject()
+  let gate = start_gate(entered)
+  let owners = process.new_subject()
+  let assert Ok(#(channels, specification)) =
+    beryl.child_spec(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_presence_handle(handle)
+        |> beryl.with_presence_op_timeout(60_000),
+      init: fn(info) {
+        process.send(owners, process.self())
+        #(info.socket_id, [])
+      },
+      update: fn(model, input) {
+        case input {
+          Join(topic, _, ref) ->
+            Next(model, [
+              AcceptJoin(ref, None),
+              PresenceTrack(topic, "user", json.null()),
+              socket.Push(topic, "resumed", json.null()),
+            ])
+          Message(_, "block", _, _) -> {
+            process.call(gate, 60_000, Enter)
+            Next(model, [])
+          }
+          Message(..) | Closed(..) | socket.Binary(..) | socket.Info(..) ->
+            Next(model, [])
+        }
+      },
+    )
+  let assert Ok(root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(specification)
+    |> static_supervisor.start()
+  let frames = app_test_helper.connect(channels, "blocked")
+  let assert Ok(owner) = process.receive(owners, 1000)
+  app_test_helper.join_ok(channels, frames, "blocked", "room:a", "j", "r")
+  let assert Ok(resumed) = process.receive(frames, 1000)
+  resumed |> string.contains("\"resumed\"") |> should.be_true
+  presence.list(handle, "room:a") |> should.equal(Ok([]))
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = presence.queue_snapshot(handle)
+      queue.items == baseline.items + 1
+    },
+    1000,
+    5,
+  )
+
+  arm(gate)
+  app_test_helper.push(channels, "blocked", "room:a", "block", "r-2")
+  await_entered(entered)
+  case parent_shutdown {
+    True -> {
+      process.unlink(root.pid)
+      process.kill(root.pid)
+    }
+    False -> beryl.stop(channels) |> should.equal(Error(beryl.StopTimeout))
+  }
+  test_helper.wait_until(fn() { !process.is_alive(owner) }, 10_000, 5)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = presence.queue_snapshot(handle)
+      queue.items == baseline.items && queue.bytes == baseline.bytes
+    },
+    1000,
+    5,
+  )
+  release(gate)
+
+  // A different owner needs both a mutation slot and its cleanup reservation.
+  let reply = process.new_subject()
+  presence.track_async(
+    handle,
+    "room:a",
+    "another",
+    "another",
+    json.null(),
+    None,
+    process.self(),
+    "after-stop",
+    1,
+    reply,
+  )
+  |> should.equal(Ok(Nil))
+  process.receive(reply, 1000)
+  |> should.equal(
+    Ok(presence.MutationAck("after-stop", 1, presence.TrackFailed)),
+  )
+  presence.untrack_runtime_owner_async(handle, process.self())
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = presence.queue_snapshot(handle)
+      queue.items == baseline.items && queue.bytes == baseline.bytes
+    },
+    1000,
+    5,
+  )
+  test_helper.kill_presence(handle)
+}
+
+pub fn rejected_replacement_preserves_runtime_ref_for_untrack_test() -> Nil {
+  let assert Ok(handle) =
+    presence.start(
+      presence.default_config("missing-clock")
+      |> presence.with_local_clock_lookup(fn(clocks, replica) {
+        case dict.get(clocks, replica) {
+          Ok(1) -> Ok(1)
+          Ok(_) | Error(Nil) -> Error(Nil)
+        }
+      }),
+    )
+  let events = process.new_subject()
+  let channels =
+    start_system(handle, events, beryl.with_presence_op_timeout(_, 60_000))
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _reply = app_test_helper.recv(frames)
+  let _diff = app_test_helper.recv(frames)
+  let _snapshot = app_test_helper.recv(frames)
+  let before = presence.list(handle, "room:a")
+
+  app_test_helper.push(channels, "s1", "room:a", "promote", "r-2")
+  let assert Ok(snapshot) = process.receive(frames, 1000)
+  snapshot |> string.contains("presence_list") |> should.be_true
+  snapshot |> string.contains("online") |> should.be_true
+  snapshot |> string.contains("away") |> should.be_false
+  presence.list(handle, "room:a") |> should.equal(before)
+
+  app_test_helper.push(channels, "s1", "room:a", "untrack", "r-3")
+  app_test_helper.recv(frames)
+  |> string.contains("presence_diff")
+  |> should.be_true
+  app_test_helper.recv(frames)
+  |> string.contains("presence_list")
+  |> should.be_true
+  presence.list(handle, "room:a") |> should.equal(Ok([]))
+  process.receive(frames, 0) |> should.equal(Error(Nil))
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+  test_helper.kill_presence(handle)
+}
 
 /// One socket parked on a presence mutation must not delay any other
 /// socket's join, message, or heartbeat handling.
