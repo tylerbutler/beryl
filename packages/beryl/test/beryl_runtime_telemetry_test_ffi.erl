@@ -6,6 +6,7 @@
     expect_join/2,
     expect_message/4,
     expect_disconnect/3,
+    expect_disconnect_after/4,
     expect_broadcast/3,
     expect_none/1
 ]).
@@ -36,9 +37,11 @@ detach(HandlerId) ->
 
 expect_connected(HandlerId) ->
     receive
-        {HandlerId, [beryl, socket, connected], #{count := 1}, Metadata}
-            when map_size(Metadata) =:= 0 ->
-            true
+        {HandlerId, [beryl, socket, connected], #{count := 1} = Measurements, Metadata}
+            when map_size(Measurements) =:= 1, map_size(Metadata) =:= 0 ->
+            true;
+        {HandlerId, [beryl, socket, disconnected], _Measurements, _Metadata} ->
+            false
     after 500 ->
         false
     end.
@@ -78,6 +81,9 @@ expect_message(HandlerId, Kind, Outcome, CallbackResult) ->
     end.
 
 expect_disconnect(HandlerId, Reason, JoinedTopics) ->
+    expect_disconnect_after(HandlerId, Reason, JoinedTopics, 1).
+
+expect_disconnect_after(HandlerId, Reason, JoinedTopics, MinimumDuration) ->
     ExpectedReason = expected_atom(Reason),
     receive
         {
@@ -87,9 +93,15 @@ expect_disconnect(HandlerId, Reason, JoinedTopics) ->
                 count := 1,
                 duration := Duration,
                 joined_channels := JoinedTopics
-            },
-            #{reason := ExpectedReason}
-        } when is_integer(Duration), Duration >= 0 ->
+            } = Measurements,
+            #{reason := ExpectedReason} = Metadata
+        } when
+            is_integer(Duration),
+            Duration > 0,
+            Duration >= MinimumDuration,
+            map_size(Measurements) =:= 3,
+            map_size(Metadata) =:= 1
+        ->
             true
     after 500 ->
         false

@@ -107,10 +107,30 @@ remain bounded:
 | `frame_type` | `text`, `binary` |
 | message `kind` | `text`, `binary`, `info`, `presence`, `heartbeat` |
 | `callback_result` | `not_applicable`, `no_reply`, `reply`, `reply_error`, `push`, `stop`, `failed` |
-| disconnect `reason` | `normal`, `heartbeat_timeout`, `shutdown`, `callback_error` |
+| disconnect `reason` | `normal`, `heartbeat_timeout`, `shutdown`, `callback_error`, `admission_rejected`, `socket_process_down` |
 | broadcast `origin` | `local`, `remote` |
 
 Map future unknown values to an `"unknown"` label. Do not crash the handler.
+
+### Socket lifetimes
+
+The router emits both socket lifecycle events. After it emits `connected`,
+it emits one `disconnected` for an orderly close, socket actor failure, or
+forced shutdown drain. Failed or abandoned admission before `connected`
+produces neither event. Disabling telemetry suppresses both events.
+
+For orderly teardown, `duration` covers admission through teardown completion,
+and `joined_channels` counts memberships at the start of teardown. For a socket
+actor failure (`socket_process_down`) or forced drain (`shutdown`), `duration`
+covers admission through the router's cleanup observation. In those two cases,
+`joined_channels` counts memberships in the router's index at that observation.
+In-flight index changes can lag the actor, and partial teardown can have removed
+memberships. These measurements keep the same numeric keys and native duration
+unit; they do not substitute zero for missing actor state.
+
+Use snapshots for current-count gauges. Whole-node or router failure, or a
+failing telemetry handler, can prevent lifecycle event delivery, so subtracting
+disconnect counts from connect counts cannot provide a reliable current count.
 
 ## Export metrics to Prometheus or Grafana
 

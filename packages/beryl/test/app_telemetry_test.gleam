@@ -4,10 +4,12 @@ import beryl/channel
 import beryl/overload
 import beryl/presence
 import beryl/pubsub
+import beryl/snapshot
 import beryl/socket.{
   AcceptJoin, Binary, Broadcast, BroadcastFrom, Closed, Info, Join, Message,
   Next, Push, RejectJoin, ReplyError, ReplyOk,
 }
+import beryl/telemetry
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
@@ -51,6 +53,14 @@ fn expect_disconnect(
   joined_channels: Int,
 ) -> Bool
 
+@external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_disconnect_after")
+fn expect_disconnect_after(
+  handler_id: TelemetryHandle,
+  reason: String,
+  joined_channels: Int,
+  minimum_duration: Int,
+) -> Bool
+
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_broadcast")
 fn expect_broadcast(
   handler_id: TelemetryHandle,
@@ -66,6 +76,7 @@ type AppMessage {
 }
 
 pub fn presence_callbacks_use_the_presence_telemetry_kind_test() -> Nil {
+  use <- unitest.tag("serial")
   let capture = attach()
   let assert Ok(presence) = presence.start(presence.default_config("telemetry"))
   let sockets =
@@ -122,6 +133,7 @@ fn update(model: Nil, input: socket.Input(AppMessage)) -> socket.Next(Nil) {
         Broadcast(topic, "notice", json.string(string.repeat("x", 4096))),
       ])
     Message(_, "crash", _, _) -> panic as "expected message failure"
+    Message(_, "stop", _, _) -> socket.Stop(socket.Errored("application stop"))
     Message(_, _, _, _) | Binary(_, _) | Info(_) -> Next(model, [])
     Closed(_, _) -> Next(model, [])
   }
@@ -824,4 +836,297 @@ pub fn shutdown_reason_and_disabled_runtime_are_reported_test() -> Nil {
   detach(handler)
   let assert Ok(Nil) = beryl.stop(disabled)
   Nil
+}
+
+fn assert_empty(sockets: beryl.Sockets) -> Nil {
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = snapshot.get(sockets)
+      snapshot.connected_sockets(current) == 0
+      && snapshot.joined_socket_topic_pairs(current) == 0
+      && snapshot.active_topics(current) == 0
+    },
+    2000,
+    10,
+  )
+}
+
+fn await_actor_exit(monitor: process.Monitor) -> Nil {
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+  let assert Ok(process.ProcessDown(..)) =
+    process.selector_receive(selector, 3000)
+  Nil
+}
+
+pub fn killed_socket_reports_lifetime_and_sweeps_presence_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let actors = process.new_subject()
+  let closed = process.new_subject()
+  let assert Ok(tracker) =
+    presence.start(presence.default_config("lifecycle-crash"))
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      telemetry_config() |> beryl.with_presence_handle(tracker),
+      init: fn(_info: socket.ConnectInfo(AppMessage)) {
+        process.send(actors, process.self())
+        #(Nil, [])
+      },
+      update: fn(model, input) {
+        case input {
+          Join(topic, _, ref) ->
+            Next(model, [
+              AcceptJoin(ref, None),
+              socket.PresenceTrack(topic, "user", json.object([])),
+            ])
+          Message(..) | Binary(..) | Info(..) | Closed(..) -> Next(model, [])
+        }
+      },
+    )
+  let frames =
+    app_test_helper.connect_with_close(sockets, "crash", fn() {
+      process.send(closed, Nil)
+    })
+  let assert Ok(socket_actor) = process.receive(actors, 500)
+  expect_connected(handler) |> should.be_true
+  let lifetime_start = telemetry.start_time()
+  app_test_helper.join(sockets, "crash", "room:crash", "jr", "1")
+  let _reply = app_test_helper.recv(frames)
+  let _presence = app_test_helper.recv(frames)
+  expect_join(handler, "accepted") |> should.be_true
+  expect_broadcast(handler, "local", 0) |> should.be_true
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(entries) = presence.list(tracker, "room:crash")
+      let assert Ok(current) = snapshot.get(sockets)
+      entries != [] && snapshot.joined_socket_topic_pairs(current) == 1
+    },
+    1000,
+    10,
+  )
+  let minimum_duration = telemetry.duration_since(lifetime_start)
+  let monitor = process.monitor(socket_actor)
+  process.kill(socket_actor)
+  await_actor_exit(monitor)
+  process.receive(closed, 1000) |> should.equal(Ok(Nil))
+  #(
+    "abnormal disconnect",
+    expect_disconnect_after(handler, "socket_process_down", 1, minimum_duration),
+  )
+  |> should.equal(#("abnormal disconnect", True))
+  assert_empty(sockets)
+  test_helper.wait_until(
+    fn() { presence.list(tracker, "room:crash") == Ok([]) },
+    1000,
+    10,
+  )
+  transport.socket_disconnected(sockets, "crash")
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  #("no duplicate lifecycle", expect_none(handler))
+  |> should.equal(#("no duplicate lifecycle", True))
+  detach(handler)
+}
+
+pub fn normal_close_notification_and_down_race_emit_once_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let actors = process.new_subject()
+  let closers = process.new_subject()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      telemetry_config(),
+      init: fn(_info: socket.ConnectInfo(AppMessage)) {
+        process.send(actors, process.self())
+        #(Nil, [])
+      },
+      update: update,
+    )
+  let _frames =
+    app_test_helper.connect_with_close(sockets, "race", fn() {
+      let release = process.new_subject()
+      process.send(closers, release)
+      let assert Ok(Nil) = process.receive(release, 2000)
+      Nil
+    })
+  let assert Ok(socket_actor) = process.receive(actors, 500)
+  expect_connected(handler) |> should.be_true
+  let monitor = process.monitor(socket_actor)
+  transport.socket_disconnected(sockets, "race")
+  let assert Ok(release) = process.receive(closers, 500)
+  let router = app_test_helper.runtime_pid(sockets)
+  test_helper.suspend_process(router)
+  process.send(release, Nil)
+  // Queue the terminal report, close notification, and DOWN together.
+  await_actor_exit(monitor)
+  test_helper.resume_process(router)
+  expect_disconnect(handler, "normal", 0) |> should.be_true
+  assert_empty(sockets)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  expect_none(handler) |> should.be_true
+  detach(handler)
+}
+
+pub fn forced_stop_drain_accounts_for_stuck_socket_once_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let actors = process.new_subject()
+  let closed = process.new_subject()
+  let stopped = process.new_subject()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      telemetry_config(),
+      init: fn(_info: socket.ConnectInfo(AppMessage)) {
+        process.send(actors, process.self())
+        #(Nil, [])
+      },
+      update: update,
+    )
+  let frames =
+    app_test_helper.connect_with_close(sockets, "stuck", fn() {
+      process.send(closed, Nil)
+    })
+  let assert Ok(socket_actor) = process.receive(actors, 500)
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join(sockets, "stuck", "room:stuck", "jr", "1")
+  let _reply = app_test_helper.recv(frames)
+  expect_join(handler, "accepted") |> should.be_true
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = snapshot.get(sockets)
+      snapshot.joined_socket_topic_pairs(current) == 1
+    },
+    1000,
+    10,
+  )
+  let monitor = process.monitor(socket_actor)
+  // Suspension holds phase one until the router's forced-drain deadline.
+  test_helper.suspend_process(socket_actor)
+  let _stopper =
+    process.spawn(fn() { process.send(stopped, beryl.stop(sockets)) })
+  process.receive(stopped, 4000)
+  |> should.equal(Ok(Error(beryl.StopTimeout)))
+  await_actor_exit(monitor)
+  process.receive(closed, 1000) |> should.equal(Ok(Nil))
+  expect_disconnect(handler, "shutdown", 1) |> should.be_true
+  expect_none(handler) |> should.be_true
+  detach(handler)
+}
+
+pub fn heartbeat_and_callback_stop_preserve_terminal_reasons_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let heartbeat =
+    start(telemetry_config() |> beryl.with_heartbeat(timeout_ms: 40))
+  let heartbeat_frames = app_test_helper.connect(heartbeat, "heartbeat")
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join(heartbeat, "heartbeat", "room:a", "jr", "1")
+  let _reply = app_test_helper.recv(heartbeat_frames)
+  expect_join(handler, "accepted") |> should.be_true
+  expect_disconnect(handler, "heartbeat_timeout", 1) |> should.be_true
+  let _close = app_test_helper.recv(heartbeat_frames)
+  assert_empty(heartbeat)
+  beryl.stop(heartbeat) |> should.equal(Ok(Nil))
+
+  let callback = start(telemetry_config())
+  let callback_frames = app_test_helper.connect(callback, "callback")
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join(callback, "callback", "room:a", "jr", "1")
+  let _reply = app_test_helper.recv(callback_frames)
+  expect_join(handler, "accepted") |> should.be_true
+  app_test_helper.push(callback, "callback", "room:a", "stop", "2")
+  expect_message(handler, "text", "handled", "stop") |> should.be_true
+  expect_disconnect(handler, "callback_error", 1) |> should.be_true
+  let _close = app_test_helper.recv(callback_frames)
+  assert_empty(callback)
+  beryl.stop(callback) |> should.equal(Ok(Nil))
+  expect_none(handler) |> should.be_true
+  detach(handler)
+}
+
+fn admit(sockets: beryl.Sockets, socket_id: String) -> Result(Nil, Nil) {
+  transport.admit_socket(
+    sockets: sockets,
+    owner: app_test_helper.runtime_pid(sockets),
+    socket_id: socket_id,
+    send: fn(_) { Ok(Nil) },
+    send_binary: fn(_) { Ok(Nil) },
+    codec: None,
+    seed: socket.empty_seed(),
+    close: fn() { Nil },
+  )
+}
+
+pub fn failed_and_abandoned_admission_have_no_lifecycle_events_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let failed =
+    app_test_helper.start_app(
+      telemetry_config(),
+      init: fn(_info: socket.ConnectInfo(AppMessage)) {
+        panic as "expected admission failure"
+      },
+      update: update,
+    )
+  let assert Ok(failed) = failed
+  admit(failed, "failed") |> should.equal(Error(Nil))
+  assert_empty(failed)
+  beryl.stop(failed) |> should.equal(Ok(Nil))
+  expect_none(handler) |> should.be_true
+
+  let booting = process.new_subject()
+  let assert Ok(abandoned) =
+    app_test_helper.start_app(
+      telemetry_config(),
+      init: fn(_info: socket.ConnectInfo(AppMessage)) {
+        let release = process.new_subject()
+        process.send(booting, process.self())
+        let assert Ok(Nil) = process.receive(release, 5000)
+        #(Nil, [])
+      },
+      update: update,
+    )
+  let connection =
+    process.spawn_unlinked(fn() {
+      let _result = admit(abandoned, "abandoned")
+      Nil
+    })
+  let assert Ok(socket_actor) = process.receive(booting, 500)
+  let monitor = process.monitor(socket_actor)
+  process.kill(connection)
+  await_actor_exit(monitor)
+  assert_empty(abandoned)
+  beryl.stop(abandoned) |> should.equal(Ok(Nil))
+  expect_none(handler) |> should.be_true
+  detach(handler)
+}
+
+pub fn disabled_telemetry_does_not_report_socket_crashes_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let actors = process.new_subject()
+  let closed = process.new_subject()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: socket.ConnectInfo(AppMessage)) {
+        process.send(actors, process.self())
+        #(Nil, [])
+      },
+      update: update,
+    )
+  let _frames =
+    app_test_helper.connect_with_close(sockets, "disabled-crash", fn() {
+      process.send(closed, Nil)
+    })
+  let assert Ok(socket_actor) = process.receive(actors, 500)
+  let monitor = process.monitor(socket_actor)
+  process.kill(socket_actor)
+  await_actor_exit(monitor)
+  process.receive(closed, 1000) |> should.equal(Ok(Nil))
+  assert_empty(sockets)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  expect_none(handler) |> should.be_true
+  detach(handler)
 }
