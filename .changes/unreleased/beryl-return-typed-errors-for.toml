@@ -1,3 +1,3 @@
 package = "beryl"
-kind = "Fixed"
+kind = "Changed"
 body = "Return typed errors for failed presence CRDT clock lookups instead of timing out, and resume asynchronous socket mutations with one failed acknowledgement. Failed replacements keep existing entries and owner monitors; failed new tracks create no owner monitor. Match track call errors as TrackRequestFailed(error) in PresenceTrackError, and handle TrackInvalidCrdtState and UpdateInvalidCrdtState."
