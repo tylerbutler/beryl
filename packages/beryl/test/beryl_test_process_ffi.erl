@@ -4,7 +4,11 @@
          queue_call_lifecycle/0, publication_cleanup_races/0,
          stale_lifecycle_signals/3, monitored_by_count/1, monitor_count/1,
          suspend_process/1, resume_process/1, socket_queue/2,
-         socket_actor/2, worker_report_pending/3]).
+         socket_actor/2, worker_report_pending/3, queue_ledger_bytes/1]).
+
+queue_ledger_bytes({Table, _, _, _, _, _, _}) ->
+    [{state, State}] = ets:lookup(Table, state),
+    erlang:external_size(maps:without([version, registry_epoch], State)).
 
 limit_schedulers(Maximum) ->
     Online = erlang:system_info(schedulers_online),
@@ -14,7 +18,8 @@ limit_schedulers(Maximum) ->
 socket_queue(Router, SocketId) ->
     {registered_name, Name} = process_info(Router, registered_name),
     {ok, {Table, Router, _, _, _, _, _}} = beryl_work_queue_ffi:lookup(Name),
-    [{{target, SocketId}, Queue}] = ets:lookup(Table, {target, SocketId}),
+    [{{target, SocketId}, _Incarnation, Queue, _Status}] =
+        ets:lookup(Table, {target, SocketId}),
     Queue.
 
 socket_actor(Router, SocketId) ->
