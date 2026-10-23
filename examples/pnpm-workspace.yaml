@@ -4,6 +4,7 @@ packages:
   - collab_docs
   - lustre_presence
   - showcase
+  - todo
 onlyBuiltDependencies:
   - esbuild
   - esbuild@0.27.7
