@@ -169,9 +169,13 @@ start the scope again and rejoin. Configure the runtime's PubSub handle with
 case beryl.child_spec(config, init: init, update: update) {
   Ok(#(sockets, runtime_specification)) ->
     add_to_supervisor(sockets, runtime_specification)
-  Error(beryl.HeartbeatTimeoutTooLow(2)) ->
+  Error(beryl.HeartbeatTimeoutTooLow(_minimum)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"
+  Error(beryl.RateLimitTooHigh(_maximum)) ->
+    panic as "reduce the per-second rate"
+  Error(beryl.InvalidRateLimitBurst(_burst)) ->
+    panic as "use a non-negative burst"
   Error(beryl.InvalidTopicPattern(pattern, _reason)) ->
     panic as "invalid topic pattern: " <> pattern
 }

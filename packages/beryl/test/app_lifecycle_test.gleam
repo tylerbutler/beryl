@@ -11,6 +11,7 @@ import beryl/topic
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
+import gleam/list
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
@@ -46,6 +47,64 @@ pub fn validate_config_rejects_rate_rounding_to_zero_test() -> Nil {
   |> beryl.with_message_rate(per_second: 1_000_000_001, burst: 1)
   |> beryl.validate_config
   |> should.equal(Error(beryl.RateLimitTooHigh(1_000_000_000)))
+}
+
+pub fn frame_rate_burst_boundaries_test() -> Nil {
+  assert_burst_boundaries(beryl.with_frame_rate)
+}
+
+pub fn message_rate_burst_boundaries_test() -> Nil {
+  assert_burst_boundaries(beryl.with_message_rate)
+}
+
+pub fn join_rate_burst_boundaries_test() -> Nil {
+  assert_burst_boundaries(beryl.with_join_rate)
+}
+
+pub fn channel_rate_burst_boundaries_test() -> Nil {
+  assert_burst_boundaries(beryl.with_channel_rate)
+}
+
+pub fn connection_rate_per_ip_burst_boundaries_test() -> Nil {
+  assert_burst_boundaries(beryl.with_connection_rate_per_ip)
+}
+
+pub fn topic_rate_burst_boundaries_test() -> Nil {
+  assert_burst_boundaries(fn(config, rate, burst) {
+    config
+    |> beryl.with_topic_rate(pattern: "room:*", per_second: 1, burst: 1)
+    |> beryl.with_topic_rate(pattern: "other:*", per_second: rate, burst: burst)
+  })
+}
+
+fn assert_burst_boundaries(
+  builder: fn(beryl.Config, Int, Int) -> beryl.Config,
+) -> Nil {
+  let config = beryl.config(wire.phoenix_codec())
+  list.each([-100, -1], fn(burst) {
+    let config = builder(config, 1, burst)
+    config
+    |> beryl.validate_config
+    |> should.equal(Error(beryl.InvalidRateLimitBurst(burst)))
+
+    let assert Error(error) =
+      beryl.child_spec(
+        config,
+        init: app_test_helper.accepting_init,
+        update: app_test_helper.accepting_update,
+      )
+    error |> should.equal(beryl.InvalidRateLimitBurst(burst))
+  })
+  list.each([0, 1], fn(burst) {
+    builder(config, 1, burst)
+    |> beryl.validate_config
+    |> should.equal(Ok(Nil))
+  })
+  list.each([0, -1], fn(rate) {
+    builder(config, rate, -1)
+    |> beryl.validate_config
+    |> should.equal(Ok(Nil))
+  })
 }
 
 pub fn validate_config_accepts_valid_topic_pattern_test() -> Nil {
