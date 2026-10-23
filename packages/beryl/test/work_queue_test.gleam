@@ -1,8 +1,47 @@
 import beryl/overload
 import beryl/work_queue
 import gleam/erlang/process
+import gleam/int
 import gleam/list
+import gleam/option.{None, Some}
 import gleeunit/should
+import unitest
+
+@external(erlang, "beryl_work_queue_race_test_ffi", "registry_races")
+fn target_registry_cas_races() -> Nil
+
+@external(erlang, "beryl_test_process_ffi", "queue_ledger_bytes")
+fn queue_ledger_bytes(queue: work_queue.Queue(message)) -> Int
+
+/// Force stale-row and FIFO CAS races against an isolated copy of the queue.
+pub fn target_registry_cas_races_test() -> Nil {
+  use <- unitest.tag("serial")
+  target_registry_cas_races()
+}
+
+/// Idle target rows must not increase the data CAS ledger's serialized size.
+pub fn registered_targets_do_not_grow_the_data_ledger_test() -> Nil {
+  let router =
+    work_queue.new(overload.worker_limits(), overload.RouterQueue, False, fn() {
+      Nil
+    })
+  let target =
+    work_queue.new(overload.worker_limits(), overload.SocketQueue, False, fn() {
+      Nil
+    })
+  let before = queue_ledger_bytes(router)
+  int.range(from: 1, to: 1001, with: Nil, run: fn(_, key) {
+    work_queue.register_target(router, int.to_string(key), target)
+  })
+  queue_ledger_bytes(router) |> should.equal(before)
+  let assert Ok(reservation) = work_queue.publish(router, "data", 4)
+  work_queue.take(router) |> should.equal(Ok(#(reservation, "data")))
+  work_queue.release(router, reservation)
+  work_queue.take(router) |> should.equal(Error(Nil))
+  int.range(from: 1, to: 1001, with: Nil, run: fn(_, key) {
+    work_queue.remove_target(router, int.to_string(key))
+  })
+}
 
 @external(erlang, "beryl_test_process_ffi", "queue_memory_evidence")
 fn queue_memory_evidence() -> String
@@ -124,6 +163,107 @@ pub fn closed_queue_drains_but_rejects_new_work_test() -> Nil {
   work_queue.close(queue)
   work_queue.publish(queue, 2, 0) |> should.equal(Error(overload.Closed))
   work_queue.take(queue) |> should.equal(Ok(#(reservation, 1)))
+}
+
+pub fn normal_close_ignores_late_closed_then_records_overload_once_test() -> Nil {
+  let assert Ok(limits) = overload.limits(items: 1, bytes: 8)
+  let queue = work_queue.new(limits, overload.SocketQueue, False, fn() { Nil })
+  let router = work_queue.new(limits, overload.RouterQueue, False, fn() { Nil })
+  let assert Ok(pending) = work_queue.publish(queue, "pending", 8)
+  let assert Ok(router_work) = work_queue.publish(router, "busy", 8)
+  work_queue.close(queue)
+  let assert Error(late_error) = work_queue.publish(queue, "late", 4)
+  late_error |> should.equal(overload.Closed)
+  work_queue.close_with_error(queue, late_error) |> should.be_false()
+  work_queue.close_reason(queue) |> should.equal(None)
+  let assert Ok(normal) = work_queue.snapshot(queue)
+  normal.items |> should.equal(1)
+  normal.bytes |> should.equal(8)
+
+  let assert Error(fatal) = work_queue.publish(router, "index", 1)
+  fatal |> should.equal(overload.Overloaded(overload.RouterQueue))
+  work_queue.close_with_error(queue, fatal) |> should.be_true()
+  list.each(
+    [
+      fatal,
+      overload.Closed,
+      overload.Unavailable,
+      overload.ItemTooLarge(overload.CallbackBatch),
+    ],
+    fn(error) {
+      work_queue.close_with_error(queue, error) |> should.be_false()
+      work_queue.close_reason(queue) |> should.equal(Some(fatal))
+    },
+  )
+  work_queue.close(queue)
+  work_queue.is_open(queue) |> should.be_false()
+  let assert Ok(aborted) = work_queue.snapshot(queue)
+  aborted.items |> should.equal(1)
+  aborted.bytes |> should.equal(8)
+  work_queue.take(queue) |> should.equal(Ok(#(pending, "pending")))
+  let assert Ok(running) = work_queue.snapshot(queue)
+  running.items |> should.equal(1)
+  running.bytes |> should.equal(8)
+  work_queue.release(queue, pending)
+  let assert Ok(empty) = work_queue.snapshot(queue)
+  empty.items |> should.equal(0)
+  empty.bytes |> should.equal(0)
+  work_queue.take(queue) |> should.equal(Error(Nil))
+  work_queue.release(router, router_work)
+}
+
+pub fn admission_close_preserves_first_error_for_all_variants_test() -> Nil {
+  list.each(
+    [
+      overload.Closed,
+      overload.Unavailable,
+      overload.Overloaded(overload.RouterQueue),
+      overload.ItemTooLarge(overload.CallbackBatch),
+    ],
+    fn(error) {
+      let queue =
+        work_queue.new(
+          overload.worker_limits(),
+          overload.SocketQueue,
+          False,
+          fn() { Nil },
+        )
+      work_queue.close_with_error(queue, error) |> should.be_true()
+      work_queue.close_with_error(queue, overload.Unavailable)
+      |> should.be_false()
+      work_queue.close_reason(queue) |> should.equal(Some(error))
+      work_queue.is_open(queue) |> should.be_false()
+    },
+  )
+}
+
+pub fn normal_close_can_record_unavailable_or_item_too_large_test() -> Nil {
+  list.each(
+    [overload.Unavailable, overload.ItemTooLarge(overload.CallbackBatch)],
+    fn(error) {
+      let queue =
+        work_queue.new(
+          overload.worker_limits(),
+          overload.SocketQueue,
+          False,
+          fn() { Nil },
+        )
+      let assert Ok(pending) = work_queue.publish(queue, "pending", 8)
+      work_queue.close(queue)
+      work_queue.close_with_error(queue, overload.Closed) |> should.be_false()
+      work_queue.close_with_error(queue, error) |> should.be_true()
+      work_queue.close_with_error(queue, error) |> should.be_false()
+      work_queue.close_reason(queue) |> should.equal(Some(error))
+      let assert Ok(charged) = work_queue.snapshot(queue)
+      charged.items |> should.equal(1)
+      charged.bytes |> should.equal(8)
+      work_queue.release(queue, pending)
+      work_queue.take(queue) |> should.equal(Error(Nil))
+      let assert Ok(empty) = work_queue.snapshot(queue)
+      empty.items |> should.equal(0)
+      empty.bytes |> should.equal(0)
+    },
+  )
 }
 
 pub fn target_close_waits_for_router_fifo_without_using_data_capacity_test() -> Nil {

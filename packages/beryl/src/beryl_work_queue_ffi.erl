@@ -13,7 +13,8 @@ new(MaxItems, MaxBytes, Boundary, Telemetry, Wake)
     State = #{open => true, close_reason => none, version => 0, items => 0, bytes => 0,
               high_items => 0, high_bytes => 0, rejected => 0, cancelled => 0,
               pending => queue:new(),
-              leases => #{}, cleanups => #{}, targets => #{}, notified => false},
+              leases => #{}, cleanups => #{}, registry_epoch => 0,
+              pending_closes => #{}, notified => false},
     true = ets:insert(Table, {state, State}),
     {Table, self(), MaxItems, MaxBytes, Boundary, Telemetry, Wake}.
 
@@ -47,62 +48,96 @@ close_reason({Table, _, _, _, _, _, _}) ->
 
 close_with_error(Queue, Error) ->
     case update(Queue, fun(State) ->
-        case maps:get(open, State) of
-            false -> {return, false};
-            true -> {replace, State#{open := false, close_reason := {some, Error}}, true}
+        case {maps:get(open, State), maps:get(close_reason, State), Error} of
+            %% Late ingress rejection must not abort a normal disconnect drain.
+            {false, none, closed} -> {return, false};
+            %% Accepted work can still fail admission elsewhere after input closes.
+            {_, none, _} ->
+                {replace, State#{open := false, close_reason := {some, Error}}, true};
+            _ -> {return, false}
         end
     end) of
         {error, unavailable} -> false;
         Changed -> Changed
     end.
 
-register_target(Queue = {_, Owner, _, _, _, _, _}, Key, Target) when Owner =:= self() ->
+register_target(Queue = {Table, Owner, _, _, _, _, _}, Key, Target) when Owner =:= self() ->
     Incarnation = make_ref(),
+    registry_change(Queue, fun() ->
+        true = ets:insert(Table, {{target, Key}, Incarnation, Target, open})
+    end, fun(State) -> without_target(State, Key) end).
+
+remove_target(Queue = {Table, Owner, _, _, _, _, _}, Key) when Owner =:= self() ->
+    registry_change(Queue, fun() ->
+        true = ets:delete(Table, {target, Key})
+    end, fun(State) -> without_target(State, Key) end).
+
+%% Only the queue owner writes registry rows. The odd epoch must be durable
+%% BEFORE any row write. Publishing data is still allowed during this interval.
+%% Owner death destroys both rows and ledger; no producer owns an epoch or lock.
+registry_change(Queue, Write, Cleanup) ->
+    case update(Queue, fun(State) ->
+        {replace, State#{registry_epoch := maps:get(registry_epoch, State) + 1},
+         registry_started}
+    end) of
+        {error, unavailable} -> nil;
+        registry_started ->
+            Write(),
+            end_registry_change(Queue, Cleanup)
+    end.
+
+end_registry_change(Queue, Cleanup) ->
     update(Queue, fun(State) ->
-        Next = without_target(State, Key),
-        Targets = maps:get(targets, Next),
-        {replace, Next#{targets := Targets#{Key => {Incarnation, Target, open}}}, nil}
+        Next = Cleanup(State),
+        {replace, Next#{registry_epoch := maps:get(registry_epoch, State) + 1}, nil}
     end).
 
-remove_target(Queue = {_, Owner, _, _, _, _, _}, Key) when Owner =:= self() ->
-    update(Queue, fun(State) -> {replace, without_target(State, Key), nil} end).
-
 without_target(State, Key) ->
-    State#{targets := maps:remove(Key, maps:get(targets, State)),
+    State#{pending_closes := maps:remove(Key, maps:get(pending_closes, State)),
            pending := queue:filter(fun
                ({target_close, TargetKey, _, _}) -> TargetKey =/= Key;
                (_) -> true
            end, maps:get(pending, State))}.
 
 close_target(Queue = {Table, _, _, _, _, _, _}, Key) ->
-    %% Capture the incarnation once, including across CAS retries.
+    read_target(Queue, Table, Key, any).
+
+read_target(Queue, Table, Key, Expected) ->
     case safe_lookup(Table, state) of
-        [{state, #{targets := Targets}}] ->
-            case maps:find(Key, Targets) of
-                {ok, {Incarnation, Target, open}} ->
-                    schedule_target_close(Queue, Key, Incarnation, Target);
+        [{state, #{registry_epoch := Epoch}}] when Epoch rem 2 =:= 0 ->
+            case safe_lookup(Table, {target, Key}) of
+                [{{target, Key}, Incarnation, Target, open}]
+                        when Expected =:= any; Expected =:= Incarnation ->
+                    schedule_target_close(Queue, Key, Incarnation, Target, Epoch);
                 _ -> nil
             end;
+        [{state, _}] ->
+            %% Do not busy-spin while the owner is scheduled out mid-write.
+            receive after 1 -> read_target(Queue, Table, Key, Expected) end;
         [] -> nil
     end.
 
-schedule_target_close(Queue, Key, Incarnation, Target) ->
+schedule_target_close(Queue = {Table, _, _, _, _, _, _},
+                      Key, Incarnation, Target, Epoch) ->
     Result = update(Queue, fun(State) ->
-        Targets = maps:get(targets, State),
-        case maps:find(Key, Targets) of
-            {ok, {Incarnation, Target, open}} ->
-                %% One fixed-size lifecycle control per registered target,
-                %% separate from (and never reducing) the data capacity.
+        PendingCloses = maps:get(pending_closes, State),
+        case {maps:get(registry_epoch, State), maps:is_key(Key, PendingCloses)} of
+            {Epoch, false} ->
+                %% This CAS validates the row read, not a check-before-CAS gate.
+                %% Only pending controls enter the ledger, never idle targets.
                 Control = {target_close, Key, Incarnation, Target},
                 {replace, State#{
-                    targets := Targets#{Key := {Incarnation, Target, closing}},
+                    pending_closes := PendingCloses#{Key => Incarnation},
                     pending := queue:in(Control, maps:get(pending, State)),
                     notified := true},
                     {published, Incarnation, not maps:get(notified, State)}};
-            _ -> {return, nil}
+            {Epoch, true} -> {return, nil};
+            _ -> {return, registry_changed}
         end
     end),
     case Result of
+        %% Keep the ORIGINAL incarnation across registry changes and CAS retries.
+        registry_changed -> read_target(Queue, Table, Key, Incarnation);
         {ok, _} -> nil;
         {error, unavailable} -> nil;
         nil -> nil
@@ -393,13 +428,16 @@ publish(Queue = {_, _, MaxItems, MaxBytes, Boundary, _, _}, Message, Bytes)
             end)
     end.
 
-take(Queue = {_, Owner, _, _, _, _, _}) when Owner =:= self() ->
+take(Queue = {Table, Owner, _, _, _, _, _}) when Owner =:= self() ->
     Result = update(Queue, fun(State) ->
         case queue:out(maps:get(pending, State)) of
             {empty, _} ->
                 {replace, State#{notified := false}, {error, nil}};
-            {{value, {target_close, _, _, Target}}, Pending} ->
-                {replace, State#{pending := Pending}, {target_closed, Target}};
+            {{value, Control = {target_close, _, _, _}}, _} ->
+                %% Exclude stale open-row readers before completing the control.
+                %% Leave the control and dedupe entry present until the row is closed.
+                {replace, State#{registry_epoch := maps:get(registry_epoch, State) + 1},
+                 {target_closing, Control}};
             {{value, Id}, Pending} ->
                 Leases = maps:get(leases, State),
                 {pending, Bytes, At, Message} = maps:get(Id, Leases),
@@ -410,7 +448,18 @@ take(Queue = {_, Owner, _, _, _, _, _}) when Owner =:= self() ->
         end
     end),
     case Result of
-        {target_closed, Target = {_, _, _, _, _, _, Wake}} ->
+        {target_closing, Control = {target_close, Key, Incarnation,
+                                    Target = {_, _, _, _, _, _, Wake}}} ->
+            case safe_lookup(Table, {target, Key}) of
+                [{{target, Key}, Incarnation, Target, open}] ->
+                    true = ets:insert(Table, {{target, Key}, Incarnation, Target, closed});
+                _ -> ok
+            end,
+            end_registry_change(Queue, fun(State) ->
+                {{value, Control}, Pending} = queue:out(maps:get(pending, State)),
+                State#{pending := Pending,
+                       pending_closes := maps:remove(Key, maps:get(pending_closes, State))}
+            end),
             case close_once(Target) of true -> Wake(); false -> nil end,
             take(Queue);
         _ -> Result
@@ -530,6 +579,11 @@ counted_change(Result, _) -> Result.
 count_rejection({return, Result}, State) ->
     {replace, State#{rejected := maps:get(rejected, State) + 1}, Result}.
 
+%% Do not call user telemetry handlers while the owner holds an odd epoch.
+%% A synchronous handler could otherwise re-enter close_target and wait on
+%% its own unfinished registry write. Emit once, after the even-epoch CAS.
+finish(_, _, registry_started) -> registry_started;
+finish(_, _, {target_closing, _} = Result) -> Result;
 finish(Queue = {_, _, _, _, _, _, Wake}, State, {published, Id, Notify}) ->
     %% The payload is already durable in the owner-owned table. A producer
     %% killed here cannot strand capacity; the owner's recovery tick drains it.
