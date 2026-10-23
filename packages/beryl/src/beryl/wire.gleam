@@ -441,8 +441,8 @@ pub fn decode_binary_message(data: BitArray) -> Result(Inbound, DecodeError) {
       event:bytes-size(event_size),
       payload:bytes,
     >> -> {
-      use join_ref <- result.try(optional_utf8(join_ref))
-      use ref <- result.try(optional_utf8(ref))
+      use join_ref <- result.try(optional_utf8(join_ref, "join_ref"))
+      use ref <- result.try(optional_utf8(ref, "ref"))
       use topic <- result.try(required_utf8(topic, "topic"))
       use event <- result.try(required_utf8(event, "event"))
       Ok(codec.inbound(
@@ -457,11 +457,14 @@ pub fn decode_binary_message(data: BitArray) -> Result(Inbound, DecodeError) {
   }
 }
 
-fn optional_utf8(bytes: BitArray) -> Result(Option(String), DecodeError) {
+fn optional_utf8(
+  bytes: BitArray,
+  name: String,
+) -> Result(Option(String), DecodeError) {
   case bit_array.byte_size(bytes) {
     0 -> Ok(None)
     _ ->
-      required_utf8(bytes, "ref")
+      required_utf8(bytes, name)
       |> result.map(Some)
   }
 }
