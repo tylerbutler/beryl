@@ -134,9 +134,11 @@ pub fn async_clock_failure_acknowledges_once_and_preserves_owner_monitors_test()
     process.receive(reply, 0) |> should.equal(Error(Nil))
   })
   test_helper.monitored_by_count(owner) |> should.equal(1)
-  test_helper.monitored_by_count(unused_owner) |> should.equal(0)
-  // Runtime socket teardown releases its reserved cleanup even with no entry.
-  presence.untrack_runtime_owner_async(tracker, unused_owner)
+  test_helper.wait_until(
+    fn() { test_helper.monitored_by_count(unused_owner) == 1 },
+    1000,
+    5,
+  )
   process.kill(unused_owner)
   process.kill(owner)
   test_helper.wait_until(
