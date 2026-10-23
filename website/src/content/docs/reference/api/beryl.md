@@ -152,6 +152,7 @@ Configuration for an app-side socket runtime.
 pub type ConfigError {
   HeartbeatTimeoutTooLow(minimum: Int)
   RateLimitTooHigh(maximum: Int)
+  InvalidRateLimitBurst(burst: Int)
   InvalidTopicPattern(
     pattern: String,
     reason: topic.TopicError
@@ -188,6 +189,16 @@ RateLimitTooHigh(maximum: Int)
 A configured per-second rate was above the largest value that can still
  consume at least one token. The wrapped `Int` is the maximum accepted
  rate.
+
+##### `InvalidRateLimitBurst`
+
+```gleam
+InvalidRateLimitBurst(burst: Int)
+```
+
+An enabled rate limit had a negative burst capacity. Use 0 to default
+ to its per-second rate, or a positive capacity. `burst` is the rejected
+ value. Disabled limits ignore their burst capacity.
 
 ##### `InvalidTopicPattern`
 
@@ -508,8 +519,10 @@ pub fn validate_config(Config) -> Result(Nil, ConfigError)
 Validate a [`Config`](#config) without starting any process.
 
  This checks that `heartbeat_timeout_ms` is at least 2, that every
- configured rate limit is representable, and that every per-topic
- rate-limit pattern is valid.
+ enabled rate limit is representable and has a non-negative burst, and
+ that every per-topic rate-limit pattern is valid. A burst of 0 defaults
+ to the per-second rate. Non-positive rates disable limiting and ignore
+ their bursts.
 
 <div class="api-entry-anchor" id="api-function-with_channel_rate" aria-hidden="true"></div>
 
@@ -529,6 +542,10 @@ Configure per-channel message rate limiting.
  until socket teardown; leaving or rejoining does not reset their allowance.
  Per-socket channel buckets are capped by default; use
  `with_channel_rate_max_keys_per_socket` to adjust the cap.
+
+ A non-positive `per_second` disables the limit and ignores `burst`.
+ When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+ by `validate_config` with `InvalidRateLimitBurst`.
 
 <div class="api-entry-anchor" id="api-function-with_channel_rate_max_keys_per_socket" aria-hidden="true"></div>
 
@@ -564,7 +581,9 @@ Configure a per-IP connection-attempt rate limit.
  Each WebSocket upgrade attempt that passes the concurrent connection
  ceilings consumes one token before authentication and handshake setup. A
  non-positive `per_second` disables the limit. A `burst` of 0 uses
- `per_second` as the burst capacity.
+ `per_second` as the burst capacity. When enabled, a negative burst is
+ rejected by `validate_config` with `InvalidRateLimitBurst`.
+ Disabled limits ignore `burst`.
 
  Unlike per-connection frame and message buckets, this allowance is keyed by
  the real socket peer IP and lives in beryl's supervised connection limiter.
@@ -607,6 +626,10 @@ Configure per-connection frame-rate limiting at the transport edge.
  An over-rate heartbeat is shed before it can refresh the socket's heartbeat
  deadline, so a sustained flood is eventually closed by heartbeat eviction.
 
+ A non-positive `per_second` disables the limit and ignores `burst`.
+ When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+ by `validate_config` with `InvalidRateLimitBurst`.
+
 <div class="api-entry-anchor" id="api-function-with_heartbeat" aria-hidden="true"></div>
 
 ### `with_heartbeat`
@@ -637,6 +660,10 @@ pub fn with_join_rate(
 ```
 
 Configure per-socket join rate limiting.
+
+ A non-positive `per_second` disables the limit and ignores `burst`.
+ When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+ by `validate_config` with `InvalidRateLimitBurst`.
 
 <div class="api-entry-anchor" id="api-function-with_logging" aria-hidden="true"></div>
 
@@ -833,6 +860,10 @@ Configure per-socket decoded message-rate limiting in the runtime.
  heartbeat deadline, so a sustained flood is eventually closed by heartbeat
  eviction. Leave enough rate and burst headroom for legitimate heartbeats.
 
+ A non-positive `per_second` disables the limit and ignores `burst`.
+ When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+ by `validate_config` with `InvalidRateLimitBurst`.
+
 <div class="api-entry-anchor" id="api-function-with_payload_preview_bytes" aria-hidden="true"></div>
 
 ### `with_payload_preview_bytes`
@@ -943,8 +974,12 @@ Configure a per-topic-pattern message rate limit for an app-dispatch
  use the global `with_channel_rate` limit. The limiter applies
  only after a socket has joined the topic. A non-positive `per_second`
  explicitly disables limiting for matching topics, including any global
- channel limit, and allocates no bucket. Buckets remain until socket teardown;
- leaving or rejoining a topic does not reset its allowance.
+ channel limit, and allocates no bucket. When enabled, a `burst` of 0 uses
+ `per_second`; a negative burst is rejected by `validate_config` with
+ `InvalidRateLimitBurst`. Disabled limits ignore `burst`.
+
+ Buckets remain until socket teardown. Leaving or rejoining a topic does not
+ reset its allowance.
 
 <div class="api-entry-anchor" id="api-function-with_worker_queue_limits" aria-hidden="true"></div>
 
