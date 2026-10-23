@@ -1,6 +1,6 @@
 //// Behavioural tests for per-channel rate-limit bucket accounting on the
 //// app runtime: buckets are only created for joined topics, are capped per
-//// socket, and are released when the topic or socket goes away.
+//// socket, survive topic leave/rejoin, and are released on socket teardown.
 
 import app_test_helper
 import beryl
@@ -218,7 +218,7 @@ pub fn heartbeat_eviction_releases_channel_buckets_test() -> Nil {
   Nil
 }
 
-pub fn leave_removes_channel_bucket_so_cap_recovers_test() -> Nil {
+pub fn leave_preserves_channel_buckets_and_their_cap_test() -> Nil {
   let events = process.new_subject()
   let channels = start_capped_app(2, events)
 
@@ -230,13 +230,18 @@ pub fn leave_removes_channel_bucket_so_cap_recovers_test() -> Nil {
   event_frame(channels, "socket-leave", "room:two", "ref-two")
   expect_handled(events, "room:two")
 
-  // Leaving frees room:one's bucket, so a third topic fits under the cap.
+  // A left topic still occupies its bucket slot for this socket's lifetime.
   leave(channels, "socket-leave", "room:one", "leave-one")
   join(channels, "socket-leave", "room:three")
-  process.sleep(20)
-  drain_events(events)
   event_frame(channels, "socket-leave", "room:three", "ref-three")
-  expect_handled(events, "room:three")
+  // The existing topic can still use its bucket after the failed allocation.
+  event_frame(channels, "socket-leave", "room:two", "barrier")
+  let assert Closed("room:one", socket.Normal) =
+    app_test_helper.next_event(events)
+  let assert Join("room:three", _, _) = app_test_helper.next_event(events)
+  let assert Message("room:two", "client_event", _, _) =
+    app_test_helper.next_event(events)
+  process.receive(events, 0) |> should.be_error
 
   let assert Ok(Nil) = beryl.stop(channels)
   Nil

@@ -303,7 +303,8 @@ pub fn with_effect_limits(config: Config, limits: overload.Limits) -> Config {
 /// use the global `with_channel_rate` limit. The limiter applies
 /// only after a socket has joined the topic. A non-positive `per_second`
 /// explicitly disables limiting for matching topics, including any global
-/// channel limit, and allocates no bucket.
+/// channel limit, and allocates no bucket. Buckets remain until socket teardown;
+/// leaving or rejoining a topic does not reset its allowance.
 pub fn with_topic_rate(
   config: Config,
   pattern pattern: String,
@@ -518,8 +519,9 @@ pub fn with_join_rate(
 
 /// Configure per-channel message rate limiting.
 ///
-/// The limiter applies only after a socket has joined a topic. Active
-/// per-socket channel buckets are capped by default; use
+/// The limiter applies only after a socket has joined a topic. Buckets remain
+/// until socket teardown; leaving or rejoining does not reset their allowance.
+/// Per-socket channel buckets are capped by default; use
 /// `with_channel_rate_max_keys_per_socket` to adjust the cap.
 pub fn with_channel_rate(
   config: Config,
@@ -529,9 +531,11 @@ pub fn with_channel_rate(
   Config(..config, channel_rate: rate, channel_burst: burst)
 }
 
-/// Configure the maximum active per-channel rate-limit buckets per socket.
+/// Configure the maximum retained per-channel rate-limit buckets per socket.
 ///
-/// Values <= 0 disable the cap. The default is 1000.
+/// Buckets for previously joined topics count toward this cap until socket
+/// teardown. A message that needs a new bucket after the cap is reached is
+/// dropped. Values <= 0 disable the cap. The default is 1000.
 pub fn with_channel_rate_max_keys_per_socket(
   config: Config,
   max_keys max_keys: Int,
