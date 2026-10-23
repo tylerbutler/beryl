@@ -6,9 +6,13 @@ import beryl/socket.{AcceptJoin, Binary, Closed, Info, Join, Message, Next}
 import beryl/transport
 import beryl/transport/server
 import beryl/wire
+import beryl/wire/codec
 import gleam/dict
+import gleam/dynamic
 import gleam/erlang/process
+import gleam/list
 import gleam/option
+import gleam/string
 import gleeunit/should
 import test_helper.{type CapturedLog}
 import unitest
@@ -65,11 +69,15 @@ pub fn capture_restores_configuration_after_assertion_failure_test() -> Nil {
 }
 
 fn with_app(level: beryl.LogLevel, action: fn(beryl.Sockets) -> a) -> a {
-  let channels =
-    start_accepting_app(
-      beryl.config(wire.phoenix_codec())
+  with_config(
+    beryl.config(wire.phoenix_codec())
       |> beryl.with_logging(beryl.logging_config(level, False)),
-    )
+    action,
+  )
+}
+
+fn with_config(config: beryl.Config, action: fn(beryl.Sockets) -> a) -> a {
+  let channels = start_accepting_app(config)
   use <- with_cleanup(fn() {
     let _ = beryl.stop(channels)
     Nil
@@ -245,7 +253,7 @@ pub fn shared_transport_uses_own_runtime_threshold_test() -> Nil {
   use debug_connection <- with_transport(debug, "debug-transport")
   use quiet_connection <- with_transport(quiet, "quiet-transport")
 
-  // Decode and warning emission are synchronous in the calling transport.
+  // Decode and diagnostic emission are synchronous in the calling transport.
   let assert server.Continue(_) =
     server.handle_text_frame(debug_connection, "not-json")
   let assert server.Continue(_) =
@@ -410,4 +418,240 @@ pub fn start_app_does_not_warn_when_a_limit_is_configured_test() -> Nil {
 
   let _ = beryl.stop(channels)
   test_helper.stop_capture()
+}
+
+pub fn diagnostic_fields_are_utf8_byte_bounded_and_sanitized_test() -> Nil {
+  list.each(["a", "🌍", "é"], fn(character) {
+    let bounded = log.field(string.repeat(character, 10_000))
+    should.be_true(string.byte_size(bounded) <= 256)
+    string.ends_with(bounded, "...") |> should.be_true
+  })
+  log.field(string.repeat("a", 256))
+  |> should.equal(string.repeat("a", 256))
+  log.field("line\n\r\t\u{0}\u{7f}\u{85}end")
+  |> should.equal("line??????end")
+}
+
+pub fn disabled_debug_does_not_construct_metadata_test() -> Nil {
+  use <- unitest.tag("serial")
+  use _host <- with_host(log.Info)
+  log.debug_lazy(log.new("host-filtered"), "unused", fn() {
+    panic as "host-disabled debug constructed metadata"
+  })
+  log.debug_lazy(
+    log.new("locally-filtered") |> log.with_level(log.Warn),
+    "unused",
+    fn() { panic as "locally-disabled debug constructed metadata" },
+  )
+}
+
+pub fn crash_descriptions_keep_their_separate_bound_test() -> Nil {
+  use <- unitest.tag("serial")
+  use selector <- test_helper.with_capture()
+  let crash = string.repeat("context", 60) <> " application_callback:42"
+  log.error(log.new("crash-format"), "Callback crash bound", [
+    #("crash", crash),
+  ])
+  let assert Ok(captured) =
+    test_helper.receive_log(selector, "Callback crash bound", 10)
+  dict.get(captured.metadata, "crash") |> should.equal(Ok(crash))
+}
+
+fn rejecting_codec(reason: String) -> codec.Codec {
+  let phoenix = wire.phoenix_codec()
+  codec.new(
+    decode_text: fn(_) { Error(codec.InvalidFormat(reason)) },
+    encode_reply: codec.encode_reply(phoenix),
+    encode_push: codec.encode_push(phoenix),
+    encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
+  )
+  |> codec.with_binary_decoder(fn(_) { Error(codec.InvalidFormat(reason)) })
+}
+
+pub fn shared_decode_diagnostics_bound_codec_errors_for_text_and_binary_test() -> Nil {
+  use <- unitest.tag("serial")
+  use selector <- test_helper.with_capture()
+  let config =
+    beryl.config(rejecting_codec(string.repeat("🌍\n", 10_000)))
+    |> beryl.with_logging(beryl.logging_config(beryl.DebugLevel, False))
+  use channels <- with_config(config)
+  use state <- with_transport(channels, "bounded-codec")
+  let assert server.Continue(_) = server.handle_text_frame(state, "bad")
+  let assert server.Continue(_) = server.handle_binary_frame(state, <<0>>)
+  list.each(
+    [
+      "Failed to decode wire protocol message",
+      "Failed to decode binary wire protocol message",
+    ],
+    fn(message) {
+      let assert Ok(captured) = test_helper.receive_log(selector, message, 30)
+      let assert Ok(error) = dict.get(captured.metadata, "error")
+      should.be_true(string.byte_size(error) <= 256)
+      string.ends_with(error, "...") |> should.be_true
+      string.contains(error, "\n") |> should.be_false
+    },
+  )
+}
+
+fn send_inbound(
+  channels: beryl.Sockets,
+  topic: String,
+  kind: codec.InboundKind,
+) -> Nil {
+  transport.route_decoded(
+    channels,
+    "drops",
+    codec.inbound(
+      join_ref: option.None,
+      ref: option.None,
+      topic: topic,
+      kind: kind,
+      payload: dynamic.nil(),
+    ),
+  )
+  |> should.equal(Ok(Nil))
+}
+
+pub fn runtime_validation_rejections_are_debug_and_fields_are_bounded_test() -> Nil {
+  use <- unitest.tag("serial")
+  use selector <- test_helper.with_capture()
+  use channels <- with_app(beryl.DebugLevel)
+  let frames = app_test_helper.connect(channels, "drops")
+  let oversized = string.repeat("🌍", 10_000)
+  send_inbound(channels, oversized, codec.Join)
+  let _reply = app_test_helper.recv(frames)
+  send_inbound(channels, oversized, codec.Leave)
+  send_inbound(channels, oversized, codec.Event(oversized))
+  send_inbound(channels, "room:valid", codec.Event(oversized))
+  list.each(
+    [
+      "Join rejected: invalid topic",
+      "Leave dropped: invalid topic",
+      "Event dropped: invalid topic",
+      "Event dropped: invalid event",
+    ],
+    fn(message) {
+      let assert Ok(captured) = test_helper.receive_log(selector, message, 30)
+      list.each(["topic", "event"], fn(key) {
+        case dict.get(captured.metadata, key) {
+          Ok(value) -> should.be_true(string.byte_size(value) <= 256)
+          Error(Nil) -> Nil
+        }
+      })
+    },
+  )
+}
+
+pub fn comparable_runtime_drops_use_debug_not_warning_test() -> Nil {
+  use <- unitest.tag("serial")
+  use host <- with_host(log.Debug)
+  list.each([beryl.DebugLevel, beryl.InfoLevel], fn(level) {
+    let config =
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_logging(beryl.logging_config(level, False))
+    let enabled = level == beryl.DebugLevel
+    with_config(config, fn(channels) {
+      let frames = app_test_helper.connect(channels, "drops")
+      send_inbound(channels, "", codec.Join)
+      let _reply = app_test_helper.recv(frames)
+      send_inbound(channels, "", codec.Leave)
+      send_inbound(channels, "", codec.Event("message"))
+      send_inbound(channels, "room:valid", codec.Event(""))
+      send_inbound(channels, "room:unjoined", codec.Event("message"))
+      list.each(
+        [
+          "Join rejected: invalid topic",
+          "Leave dropped: invalid topic",
+          "Event dropped: invalid topic",
+          "Event dropped: invalid event",
+          "Inbound message rejected",
+        ],
+        fn(message) {
+          receive_host_log(host, message, "socket_id", "drops", 200)
+          |> should.equal(enabled)
+        },
+      )
+    })
+    list.each(
+      [
+        #(beryl.with_join_rate(config, 1, 1), "Join rate limited"),
+        #(beryl.with_message_rate(config, 1, 1), "Message rate limited"),
+        #(beryl.with_channel_rate(config, 1, 1), "Channel rate limited"),
+        #(
+          beryl.with_max_joined_topics_per_socket(config, 1),
+          "Join rejected: topic cap exceeded",
+        ),
+      ],
+      fn(pair) {
+        use channels <- with_config(pair.0)
+        let frames = app_test_helper.connect(channels, "drops")
+        app_test_helper.join_ok(channels, frames, "drops", "room:a", "j", "r")
+        case pair.1 {
+          "Join rate limited" | "Join rejected: topic cap exceeded" -> {
+            app_test_helper.join(channels, "drops", "room:b", "j2", "r2")
+            let _reply = app_test_helper.recv(frames)
+            Nil
+          }
+          _ -> {
+            send_inbound(channels, "room:a", codec.Event("first"))
+            send_inbound(channels, "room:a", codec.Event("second"))
+          }
+        }
+        receive_host_log(host, pair.1, "socket_id", "drops", 200)
+        |> should.equal(enabled)
+      },
+    )
+  })
+}
+
+pub fn repeated_transport_decode_drops_are_debug_and_callback_errors_remain_errors_test() -> Nil {
+  use <- unitest.tag("serial")
+  use host <- with_host(log.Info)
+  use channels <- with_app(beryl.DebugLevel)
+  use state <- with_transport(channels, "repeated-drops")
+  list.each(list.repeat(Nil, 20), fn(_) {
+    let assert server.Continue(_) = server.handle_text_frame(state, "bad-json")
+    let assert server.Continue(_) = server.handle_binary_frame(state, <<0>>)
+  })
+  list.each(
+    [
+      "Failed to decode wire protocol message",
+      "Failed to decode binary wire protocol message",
+    ],
+    fn(message) {
+      receive_host_log(host, message, "logger", "repeated-drops", 0)
+      |> should.be_false
+    },
+  )
+  let assert Ok(crashing) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_logging(beryl.logging_config(beryl.ErrorLevel, False)),
+      init: fn(_info: socket.ConnectInfo(Nil)) { panic as "callback failure" },
+      update: fn(model: Nil, _event) { Next(model, []) },
+    )
+  use <- with_cleanup(fn() {
+    let _ = beryl.stop(crashing)
+    Nil
+  })
+  let assert Ok(owner) = transport.runtime_pid(crashing)
+  transport.admit_socket(
+    sockets: crashing,
+    owner: owner,
+    socket_id: "failed-callback",
+    send: fn(_) { Ok(Nil) },
+    send_binary: fn(_) { Ok(Nil) },
+    codec: option.None,
+    seed: socket.empty_seed(),
+    close: fn() { Nil },
+  )
+  |> should.be_error
+  receive_host_log(
+    host,
+    "Socket init crashed; socket not registered",
+    "socket_id",
+    "failed-callback",
+    1000,
+  )
+  |> should.be_true
 }
