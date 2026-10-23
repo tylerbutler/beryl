@@ -27,6 +27,7 @@ import gleam/option
 import gleam/result
 import gleam/string
 import gleeunit/should
+import glisten/transport as glisten_transport
 
 type WebsocketClient
 
@@ -444,10 +445,6 @@ pub fn handler_rejects_connections_over_per_ip_limit_test() -> Nil {
   let #(port, server_pid) = start_limited_server()
 
   let assert Ok(client) = connect_websocket(port, "/socket")
-  // HTTP 101 precedes Ewe's WebSocket process initialization and socket handoff.
-  let assert Ok(client) =
-    send_text(client, "[null,\"ready\",\"phoenix\",\"heartbeat\",{}]")
-  receive_text(client, 1000) |> should.be_ok
 
   websocket_upgrade_status(port, "/socket")
   |> should.equal(Ok(429))
@@ -470,6 +467,68 @@ fn reconnect_when_released(
       reconnect_when_released(port, attempts - 1)
     }
     Error(Nil) -> Error(Nil)
+  }
+}
+
+pub fn handler_releases_slot_when_client_closes_during_init_test() -> Nil {
+  let entered = process.new_subject()
+  let observed = process.new_subject()
+  let assert Ok(channels) =
+    app_test_helper.start(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(1),
+      init: fn(_) {
+        let release = process.new_subject()
+        process.send(entered, release)
+        process.receive_forever(release)
+        #(Nil, [])
+      },
+      update: fn(model: Nil, _: socket.Input(Nil)) { socket.Next(model, []) },
+    )
+  let config =
+    server.default_config("/socket")
+    |> server.with_on_connect(fn(request: request.Request(ewe.Connection)) {
+      process.send(
+        observed,
+        #(process.self(), fn() {
+          glisten_transport.peername(
+            request.body.transport,
+            request.body.socket,
+          )
+          |> result.is_error
+        }),
+      )
+      Ok([])
+    })
+  let #(port, server_pid) = start_server_with_config(channels, config)
+  let assert Ok(early) = connect_websocket(port, "/socket")
+  let assert Ok(release) = process.receive(entered, 1000)
+  let assert Ok(#(_owner, socket_closed)) = process.receive(observed, 1000)
+  close(early)
+  wait_until(socket_closed, 500)
+  process.send(release, Nil)
+
+  let assert Ok(healthy) = reconnect_when_released(port, 50)
+  let assert Ok(release) = process.receive(entered, 1000)
+  let assert Ok(#(owner, _socket_closed)) = process.receive(observed, 1000)
+  process.send(release, Nil)
+  wait_until(fn() { !process.is_alive(owner) }, 500)
+  let assert Ok(healthy) =
+    send_text(healthy, "[null,\"ready\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(healthy, 1000) |> should.be_ok
+  close(healthy)
+  stop_supervisor(server_pid)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
+
+fn wait_until(check: fn() -> Bool, attempts: Int) -> Nil {
+  case check() {
+    True -> Nil
+    False -> {
+      { attempts > 0 } |> should.be_true
+      process.sleep(1)
+      wait_until(check, attempts - 1)
+    }
   }
 }
 
