@@ -453,6 +453,11 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
   let _local = app_test_helper.recv(frames)
   expect_broadcast(handler, "local", 1) |> should.be_true
 
+  test_helper.wait_until(
+    fn() { pubsub.subscriber_count(pubsub_instance, "room:lobby") == 1 },
+    1000,
+    5,
+  )
   pubsub.broadcast(pubsub_instance, "room:lobby", "remote", json.object([]))
   let _remote = app_test_helper.recv(frames)
   expect_broadcast(handler, "remote", 1) |> should.be_true
