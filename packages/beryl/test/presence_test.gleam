@@ -1,9 +1,10 @@
 import beryl/overload
 import beryl/presence
+import gleam/dict
 import gleam/erlang/process
 import gleam/json
 import gleam/list
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
@@ -29,6 +30,131 @@ pub fn main() -> Nil {
 
 fn test_config(replica: String) -> presence.Config {
   presence.default_config(replica)
+}
+
+pub fn track_replies_when_the_local_clock_is_missing_test() -> Nil {
+  let diffs = process.new_subject()
+  let assert Ok(tracker) =
+    presence.start(
+      test_config("missing-clock")
+      |> presence.with_local_clock_lookup(fn(_, _) { Error(Nil) })
+      |> presence.with_on_diff(fn(diff) { process.send(diffs, diff) }),
+    )
+  presence.track(tracker, "room:lobby", "user", "session", json.null())
+  |> should.equal(Error(presence.TrackInvalidCrdtState))
+  presence.list(tracker, "room:lobby") |> should.equal(Ok([]))
+  process.receive(diffs, 0) |> should.equal(Error(Nil))
+  test_helper.kill_presence(tracker)
+}
+
+pub fn update_rejection_preserves_the_old_ref_and_entry_test() -> Nil {
+  let diffs = process.new_subject()
+  let assert Ok(tracker) =
+    presence.start(
+      test_config("missing-clock")
+      |> presence.with_local_clock_lookup(first_clock_only)
+      |> presence.with_on_diff(fn(diff) { process.send(diffs, diff) }),
+    )
+  let assert Ok(ref) =
+    presence.track(tracker, "room:lobby", "user", "session", json.null())
+  let assert Ok(_) = process.receive(diffs, 1000)
+  let before = presence.list(tracker, "room:lobby")
+  presence.update(tracker, ref, json.string("replacement"))
+  |> should.equal(Error(presence.UpdateInvalidCrdtState))
+  presence.list(tracker, "room:lobby") |> should.equal(before)
+  process.receive(diffs, 0) |> should.equal(Error(Nil))
+  presence.untrack(tracker, ref) |> should.equal(Ok(Nil))
+  presence.list(tracker, "room:lobby") |> should.equal(Ok([]))
+  let assert Ok(_) = process.receive(diffs, 1000)
+  test_helper.kill_presence(tracker)
+}
+
+fn first_clock_only(
+  clocks: dict.Dict(String, Int),
+  replica: String,
+) -> Result(Int, Nil) {
+  case dict.get(clocks, replica) {
+    Ok(1) -> Ok(1)
+    Ok(_) | Error(Nil) -> Error(Nil)
+  }
+}
+
+pub fn async_clock_failure_acknowledges_once_and_preserves_owner_monitors_test() -> Nil {
+  let assert Ok(tracker) =
+    presence.start(
+      test_config("missing-clock")
+      |> presence.with_local_clock_lookup(first_clock_only),
+    )
+  let owner = idle_owner()
+  let unused_owner = idle_owner()
+  let reply = process.new_subject()
+  presence.track_async(
+    tracker,
+    "room:lobby",
+    "user",
+    "session",
+    json.null(),
+    None,
+    owner,
+    "first",
+    1,
+    reply,
+  )
+  |> should.equal(Ok(Nil))
+  let assert Ok(presence.MutationAck(
+    tag: "first",
+    operation_id: 1,
+    outcome: presence.Tracked(ref, _),
+  )) = process.receive(reply, 1000)
+  test_helper.wait_until(
+    fn() { test_helper.monitored_by_count(owner) == 1 },
+    1000,
+    5,
+  )
+  let before = presence.list(tracker, "room:lobby")
+  list.each([#(owner, 2), #(unused_owner, 3)], fn(attempt) {
+    presence.track_async(
+      tracker,
+      "room:lobby",
+      "user",
+      "session",
+      json.string("replacement"),
+      Some(ref),
+      attempt.0,
+      "failed",
+      attempt.1,
+      reply,
+    )
+    |> should.equal(Ok(Nil))
+    process.receive(reply, 1000)
+    |> should.equal(
+      Ok(presence.MutationAck("failed", attempt.1, presence.TrackFailed)),
+    )
+    presence.list(tracker, "room:lobby") |> should.equal(before)
+    process.receive(reply, 0) |> should.equal(Error(Nil))
+  })
+  test_helper.monitored_by_count(owner) |> should.equal(1)
+  test_helper.monitored_by_count(unused_owner) |> should.equal(0)
+  // Runtime socket teardown releases its reserved cleanup even with no entry.
+  presence.untrack_runtime_owner_async(tracker, unused_owner)
+  process.kill(unused_owner)
+  process.kill(owner)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = presence.queue_snapshot(tracker)
+      presence.list(tracker, "room:lobby") == Ok([]) && queue.items == 0
+    },
+    1000,
+    5,
+  )
+  test_helper.kill_presence(tracker)
+}
+
+fn idle_owner() -> process.Pid {
+  process.spawn_unlinked(fn() {
+    let stop: process.Subject(Nil) = process.new_subject()
+    process.receive_forever(stop)
+  })
 }
 
 pub fn explicitly_constructed_diffs_have_cluster_scope_test() -> Nil {
@@ -843,7 +969,13 @@ pub fn unavailable_presence_returns_a_typed_error_test() -> Nil {
   let #(tracker, _spec) = presence.child_spec(config)
 
   presence.track(tracker, "room:lobby", "user:1", "socket-1", json.null())
-  |> should.equal(Error(overload.AdmissionRejected(overload.Unavailable)))
+  |> should.equal(
+    Error(
+      presence.TrackRequestFailed(overload.AdmissionRejected(
+        overload.Unavailable,
+      )),
+    ),
+  )
   presence.update(tracker, "missing", json.null())
   |> should.equal(
     Error(
@@ -864,7 +996,7 @@ pub fn configured_call_timeout_is_used_test() -> Nil {
     })
   let assert Ok(tracker) = presence.start(config)
   presence.track(tracker, "room:lobby", "user:1", "socket-1", json.null())
-  |> should.equal(Error(overload.RequestTimedOut))
+  |> should.equal(Error(presence.TrackRequestFailed(overload.RequestTimedOut)))
   let assert Ok(gate) = process.receive(entered, 1000)
   process.send(gate, Nil)
   test_helper.wait_until(
