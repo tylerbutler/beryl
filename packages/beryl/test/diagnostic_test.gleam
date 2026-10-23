@@ -124,3 +124,16 @@ pub fn rescue_handles_invalid_source_characters_test() -> Nil {
   string.contains(description, ":42") |> should.be_true
   assert_bounded(description)
 }
+
+/// Improper location tails stay contained, and only eight entries are read.
+pub fn rescue_handles_improper_stack_locations_test() -> Nil {
+  list.each(["improper_location", "bounded_location"], fn(shape) {
+    let assert Error(description) =
+      internal.rescue(fn() { fail_with_stack(shape) })
+    string.starts_with(description, "error:boom") |> should.be_true
+    string.contains(description, "example:update/1") |> should.be_true
+    string.contains(description, ":42") |> should.be_true
+    string.contains(description, "private-location-tail") |> should.be_false
+    assert_bounded(description)
+  })
+}
