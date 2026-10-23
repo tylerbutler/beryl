@@ -1,11 +1,12 @@
 import app_test_helper
 import beryl
 import beryl/channel
+import beryl/overload
 import beryl/presence
 import beryl/pubsub
 import beryl/socket.{
-  AcceptJoin, Binary, Closed, Info, Join, Message, Next, Push, RejectJoin,
-  ReplyError, ReplyOk,
+  AcceptJoin, Binary, Broadcast, BroadcastFrom, Closed, Info, Join, Message,
+  Next, Push, RejectJoin, ReplyError, ReplyOk,
 }
 import beryl/transport
 import beryl/wire
@@ -16,6 +17,7 @@ import gleam/json
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
+import test_helper
 import unitest
 
 /// Opaque handle to the attached :telemetry capture handler, produced and
@@ -106,6 +108,19 @@ fn update(model: Nil, input: socket.Input(AppMessage)) -> socket.Next(Nil) {
       Next(model, [ReplyError(ref, json.object([]))])
     Message(topic, "push", _, _) ->
       Next(model, [Push(topic, "pushed", json.object([]))])
+    Message(topic, "cast", _, _) ->
+      Next(model, [
+        Broadcast(topic, "notice", json.object([])),
+        Push(topic, "after", json.object([])),
+      ])
+    Message(topic, "cast_others", _, _) ->
+      Next(model, [BroadcastFrom(topic, "notice", json.object([]))])
+    Message(_, "cast_unjoined", _, _) ->
+      Next(model, [Broadcast("room:other", "notice", json.object([]))])
+    Message(topic, "cast_oversized", _, _) ->
+      Next(model, [
+        Broadcast(topic, "notice", json.string(string.repeat("x", 4096))),
+      ])
     Message(_, "crash", _, _) -> panic as "expected message failure"
     Message(_, _, _, _) | Binary(_, _) | Info(_) -> Next(model, [])
     Closed(_, _) -> Next(model, [])
@@ -444,6 +459,151 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
 
   expect_none(handler) |> should.be_true
   detach(handler)
+}
+
+pub fn socket_broadcast_counts_actual_inline_recipients_once_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let sockets = start(telemetry_config())
+  let sender = app_test_helper.connect(sockets, "sender")
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join_ok(sockets, sender, "sender", "room:lobby", "j", "1")
+  expect_join(handler, "accepted") |> should.be_true
+
+  app_test_helper.push(sockets, "sender", "room:lobby", "cast", "2")
+  app_test_helper.recv(sender)
+  |> codec.TextFrame
+  |> should.equal(wire.push("room:lobby", "notice", json.object([])))
+  app_test_helper.recv(sender)
+  |> codec.TextFrame
+  |> should.equal(wire.push("room:lobby", "after", json.object([])))
+  expect_message(handler, "text", "handled", "push") |> should.be_true
+  expect_broadcast(handler, "local", 1) |> should.be_true
+
+  let observer = app_test_helper.connect(sockets, "observer")
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join_ok(
+    sockets,
+    observer,
+    "observer",
+    "room:lobby",
+    "j2",
+    "1",
+  )
+  expect_join(handler, "accepted") |> should.be_true
+  app_test_helper.push(sockets, "sender", "room:lobby", "cast", "3")
+  let _inline = app_test_helper.recv(sender)
+  let _after = app_test_helper.recv(sender)
+  let _routed = app_test_helper.recv(observer)
+  expect_message(handler, "text", "handled", "push") |> should.be_true
+  expect_broadcast(handler, "local", 2) |> should.be_true
+
+  app_test_helper.push(sockets, "sender", "room:lobby", "cast_others", "4")
+  let _routed = app_test_helper.recv(observer)
+  expect_message(handler, "text", "handled", "push") |> should.be_true
+  expect_broadcast(handler, "local", 1) |> should.be_true
+  route_heartbeat(sockets, "sender")
+  app_test_helper.recv(sender)
+  |> string.contains("heartbeat-ref")
+  |> should.be_true
+  expect_message(handler, "heartbeat", "handled", "not_applicable")
+  |> should.be_true
+
+  app_test_helper.join_ok(
+    sockets,
+    observer,
+    "observer",
+    "room:other",
+    "j3",
+    "2",
+  )
+  expect_join(handler, "accepted") |> should.be_true
+  app_test_helper.push(sockets, "sender", "room:lobby", "cast_unjoined", "5")
+  app_test_helper.recv(observer)
+  |> codec.TextFrame
+  |> should.equal(wire.push("room:other", "notice", json.object([])))
+  expect_message(handler, "text", "handled", "push") |> should.be_true
+  expect_broadcast(handler, "local", 1) |> should.be_true
+  route_heartbeat(sockets, "sender")
+  app_test_helper.recv(sender)
+  |> string.contains("heartbeat-ref")
+  |> should.be_true
+  expect_message(handler, "heartbeat", "handled", "not_applicable")
+  |> should.be_true
+
+  beryl.broadcast(sockets, "room:lobby", "public", json.object([]))
+  |> should.be_ok
+  let _sender = app_test_helper.recv(sender)
+  let _observer = app_test_helper.recv(observer)
+  expect_broadcast(handler, "local", 2) |> should.be_true
+  expect_none(handler) |> should.be_true
+  detach(handler)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn socket_broadcast_pubsub_counts_each_runtime_fanout_once_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let instance =
+    pubsub.start(pubsub.config_with_scope("telemetry-inline-count"))
+  let config = telemetry_config() |> beryl.with_pubsub(instance)
+  let local = start(config)
+  let remote = start(config)
+  let sender = app_test_helper.connect(local, "sender")
+  let observer = app_test_helper.connect(remote, "observer")
+  expect_connected(handler) |> should.be_true
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join_ok(local, sender, "sender", "room:lobby", "j1", "1")
+  app_test_helper.join_ok(remote, observer, "observer", "room:lobby", "j2", "1")
+  expect_join(handler, "accepted") |> should.be_true
+  expect_join(handler, "accepted") |> should.be_true
+  test_helper.wait_until(
+    fn() { pubsub.subscriber_count(instance, "room:lobby") == 2 },
+    1000,
+    5,
+  )
+  app_test_helper.push(local, "sender", "room:lobby", "cast", "2")
+  let _inline = app_test_helper.recv(sender)
+  let _after = app_test_helper.recv(sender)
+  let _remote = app_test_helper.recv(observer)
+  expect_message(handler, "text", "handled", "push") |> should.be_true
+  expect_broadcast(handler, "local", 1) |> should.be_true
+  expect_broadcast(handler, "remote", 1) |> should.be_true
+
+  beryl.broadcast(local, "room:lobby", "public", json.object([]))
+  |> should.be_ok
+  let _local = app_test_helper.recv(sender)
+  let _remote = app_test_helper.recv(observer)
+  expect_broadcast(handler, "local", 1) |> should.be_true
+  expect_broadcast(handler, "remote", 1) |> should.be_true
+  expect_none(handler) |> should.be_true
+  detach(handler)
+  beryl.stop(local) |> should.equal(Ok(Nil))
+  beryl.stop(remote) |> should.equal(Ok(Nil))
+}
+
+pub fn rejected_router_broadcast_sends_no_inline_copy_or_success_event_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler = attach()
+  let assert Ok(limits) = overload.limits(32, 1024)
+  let sockets =
+    start(
+      telemetry_config()
+      |> beryl.with_router_queue_limits(limits),
+    )
+  let frames = app_test_helper.connect(sockets, "rejected")
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join_ok(sockets, frames, "rejected", "room:lobby", "j", "1")
+  expect_join(handler, "accepted") |> should.be_true
+  app_test_helper.push(sockets, "rejected", "room:lobby", "cast_oversized", "2")
+  expect_message(handler, "text", "handled", "push") |> should.be_true
+  expect_disconnect(handler, "normal", 1) |> should.be_true
+  app_test_helper.recv(frames)
+  |> should.equal("[\"j\",\"j\",\"room:lobby\",\"phx_close\",{}]")
+  app_test_helper.recv_none(frames)
+  expect_none(handler) |> should.be_true
+  detach(handler)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
 pub fn shutdown_reason_and_disabled_runtime_are_reported_test() -> Nil {
