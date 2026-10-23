@@ -606,6 +606,125 @@ pub fn rejected_router_broadcast_sends_no_inline_copy_or_success_event_test() ->
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
+pub fn raising_sender_write_does_not_prevent_broadcast_fanout_test() -> Nil {
+  use <- unitest.tag("serial")
+  assert_faulty_sender_fanout("telemetry-write-fault", None, fn(frame) {
+    case string.contains(frame, "\"notice\"") {
+      True -> panic as "expected sender write failure"
+      False -> Ok(Nil)
+    }
+  })
+}
+
+pub fn raising_sender_codec_does_not_prevent_broadcast_fanout_test() -> Nil {
+  use <- unitest.tag("serial")
+  let faulty_codec =
+    codec.new(
+      decode_text: wire.decode_message,
+      encode_reply: wire.reply_json,
+      encode_push: fn(_, _, _) { panic as "expected sender codec failure" },
+      encode_heartbeat_reply: wire.heartbeat_reply,
+    )
+  assert_faulty_sender_fanout(
+    "telemetry-codec-fault",
+    Some(faulty_codec),
+    fn(_) { Ok(Nil) },
+  )
+}
+
+fn assert_faulty_sender_fanout(
+  scope: String,
+  sender_codec: option.Option(codec.Codec),
+  send: fn(String) -> Result(Nil, Nil),
+) -> Nil {
+  let handler = attach()
+  let instance = pubsub.start(pubsub.config_with_scope(scope))
+  let config = telemetry_config() |> beryl.with_pubsub(instance)
+  let local = start(config)
+  let remote = start(config)
+  let sender = process.new_subject()
+  let assert Ok(owner) = transport.runtime_pid(local)
+  transport.admit_socket(
+    sockets: local,
+    owner: owner,
+    socket_id: "faulty-sender",
+    send: fn(frame) {
+      let result = send(frame)
+      process.send(sender, frame)
+      result
+    },
+    send_binary: fn(_) { Ok(Nil) },
+    codec: sender_codec,
+    seed: socket.empty_seed(),
+    close: fn() { Nil },
+  )
+  |> should.equal(Ok(Nil))
+  let local_observer = app_test_helper.connect(local, "local-observer")
+  let remote_observer = app_test_helper.connect(remote, "remote-observer")
+  expect_connected(handler) |> should.be_true
+  expect_connected(handler) |> should.be_true
+  expect_connected(handler) |> should.be_true
+  app_test_helper.join_ok(
+    local,
+    sender,
+    "faulty-sender",
+    "room:lobby",
+    "j1",
+    "1",
+  )
+  app_test_helper.join_ok(
+    local,
+    local_observer,
+    "local-observer",
+    "room:lobby",
+    "j2",
+    "1",
+  )
+  app_test_helper.join_ok(
+    remote,
+    remote_observer,
+    "remote-observer",
+    "room:lobby",
+    "j3",
+    "1",
+  )
+  expect_join(handler, "accepted") |> should.be_true
+  expect_join(handler, "accepted") |> should.be_true
+  expect_join(handler, "accepted") |> should.be_true
+  test_helper.wait_until(
+    fn() { pubsub.subscriber_count(instance, "room:lobby") == 2 },
+    1000,
+    5,
+  )
+
+  app_test_helper.push(local, "faulty-sender", "room:lobby", "cast", "2")
+  app_test_helper.recv(local_observer)
+  |> codec.TextFrame
+  |> should.equal(wire.push("room:lobby", "notice", json.object([])))
+  app_test_helper.recv(remote_observer)
+  |> codec.TextFrame
+  |> should.equal(wire.push("room:lobby", "notice", json.object([])))
+  expect_broadcast(handler, "local", 2) |> should.be_true
+  expect_broadcast(handler, "remote", 1) |> should.be_true
+
+  route_heartbeat(local, "local-observer")
+  app_test_helper.recv(local_observer)
+  |> string.contains("heartbeat-ref")
+  |> should.be_true
+  route_heartbeat(remote, "remote-observer")
+  app_test_helper.recv(remote_observer)
+  |> string.contains("heartbeat-ref")
+  |> should.be_true
+  expect_message(handler, "heartbeat", "handled", "not_applicable")
+  |> should.be_true
+  expect_message(handler, "heartbeat", "handled", "not_applicable")
+  |> should.be_true
+  expect_none(handler) |> should.be_true
+  detach(handler)
+  beryl.stop(local) |> should.equal(Ok(Nil))
+  beryl.stop(remote) |> should.equal(Ok(Nil))
+}
+
 pub fn shutdown_reason_and_disabled_runtime_are_reported_test() -> Nil {
   use <- unitest.tag("serial")
   let handler = attach()

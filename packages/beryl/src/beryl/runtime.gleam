@@ -6226,24 +6226,36 @@ fn broadcast_from_socket(
 ) -> Nil {
   case except, dict.keys(state.sockets) {
     None, [socket_id] -> {
-      let message = fn(recipients) {
-        SocketBroadcast(
-          topic_name,
-          event_name,
-          payload,
-          Some(socket_id),
-          recipients,
-        )
+      let inline_recipients = case
+        dict.get(state.topics, topic_name)
+        |> result.unwrap(set.new())
+        |> set.contains(socket_id)
+      {
+        True -> 1
+        False -> 0
       }
-      let _admitted =
-        admit_router_broadcast(state, message(0), fn() {
-          message(local_broadcast(state, topic_name, event_name, payload, None))
-        })
+      // Publish before encoding or writing the sender's copy: its transport
+      // must not block or prevent delivery to the other subscribers.
+      use <- bool.guard(
+        when: !admit_router_broadcast(
+          state,
+          SocketBroadcast(
+            topic_name,
+            event_name,
+            payload,
+            Some(socket_id),
+            inline_recipients,
+          ),
+        ),
+        return: Nil,
+      )
+      let _recipient_count =
+        local_broadcast(state, topic_name, event_name, payload, None)
       Nil
     }
     None, [] | None, [_, _, ..] | Some(_), _ -> {
       let message = Broadcast(topic_name, event_name, payload, except)
-      let _admitted = admit_router_broadcast(state, message, fn() { message })
+      let _admitted = admit_router_broadcast(state, message)
       Nil
     }
   }
@@ -6328,20 +6340,9 @@ fn forward_pubsub(
 fn admit_router_broadcast(
   state: State(model, message),
   message: Message(message),
-  before_publish: fn() -> Message(message),
 ) -> Bool {
   let admission = case state.router_inbox {
-    Some(queue) -> {
-      use reservation <- result.try(work_queue.retain(queue, message))
-      // Reserve before the inline copy, then publish its actual fan-out count.
-      case work_queue.publish_reserved(queue, reservation, before_publish()) {
-        Ok(_) -> Ok(Nil)
-        Error(error) -> {
-          work_queue.release(queue, reservation)
-          Error(error)
-        }
-      }
-    }
+    Some(queue) -> work_queue.send(queue, message)
     None -> Error(overload.Unavailable)
   }
   case admission {
