@@ -3076,6 +3076,13 @@ fn dispatch_inbound(
             #("topic", message_topic),
             #("event", event_name),
           ])
+          emit_message_stop(
+            state,
+            started_at,
+            message_kind,
+            telemetry.MessageInvalid,
+            telemetry.NotApplicable,
+          )
           state
         }
         True, False -> {
@@ -3085,6 +3092,13 @@ fn dispatch_inbound(
             #("topic", message_topic),
             #("event", event_name),
           ])
+          emit_message_stop(
+            state,
+            started_at,
+            message_kind,
+            telemetry.MessageInvalid,
+            telemetry.NotApplicable,
+          )
           state
         }
       }
