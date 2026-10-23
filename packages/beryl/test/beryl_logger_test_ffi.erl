@@ -4,7 +4,8 @@
 %% cleanup. Tests using this fixture must run in the serial lane.
 -module(beryl_logger_test_ffi).
 -export([with_host/2, snapshot/0, with_cleanup/2, receive_log/5,
-         receive_supervisor_report/2, assertion_fails/1, log/2]).
+         receive_preview_allocation/3, receive_supervisor_report/2,
+         assertion_fails/1, log/2]).
 
 -define(HANDLER, beryl_logger_ownership_test).
 
@@ -95,6 +96,15 @@ receive_log(Reference, Message, Key, Value, Timeout) ->
     after Timeout -> false
     end.
 
+%% Return the raw UTF-8 string and its backing size, without formatting/copying.
+%% {ok, {binary(), integer()}} and {error, nil} match the Gleam Result/tuple.
+receive_preview_allocation(Reference, Logger, Timeout) ->
+    receive
+        {beryl_logger_test_preview, Reference, Logger, Text, Bytes} ->
+            {ok, {Text, Bytes}}
+    after Timeout -> {error, nil}
+    end.
+
 receive_supervisor_report(Reference, Child) ->
     receive
         {beryl_logger_test_supervisor, Reference, Child} -> true
@@ -103,6 +113,15 @@ receive_supervisor_report(Reference, Child) ->
 
 log(#{msg := {report, [{palabres, Fields, Message, _}]}},
     #{config := #{pid := Pid, reference := Reference}}) ->
+    case {lists:keyfind(<<"logger">>, 1, Fields),
+          lists:keyfind(<<"frame_preview">>, 1, Fields)} of
+        {{_, [{string_field, Logger} | _]},
+         {_, [{string_field, Text} | _]}} when is_binary(Text) ->
+            %% Measure at raw publication, before any sink can copy the text.
+            Pid ! {beryl_logger_test_preview, Reference, Logger, Text,
+                   binary:referenced_byte_size(Text)};
+        _ -> ok
+    end,
     Metadata = maps:from_list([
         {Key, Value} || {Key, [{string_field, Value} | _]} <- Fields
     ]),
@@ -121,6 +140,8 @@ log(_Event, _Config) ->
 discard_captured(Reference) ->
     receive
         {beryl_logger_test, Reference, _, _} -> discard_captured(Reference);
+        {beryl_logger_test_preview, Reference, _, _, _} ->
+            discard_captured(Reference);
         {beryl_logger_test_supervisor, Reference, _} -> discard_captured(Reference)
     after 0 -> ok
     end.

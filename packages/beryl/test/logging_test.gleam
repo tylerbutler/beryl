@@ -40,6 +40,13 @@ fn receive_host_log(
   timeout: Int,
 ) -> Bool
 
+@external(erlang, "beryl_logger_test_ffi", "receive_preview_allocation")
+fn receive_preview_allocation(
+  host: HostLogger,
+  logger: String,
+  timeout: Int,
+) -> Result(#(String, Int), Nil)
+
 @external(erlang, "beryl_logger_test_ffi", "receive_supervisor_report")
 fn receive_supervisor_report(host: HostLogger, child: process.Pid) -> Bool
 
@@ -692,6 +699,26 @@ pub fn shared_text_decode_preview_honors_grapheme_limit_and_opt_in_test() -> Nil
       |> should.equal(Error(Nil))
     },
   )
+}
+
+pub fn shared_text_decode_preview_does_not_retain_the_full_frame_test() -> Nil {
+  use <- unitest.tag("serial")
+  use host <- with_host(log.Debug)
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_logging(
+      beryl.logging_config(beryl.DebugLevel, True)
+      |> beryl.with_payload_preview_bytes(200),
+    )
+  use channels <- with_config(config)
+  use state <- with_transport(channels, "detached-preview")
+  let frame = string.repeat("x", 1_048_576)
+  let assert server.Continue(_) = server.handle_text_frame(state, frame)
+  let assert Ok(#(preview, referenced_bytes)) =
+    receive_preview_allocation(host, "detached-preview", 1000)
+  preview |> should.equal(string.repeat("x", 200))
+  string.byte_size(preview) |> should.equal(200)
+  referenced_bytes |> should.equal(200)
 }
 
 pub fn shared_decode_preview_is_absent_without_opt_in_and_for_binary_test() -> Nil {
