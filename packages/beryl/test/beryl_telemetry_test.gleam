@@ -1,6 +1,7 @@
 import beryl/overload
 import beryl/telemetry
 import beryl/work_queue
+import gleam/list
 import gleeunit/should
 import unitest
 
@@ -16,6 +17,19 @@ fn detach(handler_id: TelemetryHandle) -> Nil
 
 @external(erlang, "beryl_telemetry_test_ffi", "received_socket_connected")
 fn received_socket_connected() -> Bool
+
+@external(erlang, "beryl_runtime_telemetry_test_ffi", "attach")
+fn attach_disconnected() -> TelemetryHandle
+
+@external(erlang, "beryl_runtime_telemetry_test_ffi", "detach")
+fn detach_disconnected(handler_id: TelemetryHandle) -> Nil
+
+@external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_disconnect")
+fn expect_disconnect(
+  handler_id: TelemetryHandle,
+  reason: String,
+  joined_channels: Int,
+) -> Bool
 
 @external(erlang, "beryl_telemetry_test_ffi", "attach_queue")
 fn attach_queue() -> TelemetryHandle
@@ -108,4 +122,24 @@ pub fn disabled_emit_does_not_execute_event_test() -> Nil {
 
   received
   |> should.be_false
+}
+
+pub fn disconnect_reasons_preserve_public_mapping_test() -> Nil {
+  use <- unitest.tag("serial")
+  let handler_id = attach_disconnected()
+  [
+    #(telemetry.NormalDisconnect, "normal"),
+    #(telemetry.HeartbeatTimeout, "heartbeat_timeout"),
+    #(telemetry.ShutdownDisconnect, "shutdown"),
+    #(telemetry.CallbackDisconnect, "callback_error"),
+    #(telemetry.AdmissionDisconnect, "admission_rejected"),
+    #(telemetry.SocketProcessDown, "socket_process_down"),
+  ]
+  |> list.each(fn(mapping) {
+    let #(reason, expected) = mapping
+    telemetry.emit(True, telemetry.SocketDisconnected(123, 2, reason))
+    expect_disconnect(handler_id, expected, 2)
+    |> should.be_true
+  })
+  detach_disconnected(handler_id)
 }

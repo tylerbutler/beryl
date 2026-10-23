@@ -177,6 +177,15 @@ pub type Message(message) {
   IndexJoin(socket_id: String, actor: Pid, topic: String)
   /// A socket actor left a topic.
   IndexLeave(socket_id: String, actor: Pid, topic: String)
+  /// Lifecycle events are emitted only by the router, in actor signal order.
+  SocketConnected(socket_id: String, actor: Pid, connected_at: Int)
+  SocketTerminated(
+    socket_id: String,
+    actor: Pid,
+    duration: Int,
+    joined_channels: Int,
+    reason: telemetry.DisconnectReason,
+  )
   /// A socket actor finished its teardown and is about to stop; the
   /// router drops it from the index and the actor table.
   SocketClosed(socket_id: String, actor: Pid)
@@ -336,6 +345,8 @@ type SocketActorRef(message) {
     admission: AdmissionToken,
     close: fn() -> Nil,
     queue: work_queue.Queue(Message(message)),
+    /// A pending terminal event; cleared after the router emits it.
+    connected_at: Option(Int),
   )
 }
 
@@ -1335,8 +1346,18 @@ fn handle_message(
           |> log.warn("Runtime stop: killing unresponsive socket actors", [
             #("socket_count", int.to_string(dict.size(socket_actors))),
           ])
-          dict.values(socket_actors)
-          |> list.each(fn(ref) { process.kill(ref.pid) })
+          dict.to_list(socket_actors)
+          |> list.each(fn(entry) {
+            let #(socket_id, ref) = entry
+            process.kill(ref.pid)
+            let _closer = process.spawn_unlinked(ref.close)
+            emit_abnormal_disconnect(
+              state,
+              socket_id,
+              ref,
+              telemetry.ShutdownDisconnect,
+            )
+          })
           process.send(reply, app_supervisor.StopIncomplete)
           actor.stop()
         }
@@ -1359,6 +1380,59 @@ fn handle_message(
       )
       actor.continue(remove_topic_subscriber(state, socket_id, topic_name))
     }
+    SocketConnected(socket_id, pid, connected_at) ->
+      case state.role {
+        SocketActorRole(..) -> actor.continue(state)
+        RouterRole(socket_actors:, stop_reply:, stop_finalized:) ->
+          case dict.get(socket_actors, socket_id) {
+            Ok(ref) if ref.pid == pid && ref.connected_at == None -> {
+              telemetry.emit(state.config.telemetry, telemetry.SocketConnected)
+              actor.continue(
+                State(
+                  ..state,
+                  role: RouterRole(
+                    socket_actors: dict.insert(
+                      socket_actors,
+                      socket_id,
+                      SocketActorRef(..ref, connected_at: Some(connected_at)),
+                    ),
+                    stop_reply: stop_reply,
+                    stop_finalized: stop_finalized,
+                  ),
+                ),
+              )
+            }
+            Ok(_) | Error(Nil) -> actor.continue(state)
+          }
+      }
+    SocketTerminated(socket_id, pid, duration, joined_channels, reason) ->
+      case state.role {
+        SocketActorRole(..) -> actor.continue(state)
+        RouterRole(socket_actors:, stop_reply:, stop_finalized:) ->
+          case dict.get(socket_actors, socket_id) {
+            Ok(ref) if ref.pid == pid && ref.connected_at != None -> {
+              telemetry.emit(
+                state.config.telemetry,
+                telemetry.SocketDisconnected(duration, joined_channels, reason),
+              )
+              actor.continue(
+                State(
+                  ..state,
+                  role: RouterRole(
+                    socket_actors: dict.insert(
+                      socket_actors,
+                      socket_id,
+                      SocketActorRef(..ref, connected_at: None),
+                    ),
+                    stop_reply: stop_reply,
+                    stop_finalized: stop_finalized,
+                  ),
+                ),
+              )
+            }
+            Ok(_) | Error(Nil) -> actor.continue(state)
+          }
+      }
     SocketClosed(socket_id, pid) -> {
       use <- bool.guard(
         when: !owns_socket(state, socket_id, pid),
@@ -1430,12 +1504,46 @@ fn handle_router_socket_actor_down(
           ])
           let _closer = process.spawn_unlinked(ref.close)
           sweep_runtime_presence(state.config.presence, ref.pid)
+          emit_abnormal_disconnect(
+            state,
+            socket_id,
+            ref,
+            telemetry.SocketProcessDown,
+          )
           remove_socket_actor(state, socket_id)
         }
         // Already removed via `SocketClosed`, or never admitted.
         Error(Nil) -> actor.continue(state)
       }
     process.PortDown(..) -> actor.continue(state)
+  }
+}
+
+fn emit_abnormal_disconnect(
+  state: State(model, message),
+  socket_id: String,
+  ref: SocketActorRef(message),
+  reason: telemetry.DisconnectReason,
+) -> Nil {
+  use <- bool.guard(when: !state.config.telemetry, return: Nil)
+  // A dead actor cannot report teardown measurements; use the router's
+  // observation time and index, as documented in the observability guide.
+  case ref.connected_at {
+    None -> Nil
+    Some(connected_at) ->
+      telemetry.emit(
+        True,
+        telemetry.SocketDisconnected(
+          duration: telemetry.duration_since(connected_at),
+          joined_channels: dict.fold(state.topics, 0, fn(count, _, subscribers) {
+            case set.contains(subscribers, socket_id) {
+              True -> count + 1
+              False -> count
+            }
+          }),
+          reason: reason,
+        ),
+      )
   }
 }
 
@@ -1753,6 +1861,8 @@ fn dispatch_socket_msg(
     | StopPhaseDone(..)
     | IndexJoin(..)
     | IndexLeave(..)
+    | SocketConnected(..)
+    | SocketTerminated(..)
     | SocketClosed(..)
     | SocketActorDown(..)
     | RouterDown
@@ -2003,6 +2113,7 @@ fn handle_admit_socket(
                     admission,
                     close,
                     actor_queue,
+                    None,
                   ),
                 ),
                 stop_reply: stop_reply,
@@ -2095,7 +2206,14 @@ fn register_socket(
       |> log.info("Socket connected", [#("socket_id", socket_id)])
       let state =
         State(..state, sockets: dict.insert(state.sockets, socket_id, socket))
-      telemetry.emit(state.config.telemetry, telemetry.SocketConnected)
+      case state.role {
+        SocketActorRole(router:, ..) ->
+          process.send(
+            router,
+            SocketConnected(socket_id, process.self(), socket.connected_at),
+          )
+        RouterRole(..) -> Nil
+      }
       // Nothing is joined yet, so kicks cannot arise and pushes to
       // unjoined topics are dropped by the interpreter.
       #(
@@ -4696,17 +4814,23 @@ fn execute_teardown_finish(
     Ok(socket) -> socket.close()
     Error(Nil) -> Nil
   }
-  telemetry.emit(
-    state.config.telemetry,
-    telemetry.SocketDisconnected(
-      duration: case state.config.telemetry {
-        True -> telemetry.duration_since(connected_at)
-        False -> 0
-      },
-      joined_channels: joined_channels,
-      reason: stop_reason_to_disconnect_reason(reason),
-    ),
-  )
+  case state.role {
+    SocketActorRole(router:, ..) ->
+      process.send(
+        router,
+        SocketTerminated(
+          socket_id,
+          process.self(),
+          case state.config.telemetry {
+            True -> telemetry.duration_since(connected_at)
+            False -> 0
+          },
+          joined_channels,
+          stop_reason_to_disconnect_reason(reason),
+        ),
+      )
+    RouterRole(..) -> Nil
+  }
   Continue(
     State(
       ..state,
@@ -8252,6 +8376,8 @@ fn resume_worker_close(
             | Stop(..)
             | IndexJoin(..)
             | IndexLeave(..)
+            | SocketConnected(..)
+            | SocketTerminated(..)
             | SocketClosed(..)
             | RouterDown
             | SocketActorDown(..)
@@ -8352,6 +8478,8 @@ fn worker_termination_effects(
     | Stop(..)
     | IndexJoin(..)
     | IndexLeave(..)
+    | SocketConnected(..)
+    | SocketTerminated(..)
     | SocketClosed(..)
     | RouterDown
     | SocketActorDown(..)

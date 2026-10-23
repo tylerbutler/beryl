@@ -93,6 +93,7 @@ pub type DisconnectReason {
   ShutdownDisconnect
   CallbackDisconnect
   AdmissionDisconnect
+  SocketProcessDown
 }
 
 /// Whether a broadcast originated on this node or a remote node.
