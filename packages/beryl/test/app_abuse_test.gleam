@@ -17,8 +17,10 @@ import beryl/wire
 import beryl/wire/codec
 import gleam/erlang/process
 import gleam/int
+import gleam/list
 import gleam/string
 import gleeunit/should
+import test_helper
 
 fn join_ok(
   channels: beryl.Sockets,
@@ -233,6 +235,7 @@ pub fn channel_bucket_cap_bounds_distinct_topics_test() -> Nil {
 }
 
 pub fn channel_bucket_cap_retains_left_topics_and_reuses_existing_buckets_test() -> Nil {
+  let mailbox_before = test_helper.mailbox_length(process.self())
   let events = process.new_subject()
   let channels = app_test_helper.start_observed(capped_config(), events)
   let frames = app_test_helper.connect(channels, "s1")
@@ -273,6 +276,23 @@ pub fn channel_bucket_cap_retains_left_topics_and_reuses_existing_buckets_test()
     process.receive(events, 500)
   process.receive(events, 0) |> should.be_error
   beryl.stop(channels) |> should.equal(Ok(Nil))
+  list.repeat(Nil, 3)
+  |> list.map(fn(_) {
+    let assert Ok(socket.Closed(topic, socket.Shutdown)) =
+      process.receive(events, 500)
+    topic
+  })
+  |> list.sort(string.compare)
+  |> should.equal(["room:a", "room:b", "room:c"])
+  list.repeat(Nil, 3)
+  |> list.map(fn(_) { app_test_helper.recv(frames) })
+  |> list.sort(string.compare)
+  |> should.equal([
+    "[\"jr-a2\",\"jr-a2\",\"room:a\",\"phx_close\",{}]",
+    "[\"jr-b\",\"jr-b\",\"room:b\",\"phx_close\",{}]",
+    "[\"jr-c\",\"jr-c\",\"room:c\",\"phx_close\",{}]",
+  ])
+  test_helper.mailbox_length(process.self()) |> should.equal(mailbox_before)
 }
 
 pub fn channel_bucket_cap_is_isolated_per_socket_test() -> Nil {
