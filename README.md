@@ -294,12 +294,10 @@ Do not use it as a memory limit.
 - [Gleam](https://gleam.run/) 1.13+
 - [just](https://github.com/casey/just) (task runner)
 
-Install tools via [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/):
+Install tools via [mise](https://mise.jdx.dev/):
 
 ```sh
 mise install
-# or
-asdf install
 ```
 
 ### Commands

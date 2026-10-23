@@ -22,6 +22,9 @@ just pr                # alias for ci — run before creating/updating PRs
 just main              # just ci plus documentation checks
 just change P K "B"    # create changelog fragment (trellis changelog new)
 just doctor            # validate workspace invariants
+just bench-codec-deps   # install optional codec benchmark tools and package deps
+just bench-codec-check  # strict benchmark build and fixture checks
+just bench-codec        # run codec microbenchmarks locally
 ```
 
 Scope tests to one package with `just test beryl_mist`, or run a package
@@ -50,6 +53,7 @@ packages/
   beryl_mist/      # Mist WebSocket transport (depends on beryl via path)
   beryl_ewe/       # Ewe WebSocket transport (depends on beryl via path)
 examples/          # runnable example apps (workspace members, excluded from release)
+benchmarks/        # opt-in workspace members, excluded from release
 website/           # Astro/Starlight docs site (NOT a workspace member)
 docs/              # ADRs, design docs, architecture deck, security docs
 ```
@@ -188,6 +192,21 @@ it.
   `prefer_guard_clause`, `error_context_lost`, `unqualified_import`,
   `stringly_typed_error`, `short_variable_name`, `string_inspect`
 
+## BEAM code reviews
+
+For code reviews that include Gleam (`.gleam`) or Erlang (`.erl`, `.hrl`),
+delegate the BEAM-specific review to `beam-vm-reviewer`, unless you are
+already running as that agent. Include every changed Gleam and Erlang file
+in the review scope, including tests and examples. This review supplements
+normal correctness and API review; it does not replace them.
+
+Edit `.apm/agents/beam-vm-reviewer.agent.md`, then run
+`apm install --frozen --only apm` to deploy it. `apm.yml` selects both Claude
+and Copilot. APM generates `.github/agents/beam-vm-reviewer.agent.md` and
+`.claude/agents/beam-vm-reviewer.md`; do not edit those copies directly.
+To request a review in either tool, ask:
+`Use beam-vm-reviewer to review the current diff.`
+
 ## Commit and Release Workflow
 
 Required GitHub Actions jobs must always start and report success. When
@@ -227,12 +246,13 @@ bumps a version that nobody sees:
 - `website/` content, components, styles, or generator scripts
 - `docs/` ADRs, design notes, and decks
 - `examples/` (release-excluded workspace members)
+- `benchmarks/` (release-excluded development tools)
 - root config, `justfile`, `.github/` workflows, and audit or lint settings
 - `packages/*/test/`, internal refactors, and formatting that keep the
   consumer-visible behavior the same
 
 All three packages under `packages/` are releasable, so each one takes its own
-fragments. Only `examples/**` is release-excluded.
+fragments. `examples/**` and `benchmarks/**` are release-excluded.
 
 PR CI enforces fragments via `trellis changelog check`. Preview the effect of
 the current fragments with `just version-plan`.
@@ -254,15 +274,14 @@ untracked artifacts — clean before staging.
 
 ### Tool Versions
 
-`.tool-versions` sets the floor and is what CI's version-file resolution uses:
-- Erlang 27.2.1, Gleam 1.16.0, just 1.50.0
+`.mise.toml` pins Erlang 28, Gleam 1.18.1, just 1.50.0, trellis, rebar3, and
+licence_audit for local development and CI.
+
+`benchmarks/codec/.mise.toml` additionally pins an OTP-28-compatible Elixir
+build. Install it with `just bench-codec-deps`; do not add Elixir to the root
+toolchain or released-package dependencies.
 
 CI additionally matrix-tests Erlang **27 and 28** (see `.github/workflows/ci.yml`).
-
-`.mise.toml` pins trellis (0.4.1) and rebar for local development, and
-deliberately pins `erlang = "28"` so local dev runs on the newer of the two
-matrix versions. That pin intentionally overrides `.tool-versions` for mise
-users; keep everything else in `.mise.toml` limited to mise-only helper tools.
 
 ### Dependency Rules
 
@@ -273,11 +292,18 @@ users; keep everything else in `.mise.toml` limited to mise-only helper tools.
 
 ### Trellis Exclusions
 
-Only `examples/**` is excluded from release (`@release` key in the root
-`gleam.toml`). Examples are built and tested, but they get no changelog,
-version, tag, or fragment. All three packages under `packages/` are
+`examples/**` and `benchmarks/**` are excluded from release (`@release` key
+in the root `gleam.toml`). Examples are built and tested, but they get no
+changelog, version, tag, or fragment. All three packages under `packages/` are
 releasable on the `git_only` lifecycle: they get tags and GitHub releases,
 but Hex.pm publishing is disabled.
+
+Benchmarks are workspace members with opt-in dependencies and execution.
+Default build, check, test, lint, docs, and deps tasks exclude them, while
+format and clean include them. `scripts/prepare-gleam-deps.mjs` also omits
+them unless selected by package name. Use `just bench-codec-deps`,
+`just bench-codec-check`, and `just bench-codec`; see
+`benchmarks/codec/README.md` for scope and measurement limits.
 
 ## Examples
 

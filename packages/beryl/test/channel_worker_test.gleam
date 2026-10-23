@@ -17,6 +17,7 @@ import gleam/erlang/process
 import gleam/int
 import gleam/json
 import gleam/list
+import gleam/option.{None}
 import gleam/string
 import gleeunit/should
 import test_helper
@@ -51,6 +52,9 @@ fn worker_report_pending(
   socket_id: String,
   worker: process.Pid,
 ) -> Bool
+
+@external(erlang, "beryl_test_process_ffi", "with_suspended")
+fn with_suspended(pid: process.Pid, action: fn() -> Nil) -> Nil
 
 /// What a test channel reports as it runs.
 type Report {
@@ -384,6 +388,48 @@ pub fn a_notify_from_join_is_served_after_the_join_is_indexed_test() -> Nil {
 }
 
 // --- worker death -------------------------------------------------------------
+
+pub fn pending_worker_reports_match_only_the_requested_worker_test() -> Nil {
+  let reports = process.new_subject()
+  let handler =
+    channel.handler("room:*", fn(context) {
+      process.send(reports, Ran(context.topic, "join", process.self()))
+      channel.accept(Nil)
+    })
+  let channels = helper.start(config(), [handler])
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _ = helper.recv(frames)
+  helper.join(channels, "s1", "room:b", "jr-2", "r-2")
+  let _ = helper.recv(frames)
+  let expected_worker = ran_pid(reports, "join")
+  let other_worker = ran_pid(reports, "join")
+  expected_worker |> should.not_equal(other_worker)
+  let assert Ok(router) = transport.runtime_pid(channels)
+
+  use <- with_suspended(socket_actor(router, "s1"))
+  let queue = socket_queue(router, "s1")
+  // Publish synchronously while the consumer cannot drain the report. Use the
+  // typed constructor so this also pins the exact Erlang work-queue shape.
+  let assert Ok(reservation) =
+    work_queue.publish_value(
+      queue,
+      runtime.WorkerReport(
+        "s1",
+        "room:a",
+        expected_worker,
+        runtime.WorkerPresenceReady,
+        None,
+      ),
+    )
+  let expected_pending = worker_report_pending(router, "s1", expected_worker)
+  let other_pending = worker_report_pending(router, "s1", other_worker)
+  // Remove the fixture before resuming, including when an assertion fails.
+  work_queue.release(queue, reservation)
+  expected_pending |> should.be_true
+  other_pending |> should.be_false
+  worker_report_pending(router, "s1", expected_worker) |> should.be_false
+}
 
 pub fn a_dead_worker_committed_report_runs_before_its_topic_closes_test() -> Nil {
   let gate = new_gate()

@@ -3,7 +3,51 @@
          kill_scope/1, recovered/4, unmanaged_scope_rejected/1,
          during_outage/2, unavailable/1, kill_registry/1, scope_pid/1,
          healthy_ready_reductions/2, timeout_call_cleans_up/1,
-         with_malformed_messages/2]).
+         with_malformed_messages/2, with_suspended_registry/2,
+         membership_intent_size/1, nonlocal_leave_preserves_registry/1]).
+
+with_suspended_registry(Scope, Action) ->
+    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Pid = 'beryl@pubsub_membership':pid(Registry),
+    true = erlang:suspend_process(Pid),
+    try Action(Pid)
+    after erlang:resume_process(Pid)
+    end.
+
+membership_intent_size(Owner) ->
+    lists:sum([ets:info(Table, size) || Table <- ets:all(),
+        ets:info(Table, name) =:= beryl_pubsub_ffi,
+        ets:info(Table, owner) =:= Owner]).
+
+nonlocal_leave_preserves_registry(Scope) ->
+    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    RegistryPid = 'beryl@pubsub_membership':pid(Registry),
+    {ok, Peer, _Node} = peer:start_link(#{
+        name => peer:random_name("beryl_leave"),
+        connection => standard_io,
+        args => ["+S", "2:2"]
+    }),
+    try
+        RemoteOwner = peer:call(Peer, erlang, whereis, [init]),
+        {error, owner_not_local} = 'beryl@pubsub_membership':leave(
+            Registry, <<"room:remote">>, RemoteOwner),
+        {ok, nil} = 'beryl@pubsub_membership':ready(Registry),
+        {ok, nil} = 'beryl@pubsub_membership':join(
+            Registry, <<"room:healthy">>, self()),
+        Instance = 'beryl@pubsub':start(
+            'beryl@pubsub':config_with_scope(atom_to_binary(Scope))),
+        nil = 'beryl@pubsub':broadcast(
+            Instance, <<"room:healthy">>, <<"ok">>, nil),
+        receive {Scope, <<"room:healthy">>, <<"ok">>, nil, system} -> ok
+        after 1000 -> error(healthy_delivery_failed)
+        end,
+        RegistryPid = 'beryl@pubsub_membership':pid(
+            beryl_pubsub_ffi:start_pg_scope(Scope)),
+        {ok, nil} = 'beryl@pubsub_membership':leave(
+            Registry, <<"room:healthy">>, self()),
+        true
+    after peer:stop(Peer)
+    end.
 
 with_malformed_messages(Scope, Receive) ->
     Messages = [

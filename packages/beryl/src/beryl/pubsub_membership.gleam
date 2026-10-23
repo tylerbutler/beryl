@@ -9,6 +9,8 @@
 //// Calls use a timeout-safe Erlang boundary. A timed-out caller does not keep
 //// a monitor or receive a late reply.
 
+import beryl/internal
+import beryl/log
 import beryl/pubsub_native
 import gleam/dict.{type Dict}
 import gleam/erlang/atom
@@ -28,6 +30,19 @@ pub opaque type Registry {
   Registry(subject: process.Subject(Message))
 }
 
+/// Latest topic intent owned by one runtime router.
+pub type Intent
+
+/// Create coalesced intent storage owned by the calling router.
+@external(erlang, "beryl_pubsub_ffi", "new_membership_intent")
+pub fn new_intent() -> Intent
+
+@external(erlang, "beryl_pubsub_ffi", "set_membership_intent")
+fn update_intent(intent: Intent, topic: String, joined: Bool) -> Bool
+
+@external(erlang, "beryl_pubsub_ffi", "take_membership_intent")
+fn take_intent(intent: Intent) -> Result(List(String), Nil)
+
 /// A membership operation failure.
 pub type RegistryError {
   /// The scope has no stable `pg` generation yet.
@@ -44,14 +59,15 @@ pub opaque type Message {
   Join(
     topic: String,
     owner: process.Pid,
-    reply: process.Subject(Result(Nil, RegistryError)),
+    reply: Option(process.Subject(Result(Nil, RegistryError))),
   )
   Leave(
     topic: String,
     owner: process.Pid,
-    reply: process.Subject(Result(Nil, RegistryError)),
+    reply: Option(process.Subject(Result(Nil, RegistryError))),
   )
   ProcessDown(process.Down)
+  SyncOwner(owner: process.Pid, intent: Intent)
   Recover
 }
 
@@ -68,6 +84,7 @@ type State {
     scope: atom.Atom,
     registry: Registry,
     owners: Dict(process.Pid, Owner),
+    pending_leaves: Set(#(process.Pid, String)),
     pg: Option(PgGeneration),
     retry: Option(process.Timer),
   )
@@ -80,6 +97,9 @@ fn call(
   request: fn(process.Subject(reply)) -> Message,
 ) -> reply
 
+@external(erlang, "beryl_ffi", "connection_limit_send")
+fn send(subject: process.Subject(Message), message: Message) -> Bool
+
 // nolint: unused_exports -- OTP supervisor callback invoked from Erlang
 /// Start a membership actor for one `pg` scope.
 pub fn start(
@@ -91,6 +111,7 @@ pub fn start(
       scope: scope,
       registry: registry,
       owners: dict.new(),
+      pending_leaves: set.new(),
       pg: None,
       retry: None,
     ))
@@ -122,7 +143,10 @@ pub fn pid(registry: Registry) -> process.Pid {
 // nolint: unused_exports -- query compatibility adapter invoked from Erlang
 /// Check whether the registry process is alive.
 pub fn is_alive(registry: Registry) -> Bool {
-  process.is_alive(pid(registry))
+  case process.subject_owner(registry.subject) {
+    Ok(owner) -> process.is_alive(owner)
+    Error(Nil) -> False
+  }
 }
 
 // nolint: unused_exports -- startup compatibility adapter invoked from Erlang
@@ -139,7 +163,7 @@ pub fn join(
   owner: process.Pid,
 ) -> Result(Nil, RegistryError) {
   call(registry.subject, call_timeout_ms, fn(reply) {
-    Join(topic:, owner:, reply:)
+    Join(topic:, owner:, reply: Some(reply))
   })
 }
 
@@ -151,8 +175,29 @@ pub fn leave(
   owner: process.Pid,
 ) -> Result(Nil, RegistryError) {
   call(registry.subject, call_timeout_ms, fn(reply) {
-    Leave(topic:, owner:, reply:)
+    Leave(topic:, owner:, reply: Some(reply))
   })
+}
+
+/// Record membership intent without waiting for `pg` reconciliation.
+pub fn set_membership(
+  registry: Registry,
+  intent: Intent,
+  topic: String,
+  joined: Bool,
+) -> Result(Nil, Nil) {
+  use _ <- result.try(case is_alive(registry) {
+    True -> Ok(Nil)
+    False -> Error(Nil)
+  })
+  case update_intent(intent, topic, joined) {
+    False -> Ok(Nil)
+    True ->
+      case send(registry.subject, SyncOwner(process.self(), intent)) {
+        True -> Ok(Nil)
+        False -> Error(Nil)
+      }
+  }
 }
 
 fn selector(registry: Registry) -> process.Selector(Message) {
@@ -166,18 +211,11 @@ fn handle_message(
   message: Message,
 ) -> actor.Next(State, Message) {
   case message {
-    Ready(reply) -> reply_with(reply, synchronise(state, fn(_) { Ok(Nil) }))
+    Ready(reply) ->
+      reply_with(Some(reply), synchronise(state, fn(_) { Ok(Nil) }))
     Join(topic, owner, reply) -> handle_join(state, topic, owner, reply)
-    Leave(topic, owner, reply) -> {
-      let state = remove_topic(state, topic, owner)
-      reply_with(
-        reply,
-        synchronise(state, fn(state) {
-          pubsub_native.try_leave(state.scope, topic, owner)
-          |> result.map_error(PgUnavailable)
-        }),
-      )
-    }
+    Leave(topic, owner, reply) -> handle_leave(state, topic, owner, reply)
+    SyncOwner(owner, intent) -> sync_owner(state, owner, intent)
     Recover -> {
       let state = State(..state, retry: None)
       let #(_, state) = synchronise(state, fn(_) { Ok(Nil) })
@@ -189,19 +227,140 @@ fn handle_message(
   }
 }
 
+fn handle_leave(
+  state: State,
+  topic: String,
+  owner: process.Pid,
+  reply: Option(process.Subject(Result(Nil, RegistryError))),
+) -> actor.Next(State, Message) {
+  case pubsub_native.is_local_pid(owner) {
+    False -> reply_with(reply, #(Error(OwnerNotLocal), state))
+    True -> reply_with(reply, leave_local(state, topic, owner))
+  }
+}
+
+fn leave_local(
+  state: State,
+  topic: String,
+  owner: process.Pid,
+) -> #(Result(Nil, RegistryError), State) {
+  let state = remove_topic(state, topic, owner)
+  let pending = set.insert(state.pending_leaves, #(owner, topic))
+  let #(outcome, state) =
+    synchronise(State(..state, pending_leaves: pending), fn(state) {
+      pubsub_native.try_leave(state.scope, topic, owner)
+      |> result.map_error(PgUnavailable)
+    })
+  let state = case result.is_ok(outcome) {
+    True ->
+      State(
+        ..state,
+        pending_leaves: set.delete(state.pending_leaves, #(owner, topic)),
+      )
+    False -> state
+  }
+  #(outcome, state)
+}
+
+fn sync_owner(
+  state: State,
+  owner: process.Pid,
+  intent: Intent,
+) -> actor.Next(State, Message) {
+  case take_intent(intent) {
+    Error(Nil) -> actor.continue(state)
+    Ok(topics) -> sync_topics(state, owner, set.from_list(topics))
+  }
+}
+
+fn sync_topics(
+  state: State,
+  owner: process.Pid,
+  desired: Set(String),
+) -> actor.Next(State, Message) {
+  let previous = case dict.get(state.owners, owner) {
+    Ok(value) -> value.topics
+    Error(Nil) -> set.new()
+  }
+  let removed = set.difference(previous, desired)
+  let added = set.difference(desired, previous)
+  let state = case dict.get(state.owners, owner) {
+    Ok(value) ->
+      State(
+        ..state,
+        owners: dict.insert(
+          state.owners,
+          owner,
+          Owner(..value, topics: desired),
+        ),
+      )
+    Error(Nil) ->
+      State(
+        ..state,
+        owners: dict.insert(
+          state.owners,
+          owner,
+          Owner(owner, process.monitor(owner), desired),
+        ),
+      )
+  }
+  let pending =
+    set.fold(removed, state.pending_leaves, fn(pending, topic) {
+      set.insert(pending, #(owner, topic))
+    })
+  let pending =
+    set.fold(desired, pending, fn(pending, topic) {
+      set.delete(pending, #(owner, topic))
+    })
+  let #(outcome, state) =
+    synchronise(State(..state, pending_leaves: pending), fn(state) {
+      use _ <- result.try(
+        removed
+        |> set.to_list
+        |> list.try_each(fn(topic) {
+          pubsub_native.try_leave(state.scope, topic, owner)
+          |> result.map_error(PgUnavailable)
+        }),
+      )
+      added
+      |> set.to_list
+      |> list.try_each(fn(topic) { join_once(state.scope, topic, owner) })
+    })
+  let state = case result.is_ok(outcome) {
+    True ->
+      State(
+        ..state,
+        pending_leaves: set.fold(
+          removed,
+          state.pending_leaves,
+          fn(pending, topic) { set.delete(pending, #(owner, topic)) },
+        ),
+      )
+    False -> state
+  }
+  reply_with(None, #(outcome, state))
+}
+
 fn handle_join(
   state: State,
   topic: String,
   owner: process.Pid,
-  reply: process.Subject(Result(Nil, RegistryError)),
+  reply: Option(process.Subject(Result(Nil, RegistryError))),
 ) -> actor.Next(State, Message) {
   case pubsub_native.is_local_pid(owner) {
     False -> {
-      process.send(reply, Error(OwnerNotLocal))
-      actor.continue(state)
+      reply_with(reply, #(Error(OwnerNotLocal), state))
     }
     True -> {
-      let state = add_owner(state, topic, owner)
+      let state =
+        add_owner(
+          State(
+            ..state,
+            pending_leaves: set.delete(state.pending_leaves, #(owner, topic)),
+          ),
+          topic,
+          owner,
+        )
       reply_with(
         reply,
         synchronise(state, fn(state) { join_once(state.scope, topic, owner) }),
@@ -211,12 +370,28 @@ fn handle_join(
 }
 
 fn reply_with(
-  reply: process.Subject(Result(Nil, RegistryError)),
+  reply: Option(process.Subject(Result(Nil, RegistryError))),
   outcome: #(Result(Nil, RegistryError), State),
 ) -> actor.Next(State, Message) {
   let #(result, state) = outcome
-  process.send(reply, result)
+  case reply, result {
+    Some(reply), _ -> process.send(reply, result)
+    None, Ok(Nil) -> Nil
+    None, Error(error) ->
+      internal.logger("beryl.pubsub")
+      |> log.warn("PubSub membership reconciliation deferred", [
+        #("reason", describe_error(error)),
+      ])
+  }
   actor.continue(state)
+}
+
+fn describe_error(error: RegistryError) -> String {
+  case error {
+    ScopeRecovering -> "scope recovering"
+    PgUnavailable(_) -> "pg unavailable"
+    OwnerNotLocal -> "owner is not local"
+  }
 }
 
 fn handle_process_down(
@@ -297,7 +472,9 @@ fn synchronise(
   operation: fn(State) -> Result(Nil, RegistryError),
 ) -> #(Result(Nil, RegistryError), State) {
   case pubsub_native.registered_scope(state.scope) {
-    Error(Nil) -> unavailable(state, ScopeRecovering)
+    Error(Nil) ->
+      // No live generation can retain a membership that needs removal.
+      unavailable(State(..state, pending_leaves: set.new()), ScopeRecovering)
     Ok(pg_pid) -> synchronise_registered(state, pg_pid, operation)
   }
 }
@@ -354,9 +531,17 @@ fn finish_operation(
 }
 
 fn replay(state: State, pg_pid: process.Pid) -> Result(State, RegistryError) {
+  use _ <- result.try(
+    state.pending_leaves
+    |> set.to_list
+    |> list.try_each(fn(entry) {
+      pubsub_native.try_leave(state.scope, entry.1, entry.0)
+      |> result.map_error(PgUnavailable)
+    }),
+  )
   use _ <- result.try(replay_owners(state.scope, state.owners))
   case stable_scope(state.scope, pg_pid) {
-    True -> Ok(state)
+    True -> Ok(State(..state, pending_leaves: set.new()))
     False -> Error(ScopeRecovering)
   }
 }
@@ -409,7 +594,14 @@ fn prune_dead_owners(state: State) -> State {
         }
       }
     })
-  State(..state, owners: owners)
+  State(
+    ..state,
+    owners: owners,
+    pending_leaves: state.pending_leaves
+      |> set.to_list
+      |> list.filter(fn(entry) { process.is_alive(entry.0) })
+      |> set.from_list,
+  )
 }
 
 fn watch_pg(state: State, pid: process.Pid) -> State {

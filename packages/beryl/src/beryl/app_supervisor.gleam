@@ -48,7 +48,7 @@ type StopState {
 /// arrived. Both-arrived is never stored: the second signal stops the actor.
 type StopProgress {
   AwaitingBoth
-  RuntimeStopAcknowledged
+  RuntimeStopAcknowledged(StopCompletion)
   SupervisorExited
 }
 
@@ -122,11 +122,16 @@ pub fn start(
 pub fn request_stop(
   name: process.Name(Message),
   finished: process.Subject(StopCompletion),
-) -> Result(StopAcceptance, overload.CallError) {
+) -> Result(#(StopAcceptance, process.Pid), overload.CallError) {
   use queue <- result.try(
     work_queue.lookup(name) |> result.map_error(overload.AdmissionRejected),
   )
-  work_queue.call(queue, 1000, fn(reply) { StopRuntime(reply, finished) })
+  work_queue.call(queue, 1000, fn(reply) {
+    StopRuntime(
+      fn(acceptance) { reply(#(acceptance, process.self())) },
+      finished,
+    )
+  })
 }
 
 fn clear_stop_credit(state: State) -> State {
@@ -184,21 +189,27 @@ fn handle_message(
           actor.stop()
         }
         Stopping(monitor, finished, AwaitingBoth) -> {
-          process.send(finished, completion)
           actor.continue(
             State(
               ..state,
-              stop_state: Stopping(monitor, finished, RuntimeStopAcknowledged),
+              stop_state: Stopping(
+                monitor,
+                finished,
+                RuntimeStopAcknowledged(completion),
+              ),
             ),
           )
         }
-        Running | Stopping(_, _, RuntimeStopAcknowledged) ->
+        Running | Stopping(_, _, RuntimeStopAcknowledged(_)) ->
           actor.continue(state)
       }
     RuntimeDown(down) -> handle_runtime_down(state, down)
     LinkedExit(process.ExitMessage(pid, _)) if pid == state.supervisor ->
       case state.stop_state {
-        Stopping(_, _, RuntimeStopAcknowledged) -> actor.stop()
+        Stopping(_, finished, RuntimeStopAcknowledged(completion)) -> {
+          process.send(finished, completion)
+          actor.stop()
+        }
         Stopping(monitor, finished, AwaitingBoth) ->
           actor.continue(
             State(
@@ -240,7 +251,7 @@ fn handle_runtime_down(
       actor.stop_abnormal("app subtree restart intensity exceeded")
     }
     process.ProcessDown(_, _, _), Running
-    | process.ProcessDown(_, _, _), Stopping(_, _, RuntimeStopAcknowledged)
+    | process.ProcessDown(_, _, _), Stopping(_, _, RuntimeStopAcknowledged(_))
     | process.ProcessDown(_, _, _), Stopping(_, _, AwaitingBoth)
     | process.ProcessDown(_, _, _), Stopping(_, _, SupervisorExited)
     | process.PortDown(_, _, _), Running

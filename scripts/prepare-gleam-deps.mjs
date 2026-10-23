@@ -77,6 +77,19 @@ export function prepareDependencies(directory, pathDependencyCount) {
 	throw new Error(`Dependency state did not stabilize in ${directory}`);
 }
 
+export function selectDependencyMembers(members, names = []) {
+	for (const name of names) {
+		if (!members.some((member) => member.name === name)) {
+			throw new Error(`Unknown workspace package: ${name}`);
+		}
+	}
+	return members.filter((member) =>
+		names.length > 0
+			? names.includes(member.name)
+			: !member.path.startsWith("benchmarks/"),
+	);
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	const { packages } = JSON.parse(
 		execFileSync("trellis", ["list", "--json"], {
@@ -84,7 +97,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 			encoding: "utf8",
 		}),
 	);
-	for (const member of packages) {
+	for (const member of selectDependencyMembers(packages, process.argv.slice(2))) {
 		console.log(`Preparing dependencies for ${member.name}`);
 		prepareDependencies(path.join(repoRoot, member.path), member.dependencies.length);
 	}

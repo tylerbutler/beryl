@@ -34,14 +34,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
 
       - name: Setup environment
-        uses: tylerbutler/actions/setup-gleam@77f80621309fc7443b628802e08a815d41dd4b47 # ratchet:tylerbutler/actions/setup-gleam@main
+        uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
         with:
+          erlang-version: "28"
           run-deps: false
 
       - name: Setup mise tools

@@ -4,7 +4,25 @@
          get_members/3, get_local_members/3,
          registered_scope/1, is_local_pid/1,
          try_pg_join/3, try_pg_leave/3, try_pg_local_members/2,
-         scoped_to_message/1, membership_actor_call/3]).
+         scoped_to_message/1, membership_actor_call/3,
+         new_membership_intent/0, set_membership_intent/3, take_membership_intent/1]).
+
+new_membership_intent() ->
+    {ets:new(?MODULE, [set, protected]), self(), atomics:new(1, [])}.
+
+set_membership_intent({Table, Owner, Notify}, Topic, Joined) when Owner =:= self() ->
+    case Joined of
+        true -> ets:insert(Table, {Topic});
+        false -> ets:delete(Table, Topic)
+    end,
+    atomics:compare_exchange(Notify, 1, 0, 1) =:= ok.
+
+take_membership_intent({Table, _Owner, Notify}) ->
+    %% Clear before reading: an update during reconciliation queues one more wake.
+    atomics:put(Notify, 1, 0),
+    try {ok, [Topic || {Topic} <- ets:tab2list(Table)]}
+    catch error:badarg -> {error, nil}
+    end.
 
 start_pg_scope(Scope) ->
     case beryl_pubsub_supervisor:start_scope(Scope) of

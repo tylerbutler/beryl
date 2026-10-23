@@ -1,0 +1,38 @@
+# fly.toml app configuration file generated for beryl-showcase on 2026-10-03T10:46:06-07:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'beryl-showcase'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+  ignorefile = 'Dockerfile.dockerignore'
+
+[env]
+  BIND_ADDRESS = '0.0.0.0'
+  PORT = '8000'
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = 'connections'
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/healthz'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 512
