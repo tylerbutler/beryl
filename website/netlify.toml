@@ -1,7 +1,6 @@
 [build]
-  # Installs the Gleam compiler (see scripts/netlify-build.sh), then runs
-  # `pnpm build:site`.
-  command = "./scripts/netlify-build.sh"
+  # The shared package command installs Gleam on both Netlify and Cloudflare.
+  command = "pnpm build:site"
   publish = "dist"
   # Always build non-production deploys (deploy previews, branch deploys) so PR
   # previews never get skipped. On production, skip only when nothing under
@@ -13,5 +12,5 @@
 
 [build.environment]
   # Gleam release downloaded by scripts/netlify-build.sh. Keep in step with
-  # the pin in ../.tool-versions.
+  # the pin in ../.mise.toml.
   GLEAM_VERSION = "1.18.1"
