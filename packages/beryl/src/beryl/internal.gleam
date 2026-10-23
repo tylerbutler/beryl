@@ -44,8 +44,14 @@ pub fn result_error(error: e) -> Result(a, e) {
 /// Faults outside the supplied callback still terminate the actor and follow
 /// its supervision policy.
 ///
-/// The FFI limits diagnostic depth and length to keep each crash description
-/// bounded.
+/// Descriptions retain the exception class and a depth-10 reason, plus at most
+/// three call sites (module, function, arity, and available file/line). Stack
+/// arguments and other stack metadata are not formatted. Reason values are
+/// still included: do not put secrets in exception reasons.
+///
+/// The copied UTF-8 description is at most 512 Unicode code points (2048
+/// bytes). Half the text budget is reserved for call sites. Each frame is
+/// limited to 80 code points; long names and source locations can be truncated.
 @external(erlang, "beryl_ffi", "rescue")
 pub fn rescue(callback: fn() -> value) -> Result(value, String)
 
