@@ -16,7 +16,9 @@ import beryl/wire/codec
 import channel_dispatch_helper
 import gleam/erlang/process
 import gleam/json
+import gleam/list
 import gleam/option.{None, Some}
+import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
 import test_helper
@@ -70,6 +72,40 @@ fn expect_broadcast(
 
 @external(erlang, "beryl_runtime_telemetry_test_ffi", "expect_none")
 fn expect_none(handler_id: TelemetryHandle) -> Bool
+
+@external(erlang, "beryl_runtime_telemetry_test_ffi", "with_capture")
+fn with_capture(action: fn(TelemetryHandle) -> a) -> a
+
+@external(erlang, "beryl_runtime_telemetry_test_ffi", "with_race_runtime")
+fn with_race_runtime(
+  supervisor: process.Pid,
+  notify_closed: fn() -> Nil,
+  stop: fn() -> Nil,
+  drain: fn() -> Nil,
+  action: fn(fn() -> Nil, fn() -> Nil) -> a,
+) -> a
+
+@external(erlang, "beryl_runtime_telemetry_test_ffi", "with_actor_monitor")
+fn with_actor_monitor(actor: process.Pid, action: fn(process.Monitor) -> a) -> a
+
+@external(erlang, "beryl_test_process_ffi", "with_suspended")
+fn with_suspended(pid: process.Pid, action: fn() -> a) -> a
+
+@external(erlang, "beryl_runtime_telemetry_test_ffi", "catch_injected_assertion")
+fn catch_injected_assertion(action: fn() -> Nil) -> Bool
+
+@external(erlang, "beryl_runtime_telemetry_test_ffi", "cleanup_baseline")
+fn cleanup_baseline(action: fn() -> Nil) -> Bool
+
+type RaceStage {
+  RuntimeStarted
+  Admitted
+  Connected
+  Suspended
+  Released
+  ActorExited
+  Verified
+}
 
 type AppMessage {
   Tick
@@ -929,13 +965,19 @@ pub fn killed_socket_reports_lifetime_and_sweeps_presence_test() -> Nil {
   detach(handler)
 }
 
-pub fn normal_close_notification_and_down_race_emit_once_test() -> Nil {
-  use <- unitest.tag("serial")
-  let handler = attach()
+fn drain_subject(subject: process.Subject(a)) -> Nil {
+  case process.receive(subject, 0) {
+    Ok(_) -> drain_subject(subject)
+    Error(Nil) -> Nil
+  }
+}
+
+fn normal_close_race(checkpoint: fn(RaceStage, process.Pid) -> Nil) -> Nil {
+  use handler <- with_capture()
   let actors = process.new_subject()
-  let closers = process.new_subject()
-  let assert Ok(sockets) =
-    app_test_helper.start_app(
+  let closed = process.new_subject()
+  let assert Ok(#(sockets, spec)) =
+    beryl.child_spec(
       telemetry_config(),
       init: fn(_info: socket.ConnectInfo(AppMessage)) {
         process.send(actors, process.self())
@@ -943,29 +985,101 @@ pub fn normal_close_notification_and_down_race_emit_once_test() -> Nil {
       },
       update: update,
     )
-  let _frames =
-    app_test_helper.connect_with_close(sockets, "race", fn() {
-      let release = process.new_subject()
-      process.send(closers, release)
-      let assert Ok(Nil) = process.receive(release, 2000)
-      Nil
-    })
+  let assert Ok(supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  // Install cleanup before runtime lookup, init, or admission assertions.
+  use close, release <- with_race_runtime(
+    supervisor.pid,
+    fn() { process.send(closed, Nil) },
+    fn() {
+      case beryl.stop(sockets) {
+        Ok(Nil) | Error(beryl.NotRunning) -> Nil
+        Error(beryl.StopTimeout) -> panic as "race fixture failed to stop"
+      }
+    },
+    fn() {
+      drain_subject(actors)
+      drain_subject(closed)
+    },
+  )
+  let router = app_test_helper.runtime_pid(sockets)
+  checkpoint(RuntimeStarted, router)
+  let admitted =
+    transport.admit_socket(
+      sockets: sockets,
+      owner: router,
+      socket_id: "race",
+      send: fn(_) { Ok(Nil) },
+      send_binary: fn(_) { Ok(Nil) },
+      codec: None,
+      seed: socket.empty_seed(),
+      close: close,
+    )
+  checkpoint(Admitted, router)
+  admitted |> should.equal(Ok(Nil))
   let assert Ok(socket_actor) = process.receive(actors, 500)
   expect_connected(handler) |> should.be_true
-  let monitor = process.monitor(socket_actor)
+  use monitor <- with_actor_monitor(socket_actor)
+  checkpoint(Connected, router)
   transport.socket_disconnected(sockets, "race")
-  let assert Ok(release) = process.receive(closers, 500)
-  let router = app_test_helper.runtime_pid(sockets)
-  test_helper.suspend_process(router)
-  process.send(release, Nil)
-  // Queue the terminal report, close notification, and DOWN together.
-  await_actor_exit(monitor)
-  test_helper.resume_process(router)
+  let assert Ok(Nil) = process.receive(closed, 500)
+  with_suspended(router, fn() {
+    checkpoint(Suspended, router)
+    release()
+    checkpoint(Released, router)
+    // Queue the terminal report, close notification, and DOWN together.
+    await_actor_exit(monitor)
+    checkpoint(ActorExited, router)
+  })
   expect_disconnect(handler, "normal", 0) |> should.be_true
   assert_empty(sockets)
   beryl.stop(sockets) |> should.equal(Ok(Nil))
   expect_none(handler) |> should.be_true
-  detach(handler)
+  checkpoint(Verified, router)
+}
+
+/// Exercise the close-notification/DOWN race with exception-safe ownership.
+pub fn normal_close_notification_and_down_race_emit_once_test() -> Nil {
+  use <- unitest.tag("serial")
+  normal_close_race(fn(_, _) { Nil })
+}
+
+/// Catch assertions in the runner itself, as unitest's serial lane does.
+pub fn normal_close_race_assertions_restore_cleanup_baselines_test() -> Nil {
+  use <- unitest.tag("serial")
+  let unrelated = process.new_subject()
+  process.send(unrelated, Nil)
+  use _monitor <- with_actor_monitor(process.self())
+  list.each(
+    [
+      RuntimeStarted, Admitted, Connected, Suspended, Released, ActorExited,
+      Verified,
+    ],
+    fn(failure_stage) {
+      cleanup_baseline(fn() {
+        let routers = process.new_subject()
+        catch_injected_assertion(fn() {
+          normal_close_race(fn(stage, router) {
+            case stage == failure_stage {
+              True -> {
+                process.send(routers, router)
+                #("injected race assertion", False)
+                |> should.equal(#("injected race assertion", True))
+              }
+              False -> Nil
+            }
+          })
+        })
+        |> should.be_true
+        let assert Ok(router) = process.receive(routers, 0)
+        process.is_alive(router) |> should.be_false
+      })
+      |> should.be_true
+    },
+  )
+  process.receive(unrelated, 0) |> should.equal(Ok(Nil))
 }
 
 pub fn forced_stop_drain_accounts_for_stuck_socket_once_test() -> Nil {

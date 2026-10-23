@@ -1523,22 +1523,22 @@ fn emit_abnormal_disconnect(
   ref: SocketActorRef(message),
   reason: telemetry.DisconnectReason,
 ) -> Nil {
+  use <- bool.guard(when: !state.config.telemetry, return: Nil)
   // A dead actor cannot report teardown measurements; use the router's
   // observation time and index, as documented in the observability guide.
   case ref.connected_at {
     None -> Nil
     Some(connected_at) ->
       telemetry.emit(
-        state.config.telemetry,
+        True,
         telemetry.SocketDisconnected(
-          duration: case state.config.telemetry {
-            True -> telemetry.duration_since(connected_at)
-            False -> 0
-          },
-          joined_channels: dict.values(state.topics)
-            |> list.count(fn(subscribers) {
-              set.contains(subscribers, socket_id)
-            }),
+          duration: telemetry.duration_since(connected_at),
+          joined_channels: dict.fold(state.topics, 0, fn(count, _, subscribers) {
+            case set.contains(subscribers, socket_id) {
+              True -> count + 1
+              False -> count
+            }
+          }),
           reason: reason,
         ),
       )

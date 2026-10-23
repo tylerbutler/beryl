@@ -2,6 +2,11 @@
 -export([
     attach/0,
     detach/1,
+    with_capture/1,
+    with_race_runtime/5,
+    with_actor_monitor/2,
+    catch_injected_assertion/1,
+    cleanup_baseline/1,
     expect_connected/1,
     expect_join/2,
     expect_message/4,
@@ -34,6 +39,81 @@ detach(HandlerId) ->
     ok = telemetry:detach(HandlerId),
     flush(HandlerId),
     nil.
+
+%% Capture outlives the runtime fixture, so no fixture producer can send after
+%% detach's final handler-specific drain.
+with_capture(Action) ->
+    HandlerId = attach(),
+    try Action(HandlerId)
+    after detach(HandlerId)
+    end.
+
+%% Own the root supervisor as well as the runtime: start_app intentionally
+%% discards that supervisor, which is unsuitable for a same-process failure test.
+with_race_runtime(Supervisor, NotifyClosed, Stop, Drain, Action) ->
+    Gate = beryl_supervisor_test_ffi:gate_new(),
+    Release = fun() -> beryl_supervisor_test_ffi:gate_release(Gate) end,
+    Close = fun() ->
+        NotifyClosed(),
+        beryl_supervisor_test_ffi:gate_wait(Gate)
+    end,
+    try Action(Close, Release)
+    after
+        Release(),
+        try Stop()
+        after
+            try stop_supervisor(Supervisor)
+            after Drain()
+            end
+        end
+    end.
+
+stop_supervisor(Supervisor) ->
+    Monitor = erlang:monitor(process, Supervisor),
+    unlink(Supervisor),
+    try
+        ok = gen_server:stop(Supervisor, normal, 10000),
+        receive
+            {'DOWN', Monitor, process, Supervisor, _Reason} -> ok
+        after 1000 ->
+            error(race_supervisor_did_not_exit)
+        end
+    after erlang:demonitor(Monitor, [flush])
+    end.
+
+with_actor_monitor(Actor, Action) ->
+    Monitor = erlang:monitor(process, Actor),
+    try Action(Monitor)
+    after erlang:demonitor(Monitor, [flush])
+    end.
+
+%% Catch only the deliberate should.equal failure, not scenario/cleanup bugs.
+catch_injected_assertion(Action) ->
+    try Action() of
+        nil -> false
+    catch
+        error:#{gleam_error := panic, module := <<"gleeunit/should">>,
+                function := <<"equal">>, message := Message} ->
+            case binary:match(Message, <<"injected race assertion">>) of
+                nomatch -> error({unexpected_assertion, Message});
+                _ -> true
+            end
+    end.
+
+cleanup_baseline(Action) ->
+    Before = baseline(),
+    nil = Action(),
+    case baseline() of
+        Before -> true;
+        After -> error({race_cleanup_changed_baseline, Before, After})
+    end.
+
+baseline() ->
+    {monitors, Monitors} = process_info(self(), monitors),
+    {links, Links} = process_info(self(), links),
+    {messages, Messages} = process_info(self(), messages),
+    Handlers = lists:usort([Id || #{id := Id} <- telemetry:list_handlers([])]),
+    {lists:sort(Monitors), lists:sort(Links), Messages, Handlers}.
 
 expect_connected(HandlerId) ->
     receive
