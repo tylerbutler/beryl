@@ -43,7 +43,7 @@ pub type Message {
   DeleteFinished(Result(Int, todo_channel.MutationError))
 }
 
-pub fn main() {
+pub fn main() -> Nil {
   let app = lustre.application(init, update, view)
   let assert Ok(_) = lustre.start(app, "#app", initial_model())
 
@@ -119,10 +119,9 @@ pub fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
 
     AddFinished(submitted, result) ->
       case result {
-        Ok(item) -> #(
+        Ok(_item) -> #(
           Model(
             ..model,
-            state: domain.put(model.state, item),
             input: case model.input == submitted {
               True -> ""
               False -> model.input
@@ -139,13 +138,8 @@ pub fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
 
     ToggleFinished(result) ->
       case result {
-        Ok(item) -> #(
-          Model(
-            ..model,
-            state: domain.put(model.state, item),
-            channel_error: None,
-            status: "Todo updated.",
-          ),
+        Ok(_item) -> #(
+          Model(..model, channel_error: None, status: "Todo updated."),
           effect.none(),
         )
         Error(error) -> mutation_failed(model, error)
@@ -153,13 +147,8 @@ pub fn update(model: Model, message: Message) -> #(Model, Effect(Message)) {
 
     DeleteFinished(result) ->
       case result {
-        Ok(id) -> #(
-          Model(
-            ..model,
-            state: domain.delete(model.state, id),
-            channel_error: None,
-            status: "Todo deleted.",
-          ),
+        Ok(_id) -> #(
+          Model(..model, channel_error: None, status: "Todo deleted."),
           effect.none(),
         )
         Error(error) -> mutation_failed(model, error)

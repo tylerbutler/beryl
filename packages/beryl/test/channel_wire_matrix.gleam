@@ -387,11 +387,13 @@ pub fn send(client: Client, raw: String) -> Nil {
     codec.decode_text(transport.active_codec(client.sockets))(raw)
     as "the text frame is valid"
   transport.route_decoded(client.sockets, client.socket_id, decoded)
+  |> should.equal(Ok(Nil))
 }
 
 /// Send a raw binary frame.
 pub fn send_binary(client: Client, data: BitArray) -> Nil {
   transport.route_binary(client.sockets, client.socket_id, data)
+  |> should.equal(Ok(Nil))
 }
 
 /// Receive and decode the next server frame, failing if none arrives.

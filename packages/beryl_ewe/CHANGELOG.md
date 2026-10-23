@@ -1,5 +1,16 @@
 # beryl_ewe changelog
 
+## v0.2.3 - 2026-09-24
+
+### Fixed
+
+- Clarify that total connection limits apply independently to each beryl system on a node.
+
+### Dependencies
+
+- Remove the unused direct gleam_crypto dependency.
+- Updated beryl to 0.5.0
+
 ## v0.2.2 - 2026-08-25
 
 ### Dependencies

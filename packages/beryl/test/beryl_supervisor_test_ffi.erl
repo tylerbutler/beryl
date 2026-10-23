@@ -1,6 +1,9 @@
 -module(beryl_supervisor_test_ffi).
 -export([get_subject_pid/1, crash_reason/0, active_child_count/1,
-         gate_new/0, gate_wait/1, gate_release/1]).
+         only_active_child/1,
+         gate_new/0, gate_wait/1, gate_release/1,
+         with_suspended_subtree/2,
+         connection_limit_checkpoint_heir/1]).
 
 %% Extract the process that will receive messages for a subject.
 %% For named subjects, the name is registered with the process.
@@ -17,6 +20,19 @@ get_subject_pid(Subject) ->
             {ok, Pid}
     end.
 
+with_suspended_subtree(Factory, Action) ->
+    {links, [Supervisor]} = process_info(Factory, links),
+    {dictionary, Dictionary} = process_info(Supervisor, dictionary),
+    [Ancestor | _] = proplists:get_value('$ancestors', Dictionary),
+    Owner = case Ancestor of
+        Name when is_atom(Name) -> whereis(Name);
+        Pid when is_pid(Pid) -> Pid
+    end,
+    ok = sys:suspend(Supervisor),
+    try Action(Supervisor, Owner)
+    after ok = sys:resume(Supervisor)
+    end.
+
 %% Return an atom that serves as an abnormal exit reason
 crash_reason() ->
     test_crash.
@@ -28,6 +44,22 @@ active_child_count(Pid) ->
         Counts -> proplists:get_value(active, Counts, 0)
     catch
         _:_ -> 0
+    end.
+
+only_active_child(Pid) ->
+    case supervisor:which_children(Pid) of
+        [{_, Child, _, _}] when is_pid(Child) -> {ok, Child};
+        _ -> {error, nil}
+    end.
+
+connection_limit_checkpoint_heir(Limiter) ->
+    Heirs = [ets:info(Table, heir)
+             || Table <- ets:all(),
+                ets:info(Table, name) =:= beryl_connection_limit_state,
+                ets:info(Table, owner) =:= Limiter],
+    case [Heir || Heir <- Heirs, is_pid(Heir)] of
+        [Heir] -> {ok, Heir};
+        _ -> {error, nil}
     end.
 
 gate_new() ->

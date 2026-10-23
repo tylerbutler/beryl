@@ -7,7 +7,7 @@
     "build": "cd client && gleam run -m lustre/dev build",
     "dev": "pnpm build && gleam run",
     "start": "gleam run",
-    "test": "playwright test"
+    "test": "cd client && gleam test && cd .. && playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2"

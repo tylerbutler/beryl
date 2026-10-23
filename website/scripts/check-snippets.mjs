@@ -16,13 +16,14 @@
 // Put `<!-- snippet-check: skip -->` on the line before a fence to exclude a
 // block that is deliberately invalid or references a fictional module.
 //
-// Usage: node scripts/check-snippets.mjs [--keep]
+// Usage: node scripts/check-snippets.mjs [--keep | --deps-only]
 
 import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { prepareDependencies } from "../../scripts/prepare-gleam-deps.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -642,6 +643,11 @@ function externalName(diagnostic) {
 }
 
 async function main() {
+	await mkdir(workDir, { recursive: true });
+	await writeFile(path.join(workDir, "gleam.toml"), GLEAM_TOML);
+	prepareDependencies(workDir, 3);
+	if (process.argv.includes("--deps-only")) return;
+
 	const keep = process.argv.includes("--keep");
 	const exports = await publicNames();
 	const sources = await collectSources();
@@ -652,7 +658,6 @@ async function main() {
 
 	await rm(path.join(workDir, "src"), { recursive: true, force: true });
 	await mkdir(path.join(workDir, "src"), { recursive: true });
-	await writeFile(path.join(workDir, "gleam.toml"), GLEAM_TOML);
 
 	const known = knownImports(sources, exports);
 	const modules = sources.map((source) => ({

@@ -1,0 +1,129 @@
+---
+import "../styles/tutorial-demos.css";
+---
+
+<socket-loop-demo class="tutorial-demo not-content">
+	<figure aria-label="Change state without sending it">
+		<figcaption>Change state without sending it</figcaption>
+		<p>Increment the server model, then request its count. Watch what the client receives.</p>
+		<div class="demo-counter">
+			<div>
+				<strong>Server model</strong>
+				<span class="demo-value" data-model>0</span>
+				<span class="demo-label">Private count</span>
+			</div>
+			<div>
+				<span class="demo-label">Reply wire</span>
+				<div class="demo-wire" aria-hidden="true">
+					<span class="demo-packet" data-packet>0</span>
+				</div>
+			</div>
+			<div>
+				<strong>Client display</strong>
+				<span class="demo-value" data-client aria-label="No reply yet">--</span>
+				<span class="demo-label" data-client-label>No reply yet</span>
+			</div>
+		</div>
+		<fieldset class="demo-controls" disabled>
+			<legend class="demo-sr-only">Counter inputs</legend>
+			<button type="button" data-increment>Increment model</button>
+			<button type="button" data-request>Request count</button>
+			<button type="button" data-reset>Reset</button>
+		</fieldset>
+		<p class="demo-label">Last update return (pseudocode)</p>
+		<pre class="demo-code" data-result>No input yet</pre>
+		<p class="demo-status" role="status" aria-atomic="true" data-status>
+			The server starts at 0. The client has not received a count.
+		</p>
+		<p class="demo-caption">Local simulation, not a BEAM server. The counter topic is already joined.
+			Increment is a typed server input; Request count is a client request with a reply reference.</p>
+		<noscript><p>Changing the model alone sends no frame. A get_count request returns a reply effect
+			that sends the current count without changing the model. Enable JavaScript to try the controls.</p></noscript>
+	</figure>
+</socket-loop-demo>
+
+<script>
+	import { animate, cancelMotion, element } from "./tutorial-demo";
+
+	class SocketLoopDemo extends HTMLElement {
+		private resetDemo: (() => void) | undefined;
+
+		connectedCallback() {
+			if (this.resetDemo) return;
+			const model = element(this, "[data-model]", HTMLElement);
+			const client = element(this, "[data-client]", HTMLElement);
+			const clientLabel = element(this, "[data-client-label]", HTMLElement);
+			const result = element(this, "[data-result]", HTMLElement);
+			const status = element(this, "[data-status]", HTMLElement);
+			const request = element(this, "[data-request]", HTMLButtonElement);
+			const packet = element(this, "[data-packet]", HTMLElement);
+			const wire = element(this, ".demo-wire", HTMLElement);
+			let count = 0;
+			let received: number | null = null;
+
+			const describeClient = () => {
+				clientLabel.textContent = received === null
+					? "No reply yet"
+					: received === count ? "Up to date" : `${count - received} behind the server`;
+			};
+			const reset = () => {
+				cancelMotion(this);
+				count = 0;
+				received = null;
+				model.textContent = "0";
+				client.textContent = "--";
+				client.setAttribute("aria-label", "No reply yet");
+				describeClient();
+				result.textContent = "No input yet";
+				status.textContent = "The server starts at 0. The client has not received a count.";
+				request.disabled = false;
+				request.textContent = "Request count";
+			};
+			element(this, "[data-increment]", HTMLButtonElement).addEventListener("click", () => {
+				count += 1;
+				model.textContent = String(count);
+				result.textContent = `Info(Increment)\nNext(${count}, [])`;
+				describeClient();
+				status.textContent = `Server count: ${count}. No effect returned. ${received === null
+					? "The client still has no count." : `The client still shows ${received}.`}`;
+				cancelMotion(model);
+				animate(model, [{ transform: "translateY(-5px)" }, { transform: "translateY(0)" }], 200);
+			});
+			request.addEventListener("click", () => {
+				if (request.disabled) return;
+				const sent = count;
+				request.disabled = true;
+				request.textContent = "Reply in flight";
+				packet.textContent = String(sent);
+				result.textContent = `Message("counter:demo", "get_count", request ref)\nNext(${sent}, [ReplyOk(request ref, ${sent})])`;
+				status.textContent = `get_count requested ${sent}. The reply is in flight; you can still increment the model.`;
+				animate(packet, [
+					{ transform: "translateX(-14px)", opacity: 1 },
+					{ transform: `translateX(${wire.clientWidth - 14}px)`, opacity: 1 },
+				], 600, () => {
+					received = sent;
+					client.textContent = String(sent);
+					client.removeAttribute("aria-label");
+					describeClient();
+					request.disabled = false;
+					request.textContent = "Request count";
+					status.textContent = `The reply delivered ${sent}. Server count: ${count}. ${
+						count === sent ? "Sending the reply did not change the model."
+							: "The reply kept the count captured when its effect was created."}`;
+				});
+			});
+			element(this, "[data-reset]", HTMLButtonElement).addEventListener("click", reset);
+			this.resetDemo = reset;
+			element(this, "fieldset", HTMLFieldSetElement).disabled = false;
+			this.dataset["ready"] = "true";
+		}
+
+		disconnectedCallback() {
+			this.resetDemo?.();
+		}
+	}
+
+	if (!customElements.get("socket-loop-demo")) {
+		customElements.define("socket-loop-demo", SocketLoopDemo);
+	}
+</script>

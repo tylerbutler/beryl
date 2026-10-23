@@ -62,6 +62,7 @@ fn route(sockets: beryl.Sockets, socket_id: String, frame: String) -> Nil {
   let assert Ok(decoded) =
     codec.decode_text(transport.active_codec(sockets))(frame)
   transport.route_decoded(sockets, socket_id, decoded)
+  |> should.equal(Ok(Nil))
 }
 
 fn recv(frames: process.Subject(String)) -> String {

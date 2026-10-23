@@ -69,6 +69,8 @@ pub fn stats_error(error: snapshot.SnapshotError) -> EndpointResult {
   case error {
     snapshot.RuntimeUnavailable -> error_response(503, "runtime_unavailable")
     snapshot.RequestTimedOut -> error_response(504, "runtime_timeout")
+    snapshot.AdmissionRejected(_) ->
+      error_response(503, "runtime_admission_rejected")
   }
 }
 

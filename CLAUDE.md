@@ -4,8 +4,7 @@
 
 Type-safe real-time channels and presence for Gleam, targeting the Erlang
 (BEAM) runtime. The repository is a [trellis](https://trellis.tylerbutler.com)-managed
-monorepo with three packages (two currently publishable — `beryl_ewe` is
-excluded from release via the `@release` key in the root `gleam.toml`):
+monorepo with three releasable packages:
 
 - **`packages/beryl`** — raw app dispatch plus `beryl/channel` (runtime,
   typed events/effects, presence, PubSub, wire protocol, abuse controls,
@@ -51,7 +50,18 @@ just ci           # Run all CI checks (format, check, test, build, examples)
 just pr           # Alias for ci (use before PR)
 just main         # Extended checks for main branch
 just clean        # Remove build artifacts
+just bench-codec-deps  # Install optional mise-managed codec benchmark tools and deps
+just bench-codec-check # Strict benchmark build and fixture checks
+just bench-codec       # Run codec microbenchmarks locally
 ```
+
+## Codec benchmarks
+
+Codec benchmarks use a local mise configuration for Elixir and the root
+BEAM toolchain. Default dependency preparation, build, check, test, lint,
+docs, and release tasks exclude them; formatting and cleanup include them.
+See [benchmarks/codec/README.md](benchmarks/codec/README.md) for setup and
+measurement limits.
 
 ## Project Structure
 
@@ -63,7 +73,7 @@ packages/
 │   ├── src/
 │   │   ├── beryl.gleam            # Main public API (config, child_spec, stop, broadcast)
 │   │   ├── beryl_ffi.erl          # Erlang FFI (timing, admission atomics, validated PubSub coercion)
-│   │   ├── beryl_pubsub_ffi.erl   # Erlang FFI for pg-based PubSub
+│   │   ├── beryl_pubsub_ffi.erl   # Small PubSub startup and OTP compatibility FFI
 │   │   └── beryl/
 │   │       ├── bridge.gleam       # Forward external actor streams to typed socket Senders
 │   │       ├── connection_limit.gleam  # Connection limit enforcement (internal)
@@ -73,7 +83,9 @@ packages/
 │   │       ├── internal.gleam     # Internal helpers (internal)
 │   │       ├── log.gleam          # Logging helpers (internal)
 │   │       ├── presence.gleam     # Presence tracking (CRDT-backed actor)
-│   │       ├── pubsub.gleam       # PubSub abstraction (pg-based)
+│   │       ├── pubsub.gleam       # Public PubSub abstraction (pg-based)
+│   │       ├── pubsub_memberships.gleam # Typed membership and recovery actor
+│   │       ├── pubsub_native.gleam # Internal pg and raw-send wrappers
 │   │       ├── rate_limit.gleam   # Rate limiting helpers (internal)
 │   │       ├── runtime.gleam      # App-dispatch socket/topic runtime (internal)
 │   │       ├── snapshot.gleam     # Runtime snapshot API
@@ -94,6 +106,8 @@ packages/
     └── test/                      # Transport/handler tests + WS client FFI
 examples/                          # Runnable example apps (workspace members,
                                    # excluded from release) + pnpm/Playwright e2e
+benchmarks/codec/                  # Opt-in codec benchmarks (workspace member,
+                                   # excluded from release)
 website/                           # Astro/Starlight docs site (not a member)
 .changes/unreleased/               # trellis changelog fragments (TOML)
 ```
@@ -141,14 +155,12 @@ cd packages/beryl && gleam test   # Directly
 
 ## Tool Versions
 
-Managed via `.tool-versions` (the floor, and what CI's version-file
-resolution uses):
-- Erlang 27.2.1
-- Gleam 1.16.0
+Managed via `.mise.toml`:
+- Erlang 28
+- Gleam 1.18.1
 - just 1.50.0
 
-CI matrix-tests Erlang 27 and 28. `.mise.toml` pins `erlang = "28"` for local
-development, deliberately overriding `.tool-versions` for mise users.
+CI matrix-tests Erlang 27 and 28.
 
 trellis (0.10.3) is pinned in `.mise.toml` for local development and
 installed in CI via `.github/actions/mise`.
@@ -167,7 +179,11 @@ installed in CI via `.github/actions/mise`.
 
 ### Release Flow
 1. Push commits with conventional commit messages
-2. Add changelog fragments with `just change <package> <kind> "<body>"`
+2. Add changelog fragments with `just change <package> <kind> "<body>"`.
+   Fragments apply only to what a released package ships (`src/`,
+   `gleam.toml`, `manifest.toml`). Website, `docs/`, examples, and
+   dev-tooling changes get no fragment — see the "Changelog Fragments"
+   section in `AGENTS.md` for the full rule
 3. `trellis release pr` maintains a release PR (branch `release/pending`)
    with version bumps and CHANGELOGs
 4. Merge the release PR → per-package tags (`beryl-v1.2.3`) and GitHub

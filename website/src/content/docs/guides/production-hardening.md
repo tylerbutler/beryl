@@ -1,18 +1,29 @@
 ---
-title: Prepare beryl for production
+title: Evaluate deployment hardening
 description: Configure traffic limits, authentication, and Erlang distribution security.
 ---
 
 beryl disables rate and connection limits by default because each deployment
-needs different values. These defaults are suitable for development. In
-production, one hostile or faulty client can degrade a server that has no
-traffic controls. beryl logs a startup warning when all controls are off. This
-guide explains which controls to configure.
+needs different values. These defaults are suitable for development. A hostile
+or faulty client can degrade a server that has no traffic controls. beryl logs
+a startup warning when all controls are off. This guide describes defensive
+controls and testable starting points; it does not provide production-validated
+capacity recommendations.
+
+:::caution[Validate these settings]
+beryl is a new project. The values in this guide are examples, not settings
+validated by long-running production deployments. Measure your workload, test
+failure and recovery paths, and adjust the limits for your application and
+infrastructure.
+:::
 
 ## Controls enabled by default
 
 Even with no configuration, beryl enforces:
 
+- **Local work admission**: finite router, socket, worker, and presence budgets,
+  plus callback-result limits. See [overload handling](/guides/overload/) for
+  defaults, Result APIs, and memory exclusions.
 - **Post-receipt frame size**: once the transport has assembled a complete
   inbound WebSocket frame, beryl closes the connection if it exceeds 1 MiB
   (`with_max_inbound_frame_bytes` to adjust).
@@ -25,25 +36,27 @@ Even with no configuration, beryl enforces:
   and messages carrying a stale `join_ref` are dropped.
 - **Heartbeat eviction**: sockets that stop sending heartbeats are evicted
   and their connections closed (60 s window by default, `with_heartbeat`).
+- **Outbound queue budget**: each connection may reserve at most 256 frames
+  and 1 MiB of payload data while writes are pending. beryl closes a slow
+  connection instead of dropping frames. Use `with_outbound_limits` on the
+  transport config to adjust both limits.
 
 The frame-size check limits decoding and routing work. It does **not** limit
 transport memory because buffering and reassembly occur before beryl receives
-the frame. In production, set a WebSocket frame or message limit in the reverse
+the frame. At deployment, set a WebSocket frame or message limit in the reverse
 proxy or load balancer. Set it at or below beryl's limit. Also set a matching
 HTTP request or body limit for the upgrade.
 
-## Configure production limits
+## Choose initial limits
 
 ```gleam
 let config =
   beryl.config(wire.phoenix_codec())
   // Drop over-rate complete frames before decoding them.
   |> beryl.with_frame_rate(per_second: 150, burst: 300)
-  // Cap messages per socket. Size to your chattiest legitimate client:
-  // for most interactive apps 50-100 msg/s with 2x burst is generous.
+  // Example only. Measure your busiest legitimate client and tune this value.
   |> beryl.with_message_rate(per_second: 100, burst: 200)
-  // Joins are much rarer than messages. 10/s per socket tolerates
-  // aggressive reconnect/rejoin loops while stopping join floods.
+  // Example only. Tune this for your reconnect and rejoin behavior.
   |> beryl.with_join_rate(per_second: 10, burst: 20)
   // Cap connection attempts per client IP. This allowance survives
   // disconnects and app runtime restarts.
@@ -51,9 +64,13 @@ let config =
   // Concurrent connections per client IP. Size to your expected
   // clients-behind-one-NAT worst case; see the caveat below.
   |> beryl.with_max_connections_per_ip(max_connections: 100)
-  // Node-wide ceiling on concurrent connections across all IPs. Size to a
-  // single node's process/socket/runtime budget; see below.
+  // Per-system ceiling on this node across all IPs. Size all systems on a
+  // node to its combined process/socket/runtime budget; see below.
   |> beryl.with_max_connections(max_connections: 10_000)
+
+let assert Ok(websocket_config) =
+  server.default_config("/socket/websocket")
+  |> server.with_outbound_limits(max_frames: 256, max_bytes: 1_048_576)
 ```
 
 `with_frame_rate` and `with_message_rate` are independent. Joins use frame and
@@ -68,6 +85,29 @@ traffic **plus heartbeats**. A limit that admits an application's normal events
 but leaves no heartbeat capacity can evict healthy clients during ordinary
 bursts.
 
+The outbound budget is enforced before a frame enters the connection
+mailbox. For both text and binary codec output, it charges the referenced BEAM
+binary size, not only the logical frame length. For example, a 128-byte slice
+of an 8 MiB binary uses 8 MiB of the budget. Each frame is charged separately,
+even if frames share a backing binary. beryl does not copy these slices.
+
+`Ok` from the runtime send callback means that the frame was
+enqueued; it does not mean that the transport wrote it or that the peer
+received it. Releasing a runtime work reservation does not release the
+transport reservation. Successful writes release their frame and byte
+reservations. Write errors and connection close release all remaining
+reservations. If a connection exceeds either limit, beryl closes it so the client can reconnect
+and resynchronize instead of receiving a stream with silently dropped frames.
+
+This is not a total-memory cap. Process heaps, WebSocket framing, and transport
+or kernel buffers are outside this budget.
+
+Set the byte budget above the largest legitimate encoded frame's referenced
+binary size, or copy small slices in your codec to avoid retaining large
+backing binaries. Size the frame budget for short write stalls, not sustained
+client outages. The current defaults allow 256 frames and 1 MiB per connection. Validate whether
+those defaults fit your workload.
+
 Optionally, `with_channel_rate` adds a per-socket-per-topic limit on top of
 the global per-socket message rate, useful when a single busy topic must not
 starve others.
@@ -75,27 +115,32 @@ starve others.
 ### Combine per-IP rate and connection limits
 
 `with_connection_rate_per_ip` caps how quickly each peer can open connections,
-which prevents repeated reconnects from refreshing per-connection frame and
-message bursts. Its token buckets are stored in the supervised connection
-limiter, so they survive disconnects and app runtime restarts. Idle buckets are
-removed after their allowance has fully refilled.
+which limits how often reconnects can refresh per-connection frame and message
+bursts. The connection limiter checkpoints these per-IP buckets in an ETS
+table with an heir. They survive disconnects, router restarts, and
+limiter-worker restarts. They do not survive shutdown or replacement of the
+enclosing beryl supervisor, or a node restart. Idle buckets expire after their
+allowance has fully refilled.
 
 `with_max_connections_per_ip` separately throttles a single peer's concurrent
 connections, while `with_max_connections` caps concurrent connections across
-the whole node. A connection must pass every configured rate and concurrency
-limit; otherwise the transport rejects it with `429` **before** allocating any
-long-lived socket or runtime state. Freed concurrency capacity is reclaimed on
-normal close, transport failure, heartbeat eviction, crash, and setup failure.
+all IP addresses for one beryl system on one BEAM node. A connection must pass
+every configured rate and concurrency limit; otherwise the transport rejects it
+with `429` **before** allocating any long-lived socket or runtime state. Freed
+concurrency capacity is reclaimed on normal close, transport failure, heartbeat
+eviction, crash, and setup failure.
 
 A per-IP limit cannot stop many source addresses. A botnet or a host that
 rotates IPv6 addresses can open a few connections from each address. Together,
-these connections can exhaust the node. The node-wide ceiling limits the total
-number of connections across all IP addresses.
+these connections can exhaust the system's capacity. The per-system ceiling
+limits the total number of connections across all IP addresses.
 
-Because it is enforced per BEAM node, a load-balanced cluster of N nodes has an
-effective ceiling of roughly `max_connections × N`. Size the per-node value
-against one node's capacity, and use your load balancer's own global
-connection/rate controls when you need a cluster-wide cap.
+Each independently constructed `Sockets` system has its own limiter. Two
+systems on one node can therefore each admit up to their configured limit. With
+one system per node, a load-balanced cluster of N nodes has an effective
+ceiling of roughly `max_connections × N`. If a node runs multiple systems, size
+their combined limits against that node's capacity. Use your load balancer's
+own global connection/rate controls when you need a cluster-wide cap.
 
 ### Limits behind proxies and shared IP addresses
 
@@ -112,25 +157,32 @@ effects:
 
 ### Reconnects reset per-connection limits
 
-Per-socket limits are keyed by connection, so a client that hits a limit
-can reconnect for a fresh allowance. They bound the damage of any single
-connection. Configure `with_connection_rate_per_ip` to limit repeated reconnects
-from one peer IP, and retain infrastructure-level controls (load balancer
-connection/request limits, WAF rules) against attackers rotating source
-addresses.
+Transports store frame-rate buckets per connection; socket actors store
+message and join buckets. When those owners exit, their buckets disappear.
+A client that reconnects gets a fresh allowance. These limits bound the damage
+of a single connection; they do not preserve a client's quota across reconnects.
+Configure `with_connection_rate_per_ip` to limit repeated reconnects from one
+peer IP. Keep infrastructure-level controls (load balancer connection/request
+limits, WAF rules) for limits that must survive beryl restarts and for attackers
+rotating source addresses.
 
 ## Check origins and authenticate
 
-- `with_allowed_origins` on the Mist transport rejects browser connections
-  from unexpected origins before the WebSocket handshake.
-- `with_on_connect` authenticates the connection once, before upgrade.
-  reject unauthenticated clients with a 403 rather than at join time.
+- `server.default_config` uses same-origin checks by default. Use
+  `with_allowed_origins` when you need an explicit list of browser origins;
+  unexpected origins are rejected before the WebSocket handshake.
+- `with_on_connect` authenticates the connection once, before upgrade. Reject
+  unauthenticated clients with a 403 rather than at join time.
 - Authorize each topic in your update's `Join` arm; clients cannot
   send events to topics they have not joined.
 
 <a id="erlang-cluster-security-boundary"></a>
 
 ## Secure the Erlang cluster
+
+Before enabling Erlang distribution, restrict its ports to trusted hosts and
+configure mutually verified TLS. Apply these controls even to a single node,
+in development and staging as well as production, whether or not it runs beryl.
 
 beryl PubSub and presence replication use Erlang distribution. Trust every
 connected peer. Erlang peers can run arbitrary code on connected nodes. A
@@ -145,9 +197,6 @@ They protect only WebSocket clients.
 |---|---|---|
 | WebSocket clients | Untrusted | `with_on_connect` authentication, `Join` authorization, and `Message` handling in `update` |
 | Erlang distribution peers | Fully trusted | Network isolation + mutually verified TLS distribution (cookies prevent accidental cross-cluster connections only) |
-
-All distributed BEAM applications need network isolation and secure
-distribution. beryl assumes that you enforce this trust boundary.
 
 ### The Erlang cookie does not secure distribution
 
@@ -168,8 +217,8 @@ openssl rand -base64 48
 
 ### Use mutually verified TLS distribution
 
-Use TLS distribution with mutual certificate verification for secure
-multi-node deployments, including traffic within private networks. See the
+Use TLS distribution with mutual certificate verification when enabling
+distribution, including on private networks. See the
 [Erlang TLS Distribution guide](https://www.erlang.org/doc/apps/ssl/ssl_distribution.html)
 for setup instructions.
 
@@ -207,5 +256,9 @@ for the full distribution security reference.
   router does not handle every subscriber.
 - The runtime always starts supervised (`child_spec` has no unsupervised
   mode); restarts are bounded at 3 per 5 seconds, after which the crash
-  propagates to the process that called `child_spec`. See the
+  propagates through the application's supervision tree. See the
   [Supervision guide](/guides/supervision/).
+- Rate limits do not bound worker input, pending action reports, router
+  fan-out, or outbound connection queues. See
+  [Queue limits and overload](/architecture/runtime/#queue-limits-and-overload)
+  for current controls and non-guarantees.

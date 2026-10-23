@@ -53,7 +53,12 @@ pub fn main() -> Nil {
 
   // Start the HTTP server.
   let context_router =
-    router.Context(channels:, base_path: "", static_directory:)
+    router.Context(
+      channels:,
+      presence: presence_tracker,
+      base_path: "",
+      static_directory:,
+    )
 
   let assert Ok(_) =
     fn(http_request) {

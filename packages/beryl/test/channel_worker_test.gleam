@@ -8,19 +8,53 @@
 
 import beryl
 import beryl/channel
+import beryl/runtime
 import beryl/transport
 import beryl/wire
+import beryl/work_queue
 import channel_dispatch_helper as helper
 import gleam/erlang/process
 import gleam/int
 import gleam/json
 import gleam/list
+import gleam/option.{None}
 import gleam/string
 import gleeunit/should
+import test_helper
 
 pub type Poke {
   Poke
 }
+
+type Gate
+
+@external(erlang, "beryl_supervisor_test_ffi", "gate_new")
+fn new_gate() -> Gate
+
+@external(erlang, "beryl_supervisor_test_ffi", "gate_wait")
+fn wait_for_gate(gate: Gate) -> Nil
+
+@external(erlang, "beryl_supervisor_test_ffi", "gate_release")
+fn release_gate(gate: Gate) -> Nil
+
+@external(erlang, "beryl_test_process_ffi", "socket_queue")
+fn socket_queue(
+  router: process.Pid,
+  socket_id: String,
+) -> work_queue.Queue(runtime.Message(Nil))
+
+@external(erlang, "beryl_test_process_ffi", "socket_actor")
+fn socket_actor(router: process.Pid, socket_id: String) -> process.Pid
+
+@external(erlang, "beryl_test_process_ffi", "worker_report_pending")
+fn worker_report_pending(
+  router: process.Pid,
+  socket_id: String,
+  worker: process.Pid,
+) -> Bool
+
+@external(erlang, "beryl_test_process_ffi", "with_suspended")
+fn with_suspended(pid: process.Pid, action: fn() -> Nil) -> Nil
 
 /// What a test channel reports as it runs.
 type Report {
@@ -259,9 +293,9 @@ pub fn a_leave_followed_immediately_by_a_rejoin_is_ordered_test() -> Nil {
   let assert Ok(fresh) = process.receive(senders, 500)
 
   // The old join's sender reaches nothing; the new one works.
-  channel.notify(stale, Poke)
+  let assert Error(_) = channel.notify(stale, Poke)
   process.receive(reports, 100) |> should.be_error
-  channel.notify(fresh, Poke)
+  let assert Ok(_) = channel.notify(fresh, Poke)
   ran_pid(reports, "on_info") |> should.equal(second)
   helper.recv(frames) |> string.contains("poked") |> should.be_true
 }
@@ -326,7 +360,7 @@ pub fn a_notify_from_join_is_served_after_the_join_is_indexed_test() -> Nil {
     channel.handler("room:*", fn(context) {
       // As a presence tracker would: the join asks itself to publish the
       // roster, and the publish goes through a third process.
-      channel.notify(context.self, Poke)
+      let assert Ok(_) = channel.notify(context.self, Poke)
       channel.accept(Nil)
       |> channel.on_info(fn(_state, _poke) {
         process.send(process.named_subject(tracker), context.topic)
@@ -354,6 +388,109 @@ pub fn a_notify_from_join_is_served_after_the_join_is_indexed_test() -> Nil {
 }
 
 // --- worker death -------------------------------------------------------------
+
+pub fn pending_worker_reports_match_only_the_requested_worker_test() -> Nil {
+  let reports = process.new_subject()
+  let handler =
+    channel.handler("room:*", fn(context) {
+      process.send(reports, Ran(context.topic, "join", process.self()))
+      channel.accept(Nil)
+    })
+  let channels = helper.start(config(), [handler])
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _ = helper.recv(frames)
+  helper.join(channels, "s1", "room:b", "jr-2", "r-2")
+  let _ = helper.recv(frames)
+  let expected_worker = ran_pid(reports, "join")
+  let other_worker = ran_pid(reports, "join")
+  expected_worker |> should.not_equal(other_worker)
+  let assert Ok(router) = transport.runtime_pid(channels)
+
+  use <- with_suspended(socket_actor(router, "s1"))
+  let queue = socket_queue(router, "s1")
+  // Publish synchronously while the consumer cannot drain the report. Use the
+  // typed constructor so this also pins the exact Erlang work-queue shape.
+  let assert Ok(reservation) =
+    work_queue.publish_value(
+      queue,
+      runtime.WorkerReport(
+        "s1",
+        "room:a",
+        expected_worker,
+        runtime.WorkerPresenceReady,
+        None,
+      ),
+    )
+  let expected_pending = worker_report_pending(router, "s1", expected_worker)
+  let other_pending = worker_report_pending(router, "s1", other_worker)
+  // Remove the fixture before resuming, including when an assertion fails.
+  work_queue.release(queue, reservation)
+  expected_pending |> should.be_true
+  other_pending |> should.be_false
+  worker_report_pending(router, "s1", expected_worker) |> should.be_false
+}
+
+pub fn a_dead_worker_committed_report_runs_before_its_topic_closes_test() -> Nil {
+  let gate = new_gate()
+  let reports = process.new_subject()
+  let entered = process.new_subject()
+  let terminating = process.new_subject()
+  let handler =
+    channel.handler("room:*", fn(context) {
+      process.send(reports, Ran(context.topic, "join", process.self()))
+      channel.accept(Nil)
+      |> channel.on_message(fn(_state, message) {
+        process.send(entered, Nil)
+        wait_for_gate(gate)
+        channel.next(Nil, [
+          channel.push("committed", json.null()),
+          channel.reply_ok(message.reply, json.null()),
+        ])
+      })
+      |> channel.on_terminate(fn(_state, _reason) {
+        process.send(terminating, Nil)
+        []
+      })
+    })
+  let channels = helper.start(config(), [handler])
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "room:a", "jr-1", "r-1")
+  let _ = helper.recv(frames)
+  let worker = ran_pid(reports, "join")
+  let assert Ok(router) = transport.runtime_pid(channels)
+  let actor = socket_actor(router, "s1")
+
+  helper.push(channels, "s1", "room:a", "echo", "r-2")
+  process.receive(entered, 1000) |> should.equal(Ok(Nil))
+  test_helper.suspend_process(actor)
+  helper.leave(channels, "s1", "room:a", "jr-1", "r-3")
+
+  release_gate(gate)
+  test_helper.wait_until(
+    fn() { worker_report_pending(router, "s1", worker) },
+    1000,
+    5,
+  )
+  process.kill(worker)
+  wait_until_dead(worker)
+  test_helper.resume_process(actor)
+
+  helper.recv(frames) |> string.contains("\"r-3\"") |> should.be_true
+  helper.recv(frames) |> string.contains("\"committed\"") |> should.be_true
+  helper.recv(frames) |> string.contains("\"r-2\"") |> should.be_true
+  helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  helper.recv_none(frames)
+  process.receive(terminating, 100) |> should.be_error
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(occupancy) = work_queue.snapshot(socket_queue(router, "s1"))
+      occupancy.items == 0
+    },
+    1000,
+    5,
+  )
+}
 
 pub fn a_close_of_a_dead_worker_does_not_wait_for_the_terminate_timeout_test() -> Nil {
   let reports = process.new_subject()
@@ -525,6 +662,32 @@ pub fn stopping_beryl_while_a_leave_is_parked_lets_on_terminate_finish_test() ->
   helper.recv(frames) |> string.contains("\"r-2\"") |> should.be_true
   helper.recv(frames) |> string.contains("phx_close") |> should.be_true
   wait_until_dead(a)
+}
+
+pub fn stopping_beryl_bounds_a_blocking_terminate_inside_the_drain_test() -> Nil {
+  let reports = process.new_subject()
+  let senders = process.new_subject()
+  let channels =
+    helper.start(config(), [
+      sleepy("slow:*", reports, senders, slow_ms: 0, terminate_ms: 3000),
+      quick("room:*", reports, senders),
+    ])
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "slow:a", "jr-1", "r-1")
+  let _ = helper.recv(frames)
+  helper.join(channels, "s1", "room:b", "jr-2", "r-2")
+  let _ = helper.recv(frames)
+  let slow = ran_pid(reports, "join")
+  let sibling = ran_pid(reports, "join")
+
+  // The slow worker's `on_terminate` outlives the stop-driven terminate
+  // timeout, so the runtime kills that worker. The stop still completes
+  // inside its budget and the sibling topic still runs `on_terminate`.
+  beryl.stop(channels) |> should.be_ok
+
+  terminated(reports, "room:b", "shutdown")
+  wait_until_dead(slow)
+  wait_until_dead(sibling)
 }
 
 pub fn many_topics_on_one_socket_each_get_a_worker_test() -> Nil {

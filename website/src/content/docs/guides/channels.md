@@ -230,6 +230,35 @@ The layer keeps **one instance per joined topic**. A socket joined to
 the layer prunes an instance when its topic closes. You do not write
 cleanup code for the state itself.
 
+## Keep room-wide state in your app
+
+Channel state is private to one accepted join, not shared by the room. Two
+clients on `room:general` get two `State` values, even when they join the same
+topic. Use channel state for per-join data such as the current user, transient
+UI state, or a typed sender for that join.
+
+When several joins must share one mutable value or one writer, move that state
+into an application-owned process or store and capture its handle in the
+handler closure. Add a room-wide or domain owner only when you have a real
+shared invariant to protect.
+
+The examples show two common choices.
+[`live_poll/store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/store.gleam)
+keeps one in-memory actor that serializes `get`, `vote`, and `close` calls with
+`join` and `leave` updates. Callers that use `get`, `vote`, or `close` wait for
+that actor before they continue.
+[`collab_document/document_store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/collab_docs/src/collab_document/document_store.gleam)
+also keeps one in-memory actor, but `merge_state` only enqueues a merge and
+returns. OR-Map merges still converge, but another process can read before that
+merge runs, so there is no cross-process read-after-write guarantee.
+
+Do not shard these example stores unless measurement shows real contention.
+Start with one owner for the invariant you need.
+
+Presence is not that owner. Use presence for ephemeral online state, not for
+locks, authorization, durable membership, or atomic capacity checks. See
+[Presence](/guides/presence/#use-presence-for-online-state-not-ownership).
+
 ## Read `JoinContext` and use its typed sender
 
 The `join` callback receives a `channel.JoinContext(info)`:
@@ -257,7 +286,7 @@ pub type Note {
 }
 
 // Call from a timer, application actor, or HTTP handler:
-channel.notify(sender, Tick(1))
+let assert Ok(Nil) = channel.notify(sender, Tick(1))
 ```
 
 This mechanism does not use casts. `notify` keeps the value in a typed
@@ -265,21 +294,21 @@ function and sends it to the worker process of that join. Only that join can
 read the value during delivery. No mailbox stores the typed value between
 turns.
 
-Delivery uses a selective receive on the worker's mailbox. One delivery can
-scan queued work for that topic. Work for other topics does not add to this
-cost.
+Because `notify` admits work to the channel's worker queue, it reserves worker
+capacity before publication. Gleam does not guarantee how many bytes a sealed
+function retains, so limit application payload sizes as well as queue item
+counts.
 
 ### Senders from closed or rejoined channels
 
-A sender applies only to the join that produced it. Sending is asynchronous
-and does not report failure. If the channel has **closed** (client leave,
-`close([])`, or socket shutdown) or the same topic has since been **joined
-again** (a new worker), the layer drops the message rather than deliver it to
-the wrong instance. A live match delivers exactly one `on_info` call; sends
-are never coalesced and arrive in the order the worker receives them.
+A sender applies only to the join that produced it. `notify` returns an
+admission Result. Queue saturation and a closed or unavailable worker return
+an error. `Ok(Nil)` confirms admission, not callback completion. Accepted
+messages retain their queue order; the runtime does not combine them.
 
 A long-lived process can keep a sender but cannot use it to reach a different
-join. If the target join is gone, the message is dropped.
+join. Handle errors when the target is gone or full; do not build an unlimited
+retry queue. See [overload handling](/guides/overload/).
 
 Use `notify` to schedule a **later** turn, including from another process. Put
 work that must occur during the join in
@@ -298,6 +327,7 @@ observe them:
 | `broadcast_from(event, payload)` | To every subscriber except this socket |
 | `reply_ok(reply, payload)` | Success reply when `Message.reply` is `Some`; no effect for `None` |
 | `reply_error(reply, payload)` | Error reply with the same optional-ref behavior |
+| `discard_reply(reply)` | Release an intentionally unanswered reply handle without a wire reply |
 | `presence_track(key, meta)` | Track this socket under `key` and emit the `presence_diff` join |
 | `presence_untrack(key)` | Untrack and emit the `presence_diff` leave |
 | `push_presence(event, encode)` | Presence snapshot for this topic, to this socket |
@@ -310,6 +340,26 @@ To send across topics, use the external APIs described in
 Presence actions need a presence handle on the config
 (`beryl.with_presence_handle`); without one they are dropped with a
 warning, exactly as the equivalent core effects are.
+
+For the standard Phoenix presence flow, add `channel.with_presence` to an
+accepted join instead of assembling the track and snapshot actions yourself:
+
+```gleam
+channel.accept(state)
+|> channel.with_presence(key: state.username, meta: meta(state))
+```
+
+This is shorthand for `presence_track` followed by `push_presence` with the
+Phoenix event name and encoder. It adds no new lifecycle behavior: diff delivery
+and automatic cleanup also work with the explicit actions. See the
+equivalent code in
+[Add presence to a channel](/guides/presence/#add-presence-to-a-channel).
+
+To react on the server, register `channel.on_presence`. It receives a
+`presence.Snapshot` first, then topic-scoped `presence.Changed` events, and
+returns the same `Next(state)` as other callbacks. Observation is independent
+of tracking. See [React to presence changes](/guides/presence/#react-to-presence-changes-in-a-channel)
+for the initial roster, update, and failure contracts.
 
 ### Clients observe action list order
 
@@ -367,6 +417,7 @@ acknowledgment.
 |---|---|---|
 | `on_message` | A client message on this topic | `fn(state, channel.Message) -> Next(state)` |
 | `on_info` | A `notify` addressed to this join | `fn(state, info) -> Next(state)` |
+| `on_presence` | This topic's initial roster and later changes | `fn(state, presence.Event) -> Next(state)` |
 | `on_terminate` | This channel ending, for any reason | `fn(state, socket.StopReason) -> List(Action(Closing))` |
 
 `channel.accept(state)` stays joined until you add callbacks with the `on_*`
@@ -481,7 +532,9 @@ nothing. If the worker stops unexpectedly instead, the runtime closes the
 topic with `phx_error` without running `on_terminate` (it held the channel
 state), and the client must rejoin; the runtime also kills a worker that does
 not finish its queued work and `on_terminate` within five seconds, then
-completes the close without the termination actions.
+completes the close without the termination actions. During a graceful
+`beryl.stop`, this bound is one second per worker. Several blocked workers
+on one socket can still exceed the total stop budget.
 
 Crash isolation stops at the socket for other faults: a fault in the socket
 actor loses only that socket and its workers, while a router crash loses every

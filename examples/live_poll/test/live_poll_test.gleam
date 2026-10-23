@@ -1,11 +1,11 @@
 import gleam/dynamic
-import gleeunit
 import gleeunit/should
 import live_poll/poll
 import live_poll/store
+import unitest
 
 pub fn main() -> Nil {
-  gleeunit.main()
+  unitest.main()
 }
 
 pub fn votes_are_counted_and_closed_polls_reject_votes_test() -> Nil {

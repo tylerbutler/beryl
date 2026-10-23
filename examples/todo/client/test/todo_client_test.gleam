@@ -134,5 +134,21 @@ pub fn add_input_clears_only_after_matching_acknowledgement_test() {
   model.pending_add
   |> should.equal(None)
   domain.todos(model.state)
-  |> should.equal([item])
+  |> should.equal([])
+}
+
+pub fn delayed_mutation_acknowledgements_cannot_overwrite_a_newer_snapshot_test() -> Nil {
+  let stale = domain.Todo(id: 1, text: "Changed", completed: True)
+  let fresh = domain.Todo(..stale, completed: False)
+  let #(model, _) =
+    todo_client.update(
+      todo_client.initial_model(),
+      todo_client.ChannelEvent(todo_channel.Joined([fresh])),
+    )
+  let #(model, _) =
+    todo_client.update(model, todo_client.ToggleFinished(Ok(stale)))
+  let #(model, _) =
+    todo_client.update(model, todo_client.AddFinished("Changed", Ok(stale)))
+  let #(model, _) = todo_client.update(model, todo_client.DeleteFinished(Ok(1)))
+  domain.todos(model.state) |> should.equal([fresh])
 }

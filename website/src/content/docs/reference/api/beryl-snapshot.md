@@ -20,9 +20,9 @@ A point-in-time snapshot of local runtime state.
  servicing the request. Counts may lag in-flight connect and disconnect
  notifications that have not yet reached that process, so they are
  eventually consistent rather than exact at the instant of the call. They
- are intended for operational polling, not as an event stream. Poll no
- more frequently than roughly once per second so observation does not add
- meaningful runtime load.
+ are intended for operational polling, not as an event stream. Start with
+ roughly once-per-second polling or less, then measure the observation load
+ for your workload.
 
 <nav class="api-symbol-index" aria-label="Module contents">
 <section class="api-symbol-index__group">
@@ -39,6 +39,7 @@ A point-in-time snapshot of local runtime state.
 <li><a href="#api-function-connected_sockets"><code>connected_sockets</code></a></li>
 <li><a href="#api-function-get"><code>get</code></a></li>
 <li><a href="#api-function-joined_socket_topic_pairs"><code>joined_socket_topic_pairs</code></a></li>
+<li><a href="#api-function-queue"><code>queue</code></a></li>
   </ul>
 </section>
 </nav>
@@ -63,6 +64,7 @@ A point-in-time snapshot of local runtime state.
 pub type SnapshotError {
   RuntimeUnavailable
   RequestTimedOut
+  AdmissionRejected(overload.AdmissionError)
 }
 ```
 
@@ -85,6 +87,14 @@ RequestTimedOut
 ```
 
 The runtime did not process the request before the timeout.
+
+##### `AdmissionRejected`
+
+```gleam
+AdmissionRejected(overload.AdmissionError)
+```
+
+The request did not enter the runtime queue.
 
 ## Functions
 
@@ -120,11 +130,12 @@ Request a snapshot from the local runtime.
 
  The request waits for about one second at most. During a runtime restart,
  this function returns `RuntimeUnavailable` or `RequestTimedOut`. An
- overloaded runtime returns `RequestTimedOut`.
+ full runtime queue returns `AdmissionRejected`.
  Neither condition panics. This API reports only the node represented by
  `sockets`; aggregate multi-node statistics outside beryl.
 
- Poll no more frequently than roughly once per second.
+ Start with roughly once-per-second polling or less, then measure the
+ observation load for your workload.
 
 <div class="api-entry-anchor" id="api-function-joined_socket_topic_pairs" aria-hidden="true"></div>
 
@@ -137,3 +148,13 @@ pub fn joined_socket_topic_pairs(Snapshot) -> Int
 Return the number of joined socket/topic pairs.
 
  One socket joined to two topics contributes two pairs.
+
+<div class="api-entry-anchor" id="api-function-queue" aria-hidden="true"></div>
+
+### `queue`
+
+```gleam
+pub fn queue(beryl.Sockets) -> Result(overload.Occupancy, overload.AdmissionError)
+```
+
+Read local router admission accounting without waiting for a router turn.

@@ -23,7 +23,40 @@ export const connect = (
 ) => {
   const socket = new Socket("/socket");
   const channel = socket.channel("todos", {});
-  const client = { socket, channel, closed: false };
+  const client = {
+    socket, channel, closed: false, syncing: false,
+    syncAgain: false, retryTimer: null, retryDelay: 250,
+  };
+  // Subscribe first, then read again: a mutation can race the join snapshot.
+  const synchronize = () => {
+    if (client.closed) return;
+    if (client.syncing) {
+      client.syncAgain = true;
+      return;
+    }
+    clearTimeout(client.retryTimer);
+    client.syncing = true;
+    client.syncAgain = false;
+    const retry = (error) => {
+      client.syncing = false;
+      if (client.closed) return;
+      onDisconnected(error);
+      client.retryTimer = setTimeout(synchronize, client.retryDelay);
+      client.retryDelay = Math.min(5000, client.retryDelay * 2);
+    };
+    channel.push("sync", {}, 5000)
+      .receive("ok", (snapshot) => {
+        client.syncing = false;
+        if (client.closed) return;
+        client.retryDelay = 250;
+        onJoined(snapshot);
+        if (client.syncAgain) synchronize();
+      })
+      .receive("error", retry)
+      .receive("timeout", () => retry({
+        message: "The Todo snapshot request timed out.",
+      }));
+  };
 
   socket.onOpen(() => {
     if (!client.closed) onConnecting();
@@ -43,14 +76,14 @@ export const connect = (
       onDisconnected({ message: "Channel error. Rejoining…" });
     }
   });
-  channel.on("todo_added", onAdded);
-  channel.on("todo_updated", onUpdated);
-  channel.on("todo_deleted", onDeleted);
+  channel.on("todo_added", synchronize);
+  channel.on("todo_updated", synchronize);
+  channel.on("todo_deleted", synchronize);
 
   socket.connect();
   channel
     .join()
-    .receive("ok", onJoined)
+    .receive("ok", () => synchronize())
     .receive("error", (error) =>
       onDisconnected({
         message:
@@ -75,6 +108,7 @@ export const deleteTodo = (client, id, onOk, onError) =>
 
 export const close = (client) => {
   client.closed = true;
+  clearTimeout(client.retryTimer);
   client.socket.disconnect();
 };
 

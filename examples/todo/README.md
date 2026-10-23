@@ -1,6 +1,6 @@
 # Realtime Lustre Todo
 
-A small server-authoritative Todo app built with Lustre, Beryl, and Mist. The
+A small server-authoritative Todo app built with Lustre, beryl, and Mist. The
 BEAM server owns the list and monotonic IDs; every browser joins the fixed
 `todos` topic and applies canonical snapshots, replies, and broadcasts.
 
@@ -35,9 +35,23 @@ Beryl app dispatch — fixed "todos" topic
 Supervised in-memory Todo actor
 ```
 
-The join reply replaces the browser snapshot. `add_todo`, `toggle_todo`, and
-`delete_todo` mutate the actor, then return and broadcast the canonical server
-result. The client never writes an offline cache.
+The client reads a fresh snapshot after its subscription is established and
+after each mutation event. Snapshot replies are ordered by each socket's
+request loop. Mutation acknowledgements update the form, not the list, so a
+delayed acknowledgement cannot overwrite a newer snapshot.
+
+`add_todo`, `toggle_todo`, and `delete_todo` mutate the actor. The actor
+publishes each committed result before acknowledging it, independent of the
+requesting socket. If broadcast admission fails, it rejects the mutation
+without changing the list. Failed snapshot reads retry with a delay capped at
+five seconds. Queued requests expire after one second. A timeout is not a
+guarantee that a request already being handled did not commit; reconnect or
+read a snapshot to check the outcome. The client never writes an offline cache.
+
+The supervisor uses `RestForOne`: if the in-memory store restarts, the socket
+runtime restarts too. Browsers reconnect and replace their old snapshots.
+All browsers share one public list; this example has no account isolation or
+persistent storage.
 
 ## Test
 

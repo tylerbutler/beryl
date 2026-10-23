@@ -17,8 +17,9 @@ git clone https://github.com/tylerbutler/beryl.git
 cd beryl
 ```
 
-<Aside type="note" title="Pre-1.0">
-beryl is not yet version 1.0. Minor releases can change the API, and the library is not ready for production. Report problems to help define version 1.0.
+<Aside type="note" title="Stability">
+beryl is pre-1.0. Minor releases can change the API. See the
+[stability policy](/reference/#versioning-before-10) before you adopt it.
 </Aside>
 
 ## Realtime todo
@@ -41,8 +42,8 @@ gleam run
 | beryl feature | How it's used |
 |---|---|
 | **Fixed topic routing** | Every browser joins the `todos` topic through app dispatch |
-| **Join snapshots** | The join reply replaces the client's list with the actor's current state |
-| **Canonical replies and broadcasts** | Mutations return and broadcast the server-assigned Todo or deleted ID |
+| **Join snapshots** | A snapshot read after joining replaces the client's list with the actor's current state |
+| **Canonical replies and broadcasts** | The store publishes each mutation; clients read fresh snapshots instead of applying stale acknowledgements |
 | **Server validation** | Empty text, malformed payloads, and unknown IDs receive explicit error replies |
 | **Reconnect synchronization** | The Phoenix client rejoins automatically and applies a fresh snapshot |
 | **Typed Lustre client** | Gleam decodes every dynamic Phoenix payload before updating the UI |

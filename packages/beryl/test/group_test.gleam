@@ -1,10 +1,15 @@
 import beryl/group
+import beryl/internal
 import gleam/erlang/process
 import gleam/list
 import gleam/otp/static_supervisor
 import gleam/set
 import gleeunit/should
 import test_helper
+import unitest
+
+@external(erlang, "beryl_test_process_ffi", "with_suspended")
+fn with_suspended(pid: process.Pid, action: fn() -> value) -> value
 
 fn assert_crashes_within(operation: fn() -> Nil, timeout_ms: Int) -> Nil {
   let pid = process.spawn_unlinked(operation)
@@ -59,15 +64,45 @@ pub fn configured_call_timeout_is_used_test() -> Nil {
   let config =
     group.default_config()
     |> group.with_call_timeout(20)
-  let #(groups, _spec) = group.child_spec_with_config(config)
+  let #(groups, spec) = group.child_spec_with_config(config)
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  let assert Ok(owner) = process.subject_owner(group.subject(groups))
 
-  assert_crashes_within(
-    fn() {
-      let _ = group.list_groups(groups)
-      Nil
-    },
-    1000,
-  )
+  with_suspended(owner, fn() {
+    assert_crashes_within(
+      fn() {
+        let _ = group.list_groups(groups)
+        Nil
+      },
+      1000,
+    )
+  })
+}
+
+pub fn caught_group_timeouts_drop_monitors_and_late_replies_test() -> Nil {
+  use <- unitest.tag("serial")
+  let config = group.default_config() |> group.with_call_timeout(10)
+  let #(groups, spec) = group.child_spec_with_config(config)
+  let assert Ok(_root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.start()
+  let assert Ok(owner) = process.subject_owner(group.subject(groups))
+  let monitors = test_helper.monitor_count(process.self())
+  let messages = test_helper.mailbox_length(process.self())
+
+  with_suspended(owner, fn() {
+    list.each(list.repeat(Nil, 10), fn(_) {
+      internal.rescue(fn() { group.list_groups(groups) }) |> should.be_error
+      test_helper.monitor_count(process.self()) |> should.equal(monitors)
+    })
+  })
+  group.list_groups(groups) |> should.equal([])
+  test_helper.monitor_count(process.self()) |> should.equal(monitors)
+  test_helper.mailbox_length(process.self()) |> should.equal(messages)
 }
 
 pub fn group_create_and_list_test() -> Nil {

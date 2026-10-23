@@ -106,7 +106,7 @@ pub fn info_crash_tears_down_socket_test() -> Nil {
   let _reply = app_test_helper.recv(frames)
   let assert Join(_, _, _) = app_test_helper.next_event(events)
 
-  socket.notify(sender, Boom)
+  let assert Ok(_) = socket.notify(sender, Boom)
 
   // Info crash: the topic is closed with an error frame and the socket is
   // gone — further joins are ignored entirely.

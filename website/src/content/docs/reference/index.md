@@ -3,14 +3,13 @@ title: Reference
 description: Find beryl modules, message-sending APIs, Phoenix frame formats, and compatible clients.
 ---
 
-:::note[Pre-1.0]
-beryl is not yet version 1.0. Minor releases can change the API. The library is
-not ready for production. See the
-[stability policy](#versioning-before-10).
+:::note[Stability]
+beryl is pre-1.0. Minor releases can change the API. Review the
+[stability policy](#versioning-before-10) before you adopt it.
 :::
 
 The site generates the function-level API reference from Gleam docs metadata.
-Install beryl packages from GitHub. They are not on Hex:
+Start with the two core APIs:
 
 **[beryl](/reference/api/beryl/)** ·
 **[beryl/channel](/reference/api/beryl-channel/)**
@@ -57,7 +56,7 @@ frames, or select a compatible client.
 | Broadcast to all sockets on a topic | `socket.Broadcast(topic, event, payload)` inside `update`, or `beryl.broadcast(sockets, topic, event, payload)` outside it | All subscribers, including the sender |
 | Broadcast, excluding sender | `socket.BroadcastFrom(topic, event, payload)` inside `update`, or `beryl.broadcast_from(sockets, socket_id, topic, event, payload)` outside it | Excludes one socket ID; preserved across PubSub nodes |
 | Send a typed server-side message to one socket | `socket.notify(sender, message)` | Store `ConnectInfo.self` from `init`; delivered later as `socket.Info(message)` |
-| Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Manual Phoenix-shaped `presence_diff`; ordinary socket/channel presence effects are applied asynchronously by the runtime |
+| Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Phoenix-shaped `presence_diff`; application diffs use cluster delivery, replica-view diffs stay node-local |
 
 The channel layer provides topic-scoped versions through ordered
 `channel.Action(Active)` lists. These actions include `push`, `broadcast`,
@@ -150,7 +149,6 @@ can use any compatible WebSocket client:
 | Client | Notes |
 |---|---|
 | [`phoenix.js`](https://hexdocs.pm/phoenix/js/) | Official JS client; full support |
-| [`phx`](https://github.com/nmbr73/phx) | Gleam client; designed for beryl |
 | Phoenix Swift / Kotlin clients | Community Phoenix clients; wire-compatible |
 | Plain WebSocket | Use the JSON array format directly; no reconnect logic |
 

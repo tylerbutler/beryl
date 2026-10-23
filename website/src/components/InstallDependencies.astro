@@ -1,0 +1,22 @@
+---
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { Code } from "@astrojs/starlight/components";
+
+const repository = "https://github.com/tylerbutler/beryl.git";
+const { stdout } = await promisify(execFile)(
+	"git",
+	["ls-remote", "--refs", "--tags", "--sort=-version:refname", repository, "v*"],
+	{ timeout: 30_000 },
+);
+const ref = stdout.match(/\trefs\/tags\/(v\d+\.\d+)$/m)?.[1];
+if (!ref) {
+	throw new Error("No beryl minor release tag (vMAJOR.MINOR) found.");
+}
+
+const dependencies = `[dependencies]
+beryl = { git = "${repository}", ref = "${ref}", path = "packages/beryl" }
+beryl_mist = { git = "${repository}", ref = "${ref}", path = "packages/beryl_mist" }`;
+---
+
+<Code code={dependencies} lang="toml" />

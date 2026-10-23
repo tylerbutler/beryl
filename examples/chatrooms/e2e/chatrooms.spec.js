@@ -36,6 +36,30 @@ async function waitForJoinReply(page) {
 }
 
 test.describe("Chat Rooms Demo", () => {
+  test.afterEach(async ({ page, request }) => {
+    const url = new URL(page.url());
+    if (
+      (await page.locator("#user-list").count()) > 0 &&
+      url.searchParams.get("token") !== "invalid-token"
+    ) {
+      await expect
+        .poll(async () => {
+          const response = await request.get("/api/rooms");
+          const rooms = await response.json();
+          return rooms.reduce((total, room) => total + room.users, 0);
+        })
+        .toBeGreaterThan(0);
+    }
+    await page.close();
+    await expect
+      .poll(async () => {
+        const response = await request.get("/api/rooms");
+        const rooms = await response.json();
+        return rooms.reduce((total, room) => total + room.users, 0);
+      })
+      .toBe(0);
+  });
+
   test.describe("Page structure", () => {
     test("renders the page title", async ({ page }) => {
       await page.goto("/?token=beryl-demo");

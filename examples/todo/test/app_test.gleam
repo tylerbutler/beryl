@@ -92,16 +92,10 @@ pub fn add_validates_payload_and_empty_text_test() {
   |> should.equal(Ok([]))
 }
 
-pub fn mutation_replies_and_broadcasts_canonical_payload_test() {
+pub fn mutation_replies_with_canonical_payload_without_socket_broadcast_test() {
   let assert Ok(store) = store.start()
 
-  let assert socket.Next(
-    _,
-    [
-      socket.ReplyOk(_, reply),
-      socket.Broadcast("todos", "todo_added", broadcast),
-    ],
-  ) =
+  let assert socket.Next(_, [socket.ReplyOk(_, reply)]) =
     app.update(store)(
       Nil,
       socket.Message(
@@ -114,8 +108,22 @@ pub fn mutation_replies_and_broadcasts_canonical_payload_test() {
 
   json.to_string(reply)
   |> should.equal("{\"id\":0,\"text\":\"Canonical\",\"completed\":false}")
-  json.to_string(broadcast)
-  |> should.equal(json.to_string(reply))
+}
+
+pub fn sync_after_join_reads_mutations_missed_by_the_join_snapshot_test() -> Nil {
+  let assert Ok(store) = store.start()
+  let _ =
+    app.update(store)(Nil, socket.Join("todos", object([]), join_ref("todos")))
+  let assert Ok(_) = store.add(store, "Committed during join")
+  let assert socket.Next(_, [socket.ReplyOk(_, snapshot)]) =
+    app.update(store)(
+      Nil,
+      socket.Message("todos", "sync", object([]), Some(message_ref())),
+    )
+  json.to_string(snapshot)
+  |> should.equal(
+    "{\"todos\":[{\"id\":0,\"text\":\"Committed during join\",\"completed\":false}]}",
+  )
 }
 
 pub fn unknown_id_returns_error_without_broadcast_test() {

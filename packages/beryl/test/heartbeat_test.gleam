@@ -247,12 +247,13 @@ pub fn eviction_cleans_topic_but_keeps_other_members_test() -> Nil {
 
   // The surviving member still receives topic broadcasts.
   drain(active_frames)
-  beryl.broadcast(
-    channels,
-    "room:shared",
-    "ping",
-    json.object([#("ok", json.bool(True))]),
-  )
+  let assert Ok(_) =
+    beryl.broadcast(
+      channels,
+      "room:shared",
+      "ping",
+      json.object([#("ok", json.bool(True))]),
+    )
   let frame = app_test_helper.recv(active_frames)
   string.contains(frame, "ping") |> should.be_true
 

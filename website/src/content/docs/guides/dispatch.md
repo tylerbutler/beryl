@@ -234,18 +234,24 @@ process can keep the sender. It can later call `socket.notify` to deliver
 `socket.Info(msg)`.
 
 ```gleam
+import beryl/overload
 import beryl/socket
 
 pub type Message {
   JobFinished(String)
 }
 
-fn notify_socket(sender: socket.Sender(Message), job_id: String) -> Nil {
+fn notify_socket(
+  sender: socket.Sender(Message),
+  job_id: String,
+) -> Result(Nil, overload.AdmissionError) {
   socket.notify(sender, JobFinished(job_id))
 }
 ```
 
-If the socket has already disconnected, `socket.notify` is ignored.
+`Ok(Nil)` means the message was admitted, not that its callback has completed.
+If the socket has disconnected or its queue cannot accept the message,
+`socket.notify` returns an admission error.
 
 For long-lived external actors that send updates to a socket, see
 `beryl/bridge`.

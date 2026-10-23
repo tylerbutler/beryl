@@ -171,10 +171,10 @@ authoritative.
 
 After the channel joins:
 
-- the join reply replaces the client's current snapshot;
+- a `sync` request after the join replaces the client's current snapshot;
 - clients send add, toggle, and delete requests;
-- clients apply canonical replies or broadcasts;
-- reconnecting clients resynchronize from the next join snapshot;
+- mutation events trigger another full snapshot read; replies update form status only;
+- reconnecting clients resynchronize after their next accepted join;
 - `localStorage` is no longer the canonical state.
 
 ### Architecture
@@ -206,15 +206,17 @@ canonical monotonic ID counter and Todo list.
 | Direction | Event | Payload | Result |
 |---|---|---|---|
 | Client to server | `phx_join` | `{}` | Reply `{todos: [...]}` |
+| Client to server | `sync` | `{}` | Fresh `{todos: [...]}` after subscription |
 | Client to server | `add_todo` | `{text}` | Canonical Todo |
 | Client to server | `toggle_todo` | `{id}` | Canonical Todo |
 | Client to server | `delete_todo` | `{id}` | `{id}` |
-| Server to clients | `todo_added` | Canonical Todo | Insert keyed row |
-| Server to clients | `todo_updated` | Canonical Todo | Replace keyed row |
-| Server to clients | `todo_deleted` | `{id}` | Remove keyed row |
+| Server to clients | `todo_added` | Canonical Todo | Request fresh snapshot |
+| Server to clients | `todo_updated` | Canonical Todo | Request fresh snapshot |
+| Server to clients | `todo_deleted` | `{id}` | Request fresh snapshot |
 
-For each mutation, the server validates input, updates the actor, replies with
-the canonical result, and broadcasts the canonical change.
+For each mutation, the store validates input and admits the canonical change
+to the broadcast queue before committing and replying. Rejected broadcast
+admission rejects the mutation. Snapshot requests retry after failure.
 
 ### Commit 2 Additions
 
@@ -276,8 +278,8 @@ Phoenix client manage reconnects.
 
 ### Sender divergence
 
-In commit 2, use canonical server replies and broadcasts. Do not mix optimistic
-local mutations with server-authoritative state.
+In commit 2, use full snapshots read after subscription and after mutation
+events. Do not let delayed mutation replies overwrite newer snapshots.
 
 ### Source licensing
 

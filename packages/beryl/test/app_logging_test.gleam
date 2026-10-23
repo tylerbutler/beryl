@@ -13,6 +13,7 @@ import gleam/dict
 import gleam/option.{None}
 import gleeunit/should
 import test_helper
+import unitest
 
 /// Palabres's level is a global, singleton setting (see
 /// `beryl/internal.configure`); restore it to beryl's own default so a
@@ -26,6 +27,7 @@ fn restore_default_logging_level() -> Nil {
 }
 
 pub fn start_warns_when_no_abuse_controls_configured_test() -> Nil {
+  use <- unitest.tag("serial")
   let selector = test_helper.begin_capture()
 
   let assert Ok(channels) =
@@ -43,6 +45,7 @@ pub fn start_warns_when_no_abuse_controls_configured_test() -> Nil {
 }
 
 pub fn start_does_not_warn_when_a_limit_is_configured_test() -> Nil {
+  use <- unitest.tag("serial")
   let selector = test_helper.begin_capture()
 
   let assert Ok(channels) =
@@ -61,6 +64,7 @@ pub fn start_does_not_warn_when_a_limit_is_configured_test() -> Nil {
 }
 
 pub fn inbound_routing_log_omits_payload_by_default_test() -> Nil {
+  use <- unitest.tag("serial")
   let selector = test_helper.begin_capture()
 
   let assert Ok(channels) =

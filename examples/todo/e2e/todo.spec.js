@@ -134,6 +134,40 @@ test("late join receives the complete server snapshot", async ({
   }
 });
 
+for (const failure of ["error", "timeout"]) {
+  test(`recovers when the initial snapshot request has a ${failure}`, async ({
+    browser,
+  }) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    let failed = false;
+    await page.routeWebSocket("**/socket/websocket**", (socket) => {
+      const server = socket.connectToServer();
+      socket.onMessage((message) => {
+        const frame = JSON.parse(String(message));
+        if (frame[3] === "sync" && !failed) {
+          failed = true;
+          if (failure === "error") {
+            socket.send(JSON.stringify([
+              frame[0], frame[1], frame[2], "phx_reply",
+              { status: "error", response: { message: "Temporary snapshot failure." } },
+            ]));
+          }
+        } else {
+          server.send(message);
+        }
+      });
+    });
+    try {
+      await page.goto("/");
+      await expect.poll(() => failed).toBe(true);
+      await waitForJoin(page);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
 test("uses Phoenix join, push, reply, and broadcast frames", async ({
   browser,
 }) => {
@@ -147,6 +181,7 @@ test("uses Phoenix join, push, reply, and broadcast frames", async ({
       const parsed = parsePhoenixFrame(frame.payload);
       if (parsed) sent.push(parsed);
     });
+
     socket.on("framereceived", (frame) => {
       const parsed = parsePhoenixFrame(frame.payload);
       if (parsed) received.push(parsed);

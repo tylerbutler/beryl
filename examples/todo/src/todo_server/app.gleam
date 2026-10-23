@@ -1,6 +1,6 @@
 import beryl/socket.{
-  type Effect, type Input, type Next, type ReplyRef, AcceptJoin, Broadcast,
-  RejectJoin, ReplyError, ReplyOk,
+  type Effect, type Input, type Next, type ReplyRef, AcceptJoin, RejectJoin,
+  ReplyError, ReplyOk,
 }
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
@@ -41,10 +41,7 @@ pub fn update(store: store.Store) -> fn(Nil, Input(Nil)) -> Next(Nil) {
           ),
         ])
       socket.Message(topic_name, event, payload, ref) if topic_name == topic ->
-        socket.Next(
-          model,
-          handle_message(store, topic_name, event, payload, ref),
-        )
+        socket.Next(model, handle_message(store, event, payload, ref))
       socket.Message(..)
       | socket.Binary(..)
       | socket.Closed(..)
@@ -55,15 +52,24 @@ pub fn update(store: store.Store) -> fn(Nil, Input(Nil)) -> Next(Nil) {
 
 fn handle_message(
   store: store.Store,
-  topic_name: String,
   event: String,
   payload: Dynamic,
   ref: Option(ReplyRef),
 ) -> List(Effect) {
   case event {
-    "add_todo" -> add_todo(store, topic_name, payload, ref)
-    "toggle_todo" -> toggle_todo(store, topic_name, payload, ref)
-    "delete_todo" -> delete_todo(store, topic_name, payload, ref)
+    "sync" ->
+      case store.all(store) {
+        Ok(todos) -> reply_ok(ref, snapshot_json(todos))
+        Error(_) ->
+          reply_error(
+            ref,
+            "store_unavailable",
+            "The Todo store did not respond.",
+          )
+      }
+    "add_todo" -> add_todo(store, payload, ref)
+    "toggle_todo" -> toggle_todo(store, payload, ref)
+    "delete_todo" -> delete_todo(store, payload, ref)
     _ ->
       reply_error(
         ref,
@@ -75,7 +81,6 @@ fn handle_message(
 
 fn add_todo(
   store: store.Store,
-  topic_name: String,
   payload: Dynamic,
   ref: Option(ReplyRef),
 ) -> List(Effect) {
@@ -88,8 +93,7 @@ fn add_todo(
       )
     Ok(text) ->
       case store.add(store, text) {
-        Ok(item) ->
-          mutation_effects(ref, topic_name, "todo_added", todo_json(item))
+        Ok(item) -> reply_ok(ref, todo_json(item))
         Error(store.EmptyText) ->
           reply_error(ref, "empty_todo", "Todo text cannot be empty.")
         Error(store.TextTooLong) ->
@@ -100,7 +104,7 @@ fn add_todo(
           )
         Error(store.UnknownTodo) ->
           reply_error(ref, "unknown_id", "The Todo ID does not exist.")
-        Error(store.Timeout) ->
+        Error(store.Timeout) | Error(store.PublicationRejected) ->
           reply_error(
             ref,
             "store_unavailable",
@@ -112,7 +116,6 @@ fn add_todo(
 
 fn toggle_todo(
   store: store.Store,
-  topic_name: String,
   payload: Dynamic,
   ref: Option(ReplyRef),
 ) -> List(Effect) {
@@ -125,11 +128,10 @@ fn toggle_todo(
       )
     Ok(id) ->
       case store.toggle(store, id) {
-        Ok(item) ->
-          mutation_effects(ref, topic_name, "todo_updated", todo_json(item))
+        Ok(item) -> reply_ok(ref, todo_json(item))
         Error(store.UnknownTodo) ->
           reply_error(ref, "unknown_id", "The Todo ID does not exist.")
-        Error(store.Timeout) ->
+        Error(store.Timeout) | Error(store.PublicationRejected) ->
           reply_error(
             ref,
             "store_unavailable",
@@ -143,7 +145,6 @@ fn toggle_todo(
 
 fn delete_todo(
   store: store.Store,
-  topic_name: String,
   payload: Dynamic,
   ref: Option(ReplyRef),
 ) -> List(Effect) {
@@ -156,16 +157,10 @@ fn delete_todo(
       )
     Ok(id) ->
       case store.delete(store, id) {
-        Ok(deleted_id) ->
-          mutation_effects(
-            ref,
-            topic_name,
-            "todo_deleted",
-            deleted_json(deleted_id),
-          )
+        Ok(deleted_id) -> reply_ok(ref, deleted_json(deleted_id))
         Error(store.UnknownTodo) ->
           reply_error(ref, "unknown_id", "The Todo ID does not exist.")
-        Error(store.Timeout) ->
+        Error(store.Timeout) | Error(store.PublicationRejected) ->
           reply_error(
             ref,
             "store_unavailable",
@@ -182,18 +177,10 @@ fn decode_id(payload: Dynamic) -> Result(Int, Nil) {
   |> result.replace_error(Nil)
 }
 
-fn mutation_effects(
-  ref: Option(ReplyRef),
-  topic_name: String,
-  event: String,
-  payload: json.Json,
-) -> List(Effect) {
+fn reply_ok(ref: Option(ReplyRef), payload: json.Json) -> List(Effect) {
   case ref {
-    Some(ref) -> [
-      ReplyOk(ref, payload),
-      Broadcast(topic_name, event, payload),
-    ]
-    None -> [Broadcast(topic_name, event, payload)]
+    Some(ref) -> [ReplyOk(ref, payload)]
+    None -> []
   }
 }
 

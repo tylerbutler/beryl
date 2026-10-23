@@ -29,8 +29,11 @@ put_topic(Table, Topic, Count, Entries) ->
 %% left) so a missing topic reads as empty only because the table itself
 %% has nothing recorded for it, not because of a stale leftover value.
 delete_topic(Table, Topic) ->
-    catch ets:delete(Table, Topic),
-    nil.
+    try ets:delete(Table, Topic) of
+        true -> {ok, nil}
+    catch
+        error:badarg -> {error, read_table_unavailable}
+    end.
 
 %% Look up a topic's materialized entries.
 %%
