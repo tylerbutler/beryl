@@ -54,11 +54,19 @@ pub fn lookup(name: Name(message)) -> Result(Queue(message), AdmissionError)
 @external(erlang, "beryl_work_queue_ffi", "is_open")
 pub fn is_open(queue: Queue(message)) -> Bool
 
-/// Close once with a bounded admission failure as the terminal reason.
+/// Record the first admission failure and close ingress, returning `True` once.
+/// While open, any admission error can become the terminal reason. After normal
+/// closure, `Closed` is a no-op: late ingress must not abort the normal drain.
+/// `Unavailable`, `Overloaded`, and `ItemTooLarge` can still record the first
+/// failure after normal closure, so accepted work can trigger a fail-fast abort.
+/// No error replaces an existing reason. Missing queues return `False`.
+/// Reservations remain charged until the owner explicitly releases or drains them.
 @external(erlang, "beryl_work_queue_ffi", "close_with_error")
 pub fn close_with_error(queue: Queue(message), error: AdmissionError) -> Bool
 
-/// Read the first recorded admission failure, if the close was due to overload.
+/// Read the first recorded admission failure. Normal closure alone leaves `None`;
+/// a later failure other than `Closed` can set the reason without reopening input.
+/// Missing queues return `None`.
 @external(erlang, "beryl_work_queue_ffi", "close_reason")
 pub fn close_reason(queue: Queue(message)) -> option.Option(AdmissionError)
 

@@ -121,8 +121,15 @@ even when the router's data queue is full. These controls do not consume data
 capacity. Input, reply refs, worker reports, and effects still use their
 configured item and byte limits during the drain. Overload rejection, callback
 failure, heartbeat expiry, owner death, and shutdown can end the drain early.
+Fatal admission failures while applying admitted work still abort later effects,
+even after normal input closure. Rejecting new input because the queue is
+already closed does not abort the drain.
 Shutdown keeps its existing two-second socket-actor drain deadline and kills
 blocked actors. A blocked raw callback cannot be interrupted by a disconnect.
+
+Socket targets are stored outside the queue's compare-and-swap ledger.
+Registry epochs prevent a stale disconnect request from closing a replacement
+socket with the same ID.
 
 ## What closes after a callback crash
 
