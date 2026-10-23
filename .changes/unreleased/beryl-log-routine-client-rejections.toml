@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Log routine client rejections at debug level, bound diagnostic fields to 256 UTF-8 bytes, and skip rejection formatting when debug is disabled."
