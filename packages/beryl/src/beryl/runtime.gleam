@@ -152,6 +152,14 @@ pub type Message(message) {
   /// Broadcast fan-out: local subscribers plus PubSub forwarding to other
   /// runtimes when PubSub is configured.
   Broadcast(topic: String, event: String, payload: Json, except: Option(String))
+  /// Socket-originated fan-out, including recipients already selected inline.
+  SocketBroadcast(
+    topic: String,
+    event: String,
+    payload: Json,
+    except: Option(String),
+    inline_recipients: Int,
+  )
   /// Originated here, but restricted to socket subscribers on this node.
   LocalBroadcast(topic: String, event: String, payload: Json)
   RemoteBroadcast(pubsub.Message(Json))
@@ -1187,6 +1195,17 @@ fn handle_message(
       }
       actor.continue(state)
     }
+    SocketBroadcast(topic_name, event_name, payload, except, inline_recipients) -> {
+      broadcast_from_router(
+        state,
+        topic_name,
+        event_name,
+        payload,
+        except,
+        inline_recipients,
+      )
+      actor.continue(state)
+    }
     LocalBroadcast(topic_name, event_name, payload) -> {
       broadcast_locally(state, topic_name, event_name, payload)
       actor.continue(state)
@@ -1704,6 +1723,7 @@ fn dispatch_socket_msg(
     // Not socket-scoped, so never deferred to this dispatcher.
     AdmitSocket(..)
     | Broadcast(..)
+    | SocketBroadcast(..)
     | LocalBroadcast(..)
     | RemoteBroadcast(..)
     | CheckHeartbeats
@@ -6121,6 +6141,7 @@ fn emit_broadcast(
   payload: Json,
   except: Option(String),
   origin: telemetry.BroadcastOrigin,
+  inline_recipients: Int,
 ) -> Nil {
   let started_at = telemetry_start(state)
   let recipients =
@@ -6130,7 +6151,7 @@ fn emit_broadcast(
     True,
     telemetry.BroadcastStop(
       duration: telemetry.duration_since(started_at),
-      recipients: recipients,
+      recipients: recipients + inline_recipients,
       origin: origin,
     ),
   )
@@ -6144,7 +6165,15 @@ fn broadcast_locally(
   event_name: String,
   payload: Json,
 ) -> Nil {
-  emit_broadcast(state, topic_name, event_name, payload, None, telemetry.Local)
+  emit_broadcast(
+    state,
+    topic_name,
+    event_name,
+    payload,
+    None,
+    telemetry.Local,
+    0,
+  )
   case state.pubsub {
     Some(pubsub_instance) ->
       forward_pubsub(state, topic_name, fn() {
@@ -6181,53 +6210,86 @@ fn broadcast_with_pubsub(
   // `except` a socket actor ever originates is its own id (`BroadcastFrom`),
   // so the exclusion handed to the router is always this socket.
   case state.role {
-    SocketActorRole(..) -> {
-      case except, dict.keys(state.sockets) {
-        None, [socket_id] -> {
-          use <- bool.guard(
-            when: !admit_router_broadcast(
-              state,
-              Broadcast(topic_name, event_name, payload, Some(socket_id)),
-            ),
-            return: Nil,
-          )
-          let _recipient_count =
-            local_broadcast(state, topic_name, event_name, payload, None)
-          Nil
-        }
-        None, [] | None, [_, _, ..] | Some(_), _ -> {
-          let _admitted =
-            admit_router_broadcast(
-              state,
-              Broadcast(topic_name, event_name, payload, except),
-            )
-          Nil
-        }
+    SocketActorRole(..) ->
+      broadcast_from_socket(state, topic_name, event_name, payload, except)
+    RouterRole(..) ->
+      broadcast_from_router(state, topic_name, event_name, payload, except, 0)
+  }
+}
+
+fn broadcast_from_socket(
+  state: State(model, message),
+  topic_name: String,
+  event_name: String,
+  payload: Json,
+  except: Option(String),
+) -> Nil {
+  case except, dict.keys(state.sockets) {
+    None, [socket_id] -> {
+      let inline_recipients = case
+        dict.get(state.topics, topic_name)
+        |> result.unwrap(set.new())
+        |> set.contains(socket_id)
+      {
+        True -> 1
+        False -> 0
       }
-    }
-    RouterRole(..) -> {
-      emit_broadcast(
-        state,
-        topic_name,
-        event_name,
-        payload,
-        except,
-        telemetry.Local,
+      // Publish before encoding or writing the sender's copy: its transport
+      // must not block or prevent delivery to the other subscribers.
+      use <- bool.guard(
+        when: !admit_router_broadcast(
+          state,
+          SocketBroadcast(
+            topic_name,
+            event_name,
+            payload,
+            Some(socket_id),
+            inline_recipients,
+          ),
+        ),
+        return: Nil,
       )
-      case state.pubsub {
-        Some(pubsub_instance) ->
-          forward_pubsub(state, topic_name, fn() {
-            publish_broadcast(
-              pubsub_instance,
-              topic_name,
-              event_name,
-              payload,
-              except,
-            )
-          })
-        None -> Nil
-      }
+      let _recipient_count =
+        local_broadcast(state, topic_name, event_name, payload, None)
+      Nil
     }
+    None, [] | None, [_, _, ..] | Some(_), _ -> {
+      let message = Broadcast(topic_name, event_name, payload, except)
+      let _admitted = admit_router_broadcast(state, message)
+      Nil
+    }
+  }
+}
+
+fn broadcast_from_router(
+  state: State(model, message),
+  topic_name: String,
+  event_name: String,
+  payload: Json,
+  except: Option(String),
+  inline_recipients: Int,
+) -> Nil {
+  emit_broadcast(
+    state,
+    topic_name,
+    event_name,
+    payload,
+    except,
+    telemetry.Local,
+    inline_recipients,
+  )
+  case state.pubsub {
+    Some(pubsub_instance) ->
+      forward_pubsub(state, topic_name, fn() {
+        publish_broadcast(
+          pubsub_instance,
+          topic_name,
+          event_name,
+          payload,
+          except,
+        )
+      })
+    None -> Nil
   }
 }
 
@@ -6319,6 +6381,7 @@ fn handle_remote_broadcast(
     pubsub_message.payload,
     except,
     telemetry.Remote,
+    0,
   )
   state
 }
@@ -8161,6 +8224,7 @@ fn resume_worker_close(
             | HandleBinary(..)
             | AppInfo(..)
             | Broadcast(..)
+            | SocketBroadcast(..)
             | LocalBroadcast(..)
             | RemoteBroadcast(..)
             | CheckHeartbeats
@@ -8260,6 +8324,7 @@ fn worker_termination_effects(
     | HandleBinary(..)
     | AppInfo(..)
     | Broadcast(..)
+    | SocketBroadcast(..)
     | LocalBroadcast(..)
     | RemoteBroadcast(..)
     | CheckHeartbeats
