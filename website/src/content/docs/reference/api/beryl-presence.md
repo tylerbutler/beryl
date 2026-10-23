@@ -227,7 +227,7 @@ A running Presence instance.
  caller's node. Keep a `Presence` handle on the node where its child
  specification runs. From another BEAM node, synchronous mutations
  (`track`, `update`, `untrack`, and `untrack_all`) cannot reach the owning
- actor and panic as unavailable, while `list`, `get_by_key`, and `count`
+ actor and return typed call errors, while `list`, `get_by_key`, and `count`
  return `Error(Nil)` because the read model is unavailable. Use PubSub
  replication (`with_pubsub`) to share presence state across nodes instead of
  moving the handle itself.
@@ -634,8 +634,9 @@ pub fn with_call_timeout(
 Set the timeout for synchronous presence mutations, in milliseconds.
 
  This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
- functions panic if the actor does not reply before the timeout. The default
- is 5000 ms.
+ functions return typed timeout errors if the actor does not reply in time.
+ Pending work is cancelled, but running mutations may still complete.
+ The default is 5000 ms.
 
 <div class="api-entry-anchor" id="api-function-with_on_diff" aria-hidden="true"></div>
 
