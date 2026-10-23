@@ -15,6 +15,7 @@
 //// server exposes `gleam/http` requests.
 
 import beryl.{type Sockets}
+import beryl/internal
 import beryl/log
 import beryl/outbound_budget
 import beryl/overload
@@ -747,7 +748,9 @@ pub type FrameDisposition {
 ///
 /// Oversized frames return `Stop` and close the connection. The function
 /// silently drops over-rate frames. It logs and drops frames that it cannot
-/// decode.
+/// decode at debug level. With explicit payload logging opt-in, only this
+/// text decode diagnostic includes a grapheme-bounded `frame_preview`.
+/// Binary frames, successful frames, and connect metadata have no preview.
 pub fn handle_text_frame(
   state: ConnectionState,
   text: String,
@@ -772,10 +775,17 @@ pub fn handle_text_frame(
             state.logger,
             "Failed to decode wire protocol message",
             fn() {
-              [
-                #("socket_id", state.socket_id),
-                #("error", codec.format_decode_error(error)),
-              ]
+              list.append(
+                [
+                  #("socket_id", state.socket_id),
+                  #("error", codec.format_decode_error(error)),
+                ],
+                internal.preview_metadata(
+                  "frame_preview",
+                  text,
+                  beryl.configured_logging(state.sockets),
+                ),
+              )
             },
           )
           emit_frame_stop(

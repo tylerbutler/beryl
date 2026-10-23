@@ -543,6 +543,39 @@ pub fn handler_frame_rate_counts_malformed_frames_test() -> Nil {
   stop_supervisor(server_pid)
 }
 
+pub fn handler_text_decode_preview_uses_shared_logging_config_test() -> Nil {
+  use <- unitest.tag("serial")
+  let channels =
+    start_app_system(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_logging(
+        beryl.logging_config(beryl.DebugLevel, True)
+        |> beryl.with_payload_preview_bytes(2),
+      ),
+    )
+  let config =
+    server.default_config("/socket")
+    |> server.with_on_connect(fn(_) { Ok([#("token", "connect-secret-550")]) })
+  let #(port, server_pid) = start_server_with_config(channels, config)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  use <- with_capture()
+  let selector = captured_selector()
+  drain_captured(selector)
+  let assert Ok(_) = send_text(client, "👨‍👩‍👧‍👦éprivate")
+  let assert Ok(captured) =
+    receive_log(selector, "Failed to decode wire protocol message", 30)
+  dict.get(captured.metadata, "frame_preview")
+  |> should.equal(Ok("👨‍👩‍👧‍👦é"))
+  dict.get(captured.metadata, "payload") |> should.equal(Error(Nil))
+  dict.get(captured.metadata, "token") |> should.equal(Error(Nil))
+  dict.get(captured.metadata, "headers") |> should.equal(Error(Nil))
+  stop_capture()
+  close(client)
+  stop_supervisor(server_pid)
+  let _ = beryl.stop(channels)
+  Nil
+}
+
 fn send_heartbeats(client: WebsocketClient, remaining: Int) -> Nil {
   case remaining <= 0 {
     True -> Nil
