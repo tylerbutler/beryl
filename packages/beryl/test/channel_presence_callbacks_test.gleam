@@ -595,14 +595,20 @@ pub fn source_restart_requires_rejoin_even_with_a_stable_handle_test() -> Nil {
   test_helper.wait_until(
     fn() {
       case process.subject_owner(presence.subject(presence)) {
-        Ok(pid) -> pid != original
+        Ok(pid) ->
+          pid != original
+          && case presence.queue_snapshot(presence) {
+            Ok(_) -> True
+            Error(_) -> False
+          }
         Error(Nil) -> False
       }
     },
     1000,
     10,
   )
-  let _ref = presence.track(presence, "room:a", "new", "new", json.object([]))
+  let assert Ok(_ref) =
+    presence.track(presence, "room:a", "new", "new", json.object([]))
   process.receive(trace, 50) |> should.be_error
   helper.join(channels, "s1", "room:a", "new", "2")
   let _reply = frame(frames, "phx_reply")
