@@ -6,8 +6,9 @@
 socket_actor(Router, SocketId) ->
     {registered_name, Name} = process_info(Router, registered_name),
     {ok, {Table, Router, _, _, _, _, _}} = beryl_work_queue_ffi:lookup(Name),
-    [{{target, SocketId}, {_, Owner, _, _, _, _, _}}] =
-        ets:lookup(Table, {target, SocketId}),
+    [{state, #{targets := Targets}}] = ets:lookup(Table, state),
+    {_Incarnation, {_, Owner, _, _, _, _, _}, _Status} =
+        maps:get(SocketId, Targets),
     Owner.
 
 without_error_logs(Action) ->

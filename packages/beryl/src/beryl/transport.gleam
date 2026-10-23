@@ -188,6 +188,10 @@ pub fn telemetry_frame_stop(
 }
 
 /// Announce that a socket's connection has closed.
+///
+/// Previously admitted inbound work drains before `Closed`, including work
+/// waiting in the router. Existing limits, faults, timeouts, and shutdown still
+/// apply. This does not confirm delivery of replies to the closed connection.
 pub fn socket_disconnected(
   sockets sockets: Sockets,
   socket_id socket_id: String,

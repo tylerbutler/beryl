@@ -16,6 +16,7 @@ import gleam/option
 import gleam/string
 import gleeunit/should
 import test_helper
+import unitest
 
 @external(erlang, "beryl_test_process_ffi", "with_suspended")
 fn with_suspended(pid: process.Pid, action: fn() -> a) -> a
@@ -366,6 +367,7 @@ pub fn discarded_ignored_and_broadcast_refs_reclaim_socket_capacity_test() -> Ni
 }
 
 pub fn repeated_disconnects_coalesce_while_callback_is_blocked_test() -> Nil {
+  use <- unitest.tag("serial")
   let senders = process.new_subject()
   let entered = process.new_subject()
   let assert Ok(sockets) =
@@ -394,6 +396,7 @@ pub fn repeated_disconnects_coalesce_while_callback_is_blocked_test() -> Nil {
   list.each(list.repeat(Nil, 10_000), fn(_) {
     transport.socket_disconnected(sockets, "closing")
   })
+  snapshot.get(sockets) |> should.be_ok
   mailbox_length(owner) |> fn(count) { count <= 3 } |> should.be_true
   let assert Ok(blocked) = socket.queue_snapshot(sender)
   blocked.items |> should.equal(1)
@@ -408,6 +411,152 @@ pub fn repeated_disconnects_coalesce_while_callback_is_blocked_test() -> Nil {
     5,
   )
   beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn disconnect_drains_socket_and_router_input_before_closed_test() -> Nil {
+  use <- unitest.tag("serial")
+  let senders = process.new_subject()
+  let entered = process.new_subject()
+  let events = process.new_subject()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      config()
+        |> beryl.with_router_queue_limits(limits(2, 4096))
+        |> beryl.with_socket_queue_limits(limits(16, 4096)),
+      init: fn(info) {
+        process.send(senders, info.self)
+        #(Nil, [])
+      },
+      update: fn(model, input) {
+        case input {
+          socket.Info("block") -> {
+            let release = process.new_subject()
+            process.send(entered, release)
+            process.receive_forever(release)
+            socket.Next(model, [])
+          }
+          socket.Join(topic, _, ref) -> {
+            process.send(events, "join:" <> topic)
+            socket.Next(model, [socket.AcceptJoin(ref, option.None)])
+          }
+          socket.Message(_, event, _, option.Some(ref)) -> {
+            process.send(events, event)
+            socket.Next(model, [socket.ReplyOk(ref, json.null())])
+          }
+          socket.Closed(topic, reason) -> {
+            reason |> should.equal(socket.Normal)
+            process.send(events, "closed:" <> topic)
+            socket.Next(model, [])
+          }
+          _ -> socket.Next(model, [])
+        }
+      },
+    )
+  let frames = helper.connect(sockets, "draining")
+  let assert Ok(sender) = process.receive(senders, 1000)
+  helper.join(sockets, "draining", "room:a", "j", "r")
+  let _ = helper.recv(frames)
+  process.receive(events, 1000) |> should.equal(Ok("join:room:a"))
+  socket.notify(sender, "block") |> should.equal(Ok(Nil))
+  let assert Ok(release) = process.receive(entered, 1000)
+  helper.push(sockets, "draining", "room:a", "socket_queued", "one")
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = socket.queue_snapshot(sender)
+      current.items == 2
+    },
+    1000,
+    5,
+  )
+  let assert Ok(router) = transport.runtime_pid(sockets)
+  with_suspended(router, fn() {
+    helper.push(sockets, "draining", "room:a", "router_queued", "two")
+    helper.join(sockets, "draining", "room:b", "other", "three")
+    list.each(list.repeat(Nil, 10_000), fn(_) {
+      transport.socket_disconnected(sockets, "draining")
+    })
+    let assert Ok(current) = snapshot.queue(sockets)
+    current.items |> should.equal(2)
+    current.high_items |> fn(count) { count <= 2 } |> should.be_true
+    mailbox_length(router) |> fn(count) { count <= 3 } |> should.be_true
+  })
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = socket.queue_snapshot(sender)
+      current.items == 4
+    },
+    1000,
+    5,
+  )
+  snapshot.get(sockets) |> should.be_ok
+  socket.notify(sender, "late") |> should.equal(Error(overload.Closed))
+  process.send(release, Nil)
+  list.each(
+    [
+      "socket_queued",
+      "router_queued",
+      "join:room:b",
+      "closed:room:a",
+      "closed:room:b",
+    ],
+    fn(event) { process.receive(events, 1000) |> should.equal(Ok(event)) },
+  )
+  list.each(list.repeat(Nil, 3), fn(_) {
+    helper.recv(frames) |> string.contains("phx_reply") |> should.be_true
+  })
+  list.each(list.repeat(Nil, 2), fn(_) {
+    helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  })
+  test_helper.wait_until(
+    fn() {
+      case snapshot.get(sockets) {
+        Ok(current) -> snapshot.connected_sockets(current) == 0
+        Error(_) -> False
+      }
+    },
+    1000,
+    5,
+  )
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn shutdown_bounds_a_stuck_disconnect_drain_test() -> Nil {
+  use <- unitest.tag("serial")
+  let senders = process.new_subject()
+  let entered = process.new_subject()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      config(),
+      init: fn(info) {
+        process.send(senders, info.self)
+        #(Nil, [])
+      },
+      update: fn(model, input) {
+        case input {
+          socket.Info(Nil) -> {
+            let release = process.new_subject()
+            process.send(entered, process.self())
+            process.receive_forever(release)
+            socket.Next(model, [])
+          }
+          _ -> socket.Next(model, [])
+        }
+      },
+    )
+  let _ = helper.connect(sockets, "stuck")
+  let assert Ok(sender) = process.receive(senders, 1000)
+  socket.notify(sender, Nil) |> should.equal(Ok(Nil))
+  let assert Ok(owner) = process.receive(entered, 1000)
+  let monitor = process.monitor(owner)
+  transport.socket_disconnected(sockets, "stuck")
+  snapshot.get(sockets) |> should.be_ok
+  socket.notify(sender, Nil) |> should.equal(Error(overload.Closed))
+  beryl.stop(sockets) |> should.equal(Error(beryl.StopTimeout))
+  process.new_selector()
+  |> process.select_specific_monitor(monitor, fn(_) { Nil })
+  |> process.selector_receive(1000)
+  |> should.equal(Ok(Nil))
+  socket.queue_snapshot(sender) |> should.equal(Error(overload.Unavailable))
 }
 
 pub fn saturated_router_rejects_admission_and_both_transport_frame_kinds_test() -> Nil {
