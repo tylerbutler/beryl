@@ -131,9 +131,12 @@ ordered close can still delay that socket's other topics.
 
 ## Presence calls and timeouts
 
-`presence.track` returns `Result(String, overload.CallError)`. `untrack` and
-`untrack_all` return `Result(Nil, overload.CallError)`. `update` returns either
-the replacement ref, `UnknownRef(ref)`, or `RequestFailed(call_error)`.
+`presence.track` returns `Result(String, presence.PresenceTrackError)`.
+`TrackRequestFailed(call_error)` wraps call failures; `TrackInvalidCrdtState`
+reports a failed CRDT clock lookup. `untrack` and `untrack_all` return
+`Result(Nil, overload.CallError)`. `update` returns either the replacement ref,
+`UnknownRef(ref)`, `RequestFailed(call_error)`, or `UpdateInvalidCrdtState`.
+Clock-lookup failures leave the entry and read model unchanged.
 
 `AdmissionRejected(error)` means the mutation did not enter the queue.
 `RequestTimedOut` does not prove that the mutation failed: beryl cancels work

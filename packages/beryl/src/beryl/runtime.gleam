@@ -1336,11 +1336,7 @@ fn handle_message(
             #("socket_count", int.to_string(dict.size(socket_actors))),
           ])
           dict.values(socket_actors)
-          |> list.each(fn(ref) {
-            // A rejected first track reserves cleanup without an owner watcher.
-            sweep_runtime_presence(state.config.presence, ref.pid)
-            process.kill(ref.pid)
-          })
+          |> list.each(fn(ref) { process.kill(ref.pid) })
           process.send(reply, app_supervisor.StopIncomplete)
           actor.stop()
         }
