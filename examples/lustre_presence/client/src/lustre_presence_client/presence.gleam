@@ -23,9 +23,10 @@ pub type PresenceEvent {
   Diff(joins: Presence, leaves: Presence)
 }
 
+/// Invalid presence payloads, with the decoder's field paths and type details.
 pub type PresenceError {
-  InvalidState
-  InvalidDiff
+  InvalidState(errors: List(decode.DecodeError))
+  InvalidDiff(errors: List(decode.DecodeError))
 }
 
 pub fn new() -> Presence {
@@ -35,7 +36,7 @@ pub fn new() -> Presence {
 pub fn decode_state(payload: Dynamic) -> Result(PresenceEvent, PresenceError) {
   decode.run(payload, presence_decoder())
   |> result.map(fn(entries) { State(Presence(entries)) })
-  |> result.replace_error(InvalidState)
+  |> result.map_error(InvalidState)
 }
 
 pub fn decode_diff(payload: Dynamic) -> Result(PresenceEvent, PresenceError) {
@@ -46,7 +47,35 @@ pub fn decode_diff(payload: Dynamic) -> Result(PresenceEvent, PresenceError) {
   }
 
   decode.run(payload, decoder)
-  |> result.replace_error(InvalidDiff)
+  |> result.map_error(InvalidDiff)
+}
+
+/// Describe the invalid presence event and each decoder error.
+pub fn error_to_string(error: PresenceError) -> String {
+  let #(message, errors) = case error {
+    InvalidState(errors) -> #("The server sent invalid presence state.", errors)
+    InvalidDiff(errors) -> #(
+      "The server sent an invalid presence diff.",
+      errors,
+    )
+  }
+
+  let details =
+    list.map(errors, fn(error) {
+      let path = case error.path {
+        [] -> "payload"
+        path -> string.join(path, ".")
+      }
+      "At "
+      <> path
+      <> ": expected "
+      <> error.expected
+      <> ", found "
+      <> error.found
+      <> "."
+    })
+
+  string.join([message, ..details], " ")
 }
 
 pub fn update(

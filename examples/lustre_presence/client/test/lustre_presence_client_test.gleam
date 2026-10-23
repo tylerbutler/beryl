@@ -72,18 +72,148 @@ pub fn channel_events_map_through_one_lustre_message_branch_test() {
   |> should.equal(lustre_presence_client.Reconnecting)
 }
 
-pub fn invalid_presence_payload_is_an_explicit_error_test() {
-  presence.decode_state(payload("{\"user:1\":{\"metas\":\"invalid\"}}"))
-  |> should.equal(Error(presence.InvalidState))
+pub fn invalid_presence_state_preserves_decode_errors_test() -> Nil {
+  let assert Error(presence.InvalidState(errors)) =
+    presence.decode_state(payload(
+      "{\"user:1\":{\"metas\":[{\"name\":42,\"avatar_url\":false,\"phx_ref\":\"1\"}]}}",
+    ))
+
+  errors
+  |> should.equal([
+    decode.DecodeError(expected: "String", found: "Int", path: [
+      "user:1",
+      "metas",
+      "0",
+      "name",
+    ]),
+    decode.DecodeError(expected: "String", found: "Bool", path: [
+      "user:1",
+      "metas",
+      "0",
+      "avatar_url",
+    ]),
+  ])
+}
+
+pub fn invalid_presence_state_reaches_the_error_boundary_test() -> Nil {
+  let assert Ok(presence.State(initial)) =
+    presence.decode_state(payload(
+      "{\"user:1\":{\"metas\":[{\"name\":\"Ada\",\"avatar_url\":\"/ada.png\",\"phx_ref\":\"1\"}]}}",
+    ))
+  let assert Error(error) =
+    presence.decode_state(payload("{\"user:1\":{\"metas\":\"invalid\"}}"))
+
+  error
+  |> should.equal(
+    presence.InvalidState([
+      decode.DecodeError(expected: "List", found: "String", path: [
+        "user:1",
+        "metas",
+      ]),
+    ]),
+  )
+
+  let #(model, _) =
+    lustre_presence_client.update(
+      lustre_presence_client.Model(
+        ..lustre_presence_client.initial_model(),
+        presence: initial,
+        connection: lustre_presence_client.Connected,
+      ),
+      lustre_presence_client.ChannelEvent(channel.DecodeFailed(error)),
+    )
+
+  model.error
+  |> should.equal(Some(
+    "The server sent invalid presence state. At user:1.metas: expected List, found String.",
+  ))
+  model.connection |> should.equal(lustre_presence_client.Connected)
+  model.presence |> should.equal(initial)
+}
+
+pub fn invalid_presence_diff_preserves_join_errors_test() -> Nil {
+  presence.decode_diff(payload(
+    "{\"joins\":{\"user:1\":{\"metas\":[{\"name\":42,\"avatar_url\":\"/ada.png\",\"phx_ref\":\"1\"}]}},\"leaves\":{}}",
+  ))
+  |> should.equal(
+    Error(
+      presence.InvalidDiff([
+        decode.DecodeError(expected: "String", found: "Int", path: [
+          "joins",
+          "user:1",
+          "metas",
+          "0",
+          "name",
+        ]),
+      ]),
+    ),
+  )
+}
+
+pub fn invalid_presence_diff_preserves_leave_errors_test() -> Nil {
+  presence.decode_diff(payload(
+    "{\"joins\":{},\"leaves\":{\"user:1\":{\"metas\":[{\"name\":\"Ada\",\"avatar_url\":\"/ada.png\",\"phx_ref\":42}]}}}",
+  ))
+  |> should.equal(
+    Error(
+      presence.InvalidDiff([
+        decode.DecodeError(expected: "String", found: "Int", path: [
+          "leaves",
+          "user:1",
+          "metas",
+          "0",
+          "phx_ref",
+        ]),
+      ]),
+    ),
+  )
+}
+
+pub fn missing_presence_diff_field_reaches_the_error_boundary_test() -> Nil {
+  let assert Error(error) = presence.decode_diff(payload("{\"joins\":{}}"))
+
+  error
+  |> should.equal(
+    presence.InvalidDiff([
+      decode.DecodeError(expected: "Field", found: "Nothing", path: ["leaves"]),
+    ]),
+  )
 
   let #(model, _) =
     lustre_presence_client.update(
       lustre_presence_client.initial_model(),
-      lustre_presence_client.ChannelEvent(channel.DecodeFailed(
-        presence.InvalidState,
-      )),
+      lustre_presence_client.ChannelEvent(channel.DecodeFailed(error)),
     )
 
   model.error
-  |> should.equal(Some("The server sent invalid presence data."))
+  |> should.equal(Some(
+    "The server sent an invalid presence diff. At leaves: expected Field, found Nothing.",
+  ))
+}
+
+pub fn presence_error_message_includes_all_decode_errors_test() -> Nil {
+  let assert Error(error) =
+    presence.decode_state(payload(
+      "{\"user:1\":{\"metas\":[{\"name\":42,\"avatar_url\":false,\"phx_ref\":\"1\"}]}}",
+    ))
+
+  presence.error_to_string(error)
+  |> should.equal(
+    "The server sent invalid presence state. At user:1.metas.0.name: expected String, found Int. At user:1.metas.0.avatar_url: expected String, found Bool.",
+  )
+}
+
+pub fn invalid_presence_root_has_a_payload_location_test() -> Nil {
+  let assert Error(error) = presence.decode_state(payload("[]"))
+
+  error
+  |> should.equal(
+    presence.InvalidState([
+      decode.DecodeError(expected: "Dict", found: "Array", path: []),
+    ]),
+  )
+  presence.error_to_string(error)
+  |> should.equal(
+    "The server sent invalid presence state. At payload: expected Dict, found Array.",
+  )
 }
