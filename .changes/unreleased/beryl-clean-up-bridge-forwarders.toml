@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Clean up bridge forwarders when startup times out."
