@@ -16,6 +16,7 @@ import gleam/erlang/process
 import gleam/string
 import gleeunit/should
 import test_helper
+import unitest
 
 @external(erlang, "beryl_supervisor_test_ffi", "active_child_count")
 fn active_child_count(supervisor: process.Pid) -> Int
@@ -176,6 +177,7 @@ pub fn evicted_socket_is_removed_and_ignores_further_input_test() -> Nil {
 }
 
 pub fn active_socket_survives_while_stale_peer_is_evicted_test() -> Nil {
+  use <- unitest.tag("serial")
   let events = process.new_subject()
   let channels = start_system(events)
   let stale_closed = process.new_subject()
