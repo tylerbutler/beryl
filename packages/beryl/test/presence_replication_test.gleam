@@ -30,11 +30,6 @@ fn test_config(
   |> presence.with_broadcast_interval(interval_ms)
 }
 
-fn stop_presence(tracker: presence.Presence) -> Nil {
-  let assert Ok(owner) = process.subject_owner(presence.subject(tracker))
-  process.kill(owner)
-}
-
 // ── BroadcastTick sends state via PubSub ────────────────────────────
 
 pub fn broadcast_tick_requests_state_test() -> Nil {
@@ -419,6 +414,7 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
 /// complete and the presence actor stays alive. This does not test protection
 /// against a hostile distribution peer.
 pub fn remote_callback_panic_is_reported_and_merge_is_published_test() -> Nil {
+  use <- unitest.tag("serial")
   let pubsub_instance = test_pubsub("processing_crash")
   let selector = test_helper.begin_capture()
 
@@ -478,8 +474,8 @@ pub fn remote_callback_panic_is_reported_and_merge_is_published_test() -> Nil {
   |> should.equal(Ok(owner_before))
 
   test_helper.stop_capture()
-  stop_presence(tracker1)
-  stop_presence(tracker2)
+  test_helper.kill_presence(tracker1)
+  test_helper.kill_presence(tracker2)
 }
 
 // ── Helper to drain stray messages ──────────────────────────────────
