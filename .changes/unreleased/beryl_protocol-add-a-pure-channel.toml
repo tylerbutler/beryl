@@ -1,0 +1,3 @@
+package = "beryl_protocol"
+kind = "Added"
+body = "Add a pure channel protocol core for Erlang and JavaScript with capability-safe correlation, ordered lifecycle actions, heartbeat deadlines, and versioned restoration."
