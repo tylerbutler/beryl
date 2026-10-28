@@ -8,6 +8,7 @@
 
 import beryl
 import beryl/channel
+import beryl/overload
 import beryl/runtime
 import beryl/transport
 import beryl/wire
@@ -21,6 +22,7 @@ import gleam/option.{None}
 import gleam/string
 import gleeunit/should
 import test_helper
+import unitest
 
 pub type Poke {
   Poke
@@ -234,6 +236,55 @@ pub fn a_slow_join_on_one_socket_does_not_block_another_test() -> Nil {
 }
 
 // --- leave ordering ----------------------------------------------------------
+
+pub fn failures_while_draining_send_error_and_preserve_sibling_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each([True, False], fn(crash) {
+    let entered = process.new_subject()
+    let gate = new_gate()
+    let assert Ok(limits) = overload.limits(items: 2, bytes: 4096)
+    let channels =
+      helper.start(config() |> beryl.with_effect_limits(limits), [
+        channel.handler("room:*", fn(context) {
+          channel.accept(Nil)
+          |> channel.on_message(fn(_, message) {
+            case context.topic {
+              "room:failing" -> {
+                process.send(entered, process.self())
+                wait_for_gate(gate)
+                case crash {
+                  True -> panic as "callback failed during close"
+                  False ->
+                    channel.next(
+                      Nil,
+                      list.repeat(channel.push("unexpected", json.null()), 3),
+                    )
+                }
+              }
+              _ ->
+                channel.next(Nil, [channel.reply_ok(message.reply, json.null())])
+            }
+          })
+        }),
+      ])
+    let frames = helper.connect(channels, "s1")
+    helper.join(channels, "s1", "room:failing", "j1", "r1")
+    let _ = helper.recv(frames)
+    helper.join(channels, "s1", "room:healthy", "j2", "r2")
+    let _ = helper.recv(frames)
+    helper.push(channels, "s1", "room:failing", "fail", "r3")
+    let assert Ok(worker) = process.receive(entered, 1000)
+    helper.leave(channels, "s1", "room:failing", "j1", "leave")
+    helper.recv(frames) |> string.contains("\"leave\"") |> should.be_true
+    release_gate(gate)
+    helper.recv(frames) |> string.contains("phx_error") |> should.be_true
+    wait_until_dead(worker)
+    helper.push(channels, "s1", "room:healthy", "echo", "healthy")
+    helper.recv(frames) |> string.contains("\"healthy\"") |> should.be_true
+    helper.recv_none(frames)
+    beryl.stop(channels) |> should.equal(Ok(Nil))
+  })
+}
 
 pub fn a_reply_computed_before_a_leave_is_still_delivered_test() -> Nil {
   let reports = process.new_subject()

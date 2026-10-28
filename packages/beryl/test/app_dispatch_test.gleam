@@ -12,6 +12,7 @@ import beryl/transport
 import beryl/wire
 import gleam/erlang/process
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import gleeunit/should
@@ -305,6 +306,116 @@ pub fn duplicate_join_closes_previous_instance_first_test() -> Nil {
   let rejoin_reply = app_test_helper.recv(frames)
   rejoin_reply |> string.contains("phx_reply") |> should.be_true
   rejoin_reply |> string.contains("jr-2") |> should.be_true
+}
+
+pub fn duplicate_join_does_not_run_replacement_after_closed_stops_socket_test() -> Nil {
+  let events = process.new_subject()
+  let assert Ok(channels) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_) { #(Nil, []) },
+      update: fn(model, event: socket.Input(AppMessage)) {
+        process.send(events, event)
+        case event {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          Closed(..) -> socket.Stop(socket.Shutdown)
+          Message(..) | socket.Binary(..) | Info(..) -> Next(model, [])
+        }
+      },
+    )
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join_ok(channels, frames, "s1", "room:a", "j1", "1")
+  let assert Join(..) = app_test_helper.next_event(events)
+  app_test_helper.join(channels, "s1", "room:a", "j2", "2")
+  let assert Closed("room:a", socket.Normal) =
+    app_test_helper.next_event(events)
+  app_test_helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  app_test_helper.recv_none(frames)
+  process.receive(events, 50) |> should.be_error
+  Nil
+}
+
+pub fn duplicate_join_waits_for_closed_callback_kicks_before_replacement_test() -> Nil {
+  let events = process.new_subject()
+  let assert Ok(channels) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_) { #(Nil, []) },
+      update: fn(model, event: socket.Input(AppMessage)) {
+        process.send(events, event)
+        case event {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          Closed("room:a", _) -> Next(model, [socket.KickTopic("room:b")])
+          Closed(..) | Message(..) | socket.Binary(..) | Info(..) ->
+            Next(model, [])
+        }
+      },
+    )
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join_ok(channels, frames, "s1", "room:a", "j1", "1")
+  app_test_helper.join_ok(channels, frames, "s1", "room:b", "jb", "b")
+  let assert Join("room:a", _, _) = app_test_helper.next_event(events)
+  let assert Join("room:b", _, _) = app_test_helper.next_event(events)
+  app_test_helper.join(channels, "s1", "room:a", "j2", "2")
+  let assert Closed("room:a", socket.Normal) =
+    app_test_helper.next_event(events)
+  let assert Closed("room:b", socket.Shutdown) =
+    app_test_helper.next_event(events)
+  let assert Join("room:a", _, _) = app_test_helper.next_event(events)
+  app_test_helper.recv(frames)
+  |> string.contains("room:a\",\"phx_close")
+  |> should.be_true
+  app_test_helper.recv(frames)
+  |> string.contains("room:b\",\"phx_close")
+  |> should.be_true
+  app_test_helper.recv(frames)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
+}
+
+pub fn raw_closed_callback_cannot_reply_or_push_to_closing_topic_test() -> Nil {
+  let events = process.new_subject()
+  let assert Ok(channels) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_) { #(None, []) },
+      update: fn(
+        model: Option(socket.ReplyRef),
+        event: socket.Input(AppMessage),
+      ) {
+        process.send(events, event)
+        case event {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          Message(_, _, _, Some(ref)) -> Next(Some(ref), [])
+          Closed("room:a", _) ->
+            Next(
+              model,
+              list.append(socket.reply_ok(model, json.string("too late")), [
+                socket.Push("room:a", "too_late", json.null()),
+              ]),
+            )
+          Closed(..) | Message(..) | socket.Binary(..) | Info(..) ->
+            Next(model, [])
+        }
+      },
+    )
+  let frames = app_test_helper.connect(channels, "s1")
+  app_test_helper.join_ok(channels, frames, "s1", "room:a", "j1", "1")
+  let assert Join(..) = app_test_helper.next_event(events)
+  app_test_helper.push(channels, "s1", "room:a", "stash", "2")
+  let assert Message(..) = app_test_helper.next_event(events)
+  app_test_helper.route(
+    channels,
+    "s1",
+    "[\"j1\",\"3\",\"room:a\",\"phx_leave\",{}]",
+  )
+  let assert Closed("room:a", socket.Normal) =
+    app_test_helper.next_event(events)
+  app_test_helper.recv(frames)
+  |> string.contains("\"3\",\"room:a\",\"phx_reply")
+  |> should.be_true
+  app_test_helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  app_test_helper.recv_none(frames)
 }
 
 pub fn delayed_stale_accept_cannot_override_current_replacement_reject_test() -> Nil {

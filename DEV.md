@@ -17,12 +17,13 @@ Ensure you have the following installed:
 `.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
 licence_audit. CI matrix-tests Erlang 27 and 28.
 
-This repository is a trellis-managed workspace: three packages live under
-`packages/` — `beryl`, `beryl_mist`, and `beryl_ewe` — with
+This repository is a trellis-managed workspace: four packages live under
+`packages/`: `beryl_protocol`, `beryl`, `beryl_mist`, and `beryl_ewe`, with
 runnable examples in `examples/` and a root `gleam.toml` holding only the
-`[tools.trellis]` configuration. `beryl_ewe` is built, tested, and linted but
-excluded from release via the `@release` key, so the other two packages are
-publishable. `just` recipes fan out across the workspace through `trellis run`.
+`[tools.trellis]` configuration. All four library packages use git-only
+releases. `just` recipes fan out across the workspace through `trellis run`.
+Use `just protocol-test` for the shared Erlang/JavaScript suite and
+`just portable-host-test` for the Roost/Durable Object host.
 
 ```bash
 mise install
@@ -110,7 +111,7 @@ just audit-check             # Enforce licences and the vulnerability threshold
 just audit-check beryl_mist  # Limit the task to one package
 ```
 
-These tasks default to `beryl`, `beryl_mist`, and `beryl_ewe`. Each command runs
+These tasks default to `beryl_protocol`, `beryl`, `beryl_mist`, and `beryl_ewe`. Each command runs
 in the package directory and reads its locked manifest. Licence reports and
 enforcement use its existing `[tools.licence_audit]` policy.
 Examples are not included by default. To report on an example, pass its
