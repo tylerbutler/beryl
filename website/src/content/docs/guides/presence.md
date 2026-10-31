@@ -510,10 +510,14 @@ socket.Join(topic, _payload, ref) ->
     socket.BroadcastPresence(topic, "presence_list", encode_presence),
   ])
 
-socket.Message(topic, "offline", _payload, _ref) ->
+socket.Message(topic, "offline", _payload, ref) ->
   socket.Next(model, [
     socket.PresenceUntrack(topic, model.user_id),
     socket.BroadcastPresence(topic, "presence_list", encode_presence),
+    ..case ref {
+      option.Some(ref) -> [socket.DiscardReply(ref)]
+      option.None -> []
+    }
   ])
 ```
 

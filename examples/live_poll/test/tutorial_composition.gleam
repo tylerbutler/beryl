@@ -84,7 +84,7 @@ pub fn update(
             model,
             raw_command(polls, room, topic, event, payload, reply),
           )
-        False, _ | True, Error(_) -> socket.Next(model, [])
+        False, _ | True, Error(_) -> socket.Next(model, discard_reply(reply))
       }
     socket.Info(GuideReady(generation, text)) ->
       case
@@ -156,7 +156,7 @@ fn raw_command(
             None -> []
           }
       }
-    poll.Close | poll.Unsupported -> []
+    poll.Close | poll.Unsupported -> discard_reply(reply)
   }
 }
 
@@ -223,7 +223,7 @@ fn channel_command(
           channel.reply_error(message.reply, poll.error_to_json(error)),
         ]
       }
-    poll.Close | poll.Unsupported -> []
+    poll.Close | poll.Unsupported -> [channel.discard_reply(message.reply)]
   }
 }
 
@@ -239,4 +239,11 @@ fn tip(text: String, count: Int) -> json.Json {
     #("text", json.string(text)),
     #("delivery", json.int(count)),
   ])
+}
+
+fn discard_reply(reply: Option(socket.ReplyRef)) -> List(socket.Effect) {
+  case reply {
+    Some(ref) -> [socket.DiscardReply(ref)]
+    None -> []
+  }
 }

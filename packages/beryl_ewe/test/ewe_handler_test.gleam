@@ -4,8 +4,10 @@
 //// handler routes WebSocket upgrades versus plain HTTP requests. They reuse a
 //// server-agnostic raw-TCP WebSocket client FFI.
 
+import alpacki
 import app_test_helper
 import beryl
+import beryl/snapshot
 import beryl/socket
 import beryl/transport/server
 import beryl/wire
@@ -13,6 +15,8 @@ import beryl/wire/codec
 import beryl_ewe as ewe_transport
 import ewe
 import gleam/bit_array
+import gleam/bool
+import gleam/bytes_tree
 import gleam/dict
 import gleam/dynamic
 import gleam/dynamic/decode
@@ -27,11 +31,16 @@ import gleam/option
 import gleam/result
 import gleam/string
 import gleeunit/should
+import glisten/socket as tcp_socket
+import glisten/tcp
 import unitest
 
 type WebsocketClient
 
 type TransportEventHandler
+
+@external(erlang, "beryl_ewe_transport_test_ffi", "connect_tcp")
+fn connect_tcp(port: Int) -> Result(tcp_socket.Socket, tcp_socket.SocketReason)
 
 @external(erlang, "beryl_ewe_transport_test_ffi", "connect_websocket")
 fn connect_websocket(port: Int, path: String) -> Result(WebsocketClient, Nil)
@@ -103,9 +112,6 @@ fn stop_supervisor(pid: process.Pid) -> Nil
 @external(erlang, "beryl_ewe_transport_test_ffi", "suspend_server_peer")
 fn suspend_server_peer(client: WebsocketClient) -> Result(process.Pid, Nil)
 
-@external(erlang, "beryl_ewe_transport_test_ffi", "resume_process")
-fn resume_process(pid: process.Pid) -> Nil
-
 @external(erlang, "beryl_ewe_transport_test_ffi", "outbound_queue_usage")
 fn outbound_queue_usage(pid: process.Pid) -> #(Int, Int)
 
@@ -174,7 +180,6 @@ fn start_server_with_config(
   channels: beryl.Sockets,
   config: server.TransportConfig(ewe.Connection),
 ) -> #(Int, process.Pid) {
-  let port_subject = process.new_subject()
   let http_fallback = fn(_request) {
     response.new(418)
     |> response.set_body(ewe.Empty)
@@ -182,13 +187,11 @@ fn start_server_with_config(
   let assert Ok(server) =
     ewe_transport.handler(channels, config, http_fallback)
     |> ewe.new
-    |> ewe.listening(port: 0)
-    |> ewe.bind(interface: "127.0.0.1")
-    |> ewe.on_start(fn(_scheme, address) {
-      process.send(port_subject, address.port)
-    })
+    |> ewe.listening_random
+    |> ewe.bind(to: "127.0.0.1")
+    |> ewe.quiet
     |> ewe.start
-  let assert Ok(port) = process.receive(port_subject, 1000)
+  let assert ewe.TcpSocketAddress(_, port) = server.data
   #(port, server.pid)
 }
 
@@ -303,6 +306,228 @@ pub fn handler_routes_websocket_upgrade_to_upgrade_test() -> Nil {
   close(client)
 
   stop_supervisor(server_pid)
+}
+
+pub fn handler_http2_connect_same_origin_nondefault_port_test() -> Nil {
+  check_http2_connect("127.0.0.1", "127.0.0.1", 0, "/socket", "200")
+}
+
+pub fn handler_http2_connect_same_origin_ipv6_authority_test() -> Nil {
+  // Authority parsing is independent of the TCP peer: no IPv6 listener needed.
+  check_http2_connect("[::1]", "[::1]", 0, "/socket", "200")
+}
+
+pub fn handler_http2_connect_cross_origin_rejected_test() -> Nil {
+  check_http2_connect("127.0.0.1", "evil.example.com", 0, "/socket", "403")
+}
+
+pub fn handler_http2_connect_origin_port_mismatch_rejected_test() -> Nil {
+  check_http2_connect("127.0.0.1", "127.0.0.1", -1, "/socket", "403")
+}
+
+pub fn handler_http2_connect_other_path_uses_fallback_test() -> Nil {
+  check_http2_connect("127.0.0.1", "127.0.0.1", 0, "/not-socket", "418")
+}
+
+const heartbeat_reply = "[null,\"hb\",\"phoenix\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]"
+
+fn check_http2_connect(
+  host: String,
+  origin_host: String,
+  port_offset: Int,
+  path: String,
+  expected_status: String,
+) -> Nil {
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+  let outcome = {
+    use client <- result.try(connect_tcp(port) |> result.map_error(TcpFailure))
+    let outcome =
+      http2_connect(
+        client,
+        host <> ":" <> int.to_string(port),
+        "http://" <> origin_host <> ":" <> int.to_string(port + port_offset),
+        path,
+      )
+    let closed = tcp.close(client) |> result.map_error(TcpFailure)
+    // Close even if the exchange failed; keep its original diagnostic.
+    use value <- result.try(outcome)
+    use _ <- result.try(closed)
+    Ok(value)
+  }
+  stop_supervisor(server_pid)
+  let stopped = beryl.stop(channels)
+  let expected_reply = case expected_status {
+    "200" -> heartbeat_reply
+    _ -> ""
+  }
+  outcome |> should.equal(Ok(#(expected_status, expected_reply)))
+  stopped |> should.equal(Ok(Nil))
+}
+
+type Http2TestError {
+  TcpFailure(tcp_socket.SocketReason)
+  HpackFailure(alpacki.DecodeError)
+  UnexpectedHttp2Frame(BitArray)
+  InvalidHttp2Response(BitArray)
+  Http2FrameLimit
+}
+
+fn http2_connect(
+  client: tcp_socket.Socket,
+  authority: String,
+  origin: String,
+  path: String,
+) -> Result(#(String, String), Http2TestError) {
+  let settings = http2_frame(4, 0, 0, <<>>)
+  use _ <- result.try(
+    http2_send(client, <<
+      "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n":utf8,
+      settings:bits,
+    >>),
+  )
+  // RFC 8441: do not send extended CONNECT until the server advertises it.
+  use _ <- result.try(http2_wait(client, 4, 16))
+  let fields =
+    [
+      #(":method", "CONNECT"),
+      #(":protocol", "websocket"),
+      #(":scheme", "http"),
+      #(":path", path),
+      #(":authority", authority),
+      #("sec-websocket-version", "13"),
+      #("origin", origin),
+    ]
+    |> list.map(fn(field) {
+      alpacki.HeaderField(
+        bit_array.from_string(field.0),
+        bit_array.from_string(field.1),
+        alpacki.WithoutIndexing,
+      )
+    })
+  // Deliberately no Host, Upgrade, Connection, or sec-websocket-key headers.
+  let #(block, _) =
+    alpacki.encode_header_block(fields, alpacki.new_dynamic(4096), False)
+  use _ <- result.try(http2_send(client, http2_frame(1, 4, 1, block)))
+  use block <- result.try(http2_wait(client, 1, 16))
+  use decoded <- result.try(
+    alpacki.decode_header_block(block, alpacki.new_dynamic(4096))
+    |> result.map_error(HpackFailure),
+  )
+  use status <- result.try(case decoded.remaining {
+    <<>> ->
+      list.key_find(decoded.headers, <<":status":utf8>>)
+      |> result.replace_error(InvalidHttp2Response(block))
+    _ -> Error(InvalidHttp2Response(block))
+  })
+  use status <- result.try(
+    bit_array.to_string(status)
+    |> result.replace_error(InvalidHttp2Response(status)),
+  )
+  case status {
+    "200" -> {
+      let heartbeat = "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]"
+      // A masked, final text frame. The fixed zero mask is valid for this
+      // deterministic test fixture, not for a production WebSocket client.
+      let frame = <<
+        0x81,
+        1:1,
+        string.byte_size(heartbeat):7,
+        0:32,
+        heartbeat:utf8,
+      >>
+      use _ <- result.try(http2_send(client, http2_frame(0, 0, 1, frame)))
+      use reply <- result.try(http2_heartbeat_reply(client, <<>>, 16))
+      Ok(#(status, reply))
+    }
+    _ -> Ok(#(status, ""))
+  }
+}
+
+fn http2_frame(
+  kind: Int,
+  flags: Int,
+  stream: Int,
+  payload: BitArray,
+) -> BitArray {
+  <<bit_array.byte_size(payload):24, kind, flags, stream:32, payload:bits>>
+}
+
+fn http2_send(
+  client: tcp_socket.Socket,
+  data: BitArray,
+) -> Result(Nil, Http2TestError) {
+  tcp.send(client, bytes_tree.from_bit_array(data))
+  |> result.map_error(TcpFailure)
+}
+
+// This fixture expects one small END_HEADERS block, unpadded DATA, and stream 1.
+// Exact-length passive reads handle TCP splitting/coalescing without a mailbox.
+// Bound both frame size and count; every receive also has a one-second timeout.
+fn http2_wait(
+  client: tcp_socket.Socket,
+  wanted: Int,
+  remaining: Int,
+) -> Result(BitArray, Http2TestError) {
+  use <- bool.guard(remaining <= 0, Error(Http2FrameLimit))
+  use header <- result.try(
+    tcp.receive_timeout(client, 9, 1000) |> result.map_error(TcpFailure),
+  )
+  use frame <- result.try(case header {
+    <<length:24, kind, flags, 0:1, stream:31>> if length <= 16_384 -> {
+      let payload = case length {
+        0 -> Ok(<<>>)
+        _ ->
+          tcp.receive_timeout(client, length, 1000)
+          |> result.map_error(TcpFailure)
+      }
+      result.map(payload, fn(payload) { #(kind, flags, stream, payload) })
+    }
+    _ -> Error(UnexpectedHttp2Frame(header))
+  })
+  case frame {
+    #(4, 0, 0, payload) -> {
+      use _ <- result.try(http2_send(client, http2_frame(4, 1, 0, <<>>)))
+      case wanted == 4 && enables_connect(payload) {
+        True -> Ok(payload)
+        False -> http2_wait(client, wanted, remaining - 1)
+      }
+    }
+    #(4, 1, 0, <<>>) | #(8, 0, _, _) ->
+      http2_wait(client, wanted, remaining - 1)
+    #(6, 0, 0, payload) -> {
+      use _ <- result.try(http2_send(client, http2_frame(6, 1, 0, payload)))
+      http2_wait(client, wanted, remaining - 1)
+    }
+    #(1, 4, 1, payload) | #(1, 5, 1, payload) if wanted == 1 -> Ok(payload)
+    #(0, 0, 1, payload) if wanted == 0 -> Ok(payload)
+    _ -> Error(UnexpectedHttp2Frame(header))
+  }
+}
+
+fn enables_connect(settings: BitArray) -> Bool {
+  case settings {
+    <<8:16, 1:32, _:bits>> -> True
+    <<_:16, _:32, rest:bits>> -> enables_connect(rest)
+    _ -> False
+  }
+}
+
+fn http2_heartbeat_reply(
+  client: tcp_socket.Socket,
+  buffered: BitArray,
+  remaining: Int,
+) -> Result(String, Http2TestError) {
+  case buffered {
+    <<0x81, 0:1, length:7, text:bytes-size(length)>> if length < 126 ->
+      bit_array.to_string(text)
+      |> result.replace_error(InvalidHttp2Response(buffered))
+    _ if remaining <= 0 -> Error(Http2FrameLimit)
+    _ -> {
+      use data <- result.try(http2_wait(client, 0, 16))
+      http2_heartbeat_reply(client, <<buffered:bits, data:bits>>, remaining - 1)
+    }
+  }
 }
 
 pub fn handler_routes_http_request_to_fallback_test() -> Nil {
@@ -443,11 +668,31 @@ pub fn handler_rejects_connections_over_per_ip_limit_test() -> Nil {
   |> should.equal(Ok(429))
 
   close(client)
-  process.sleep(50)
-
-  let assert Ok(next_client) = connect_websocket(port, "/socket")
-  close(next_client)
+  wait_for_upgrade(port, 1000) |> should.equal(Ok(101))
   stop_supervisor(server_pid)
+}
+
+pub fn abrupt_tcp_close_after_upgrade_releases_per_ip_slot_test() -> Nil {
+  let #(port, server_pid) = start_limited_server()
+
+  // This helper closes TCP immediately after reading 101: no WebSocket close
+  // frame or heartbeat synchronizes with Ewe's initialization/ownership.
+  websocket_upgrade_status(port, "/socket") |> should.equal(Ok(101))
+  list.repeat(Nil, 5)
+  |> list.each(fn(_) { wait_for_upgrade(port, 1000) |> should.equal(Ok(101)) })
+
+  stop_supervisor(server_pid)
+}
+
+fn wait_for_upgrade(port: Int, remaining_ms: Int) -> Result(Int, Nil) {
+  case websocket_upgrade_status(port, "/socket") {
+    Ok(429) if remaining_ms > 0 -> {
+      process.sleep(10)
+      wait_for_upgrade(port, remaining_ms - 10)
+    }
+    Ok(status) -> Ok(status)
+    Error(Nil) -> Error(Nil)
+  }
 }
 
 pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() -> Nil {
@@ -625,21 +870,74 @@ pub fn stalled_client_outbound_queue_is_bounded_test() -> Nil {
     )
   receive_text(slow_client, 1000) |> should.be_ok
   receive_text(healthy_client, 1000) |> should.be_ok
-  let assert Ok(connection_pid) = suspend_server_peer(slow_client)
+  wait_for_socket_counts(channels, #(2, 2), 1000)
+  |> should.equal(Ok(#(2, 2)))
+  websocket_upgrade_status(port, "/socket") |> should.equal(Ok(429))
 
-  send_mixed_broadcasts(channels, healthy_client, 1, 50)
+  let assert Ok(connection_pid) = suspend_server_peer(slow_client)
+  let monitor = process.monitor(connection_pid)
+
+  // Observe the suspended peer before overflow: Ewe 9 force-close kills the
+  // owner, so its mailbox cannot be inspected (or resumed) after overflow.
+  send_mixed_broadcasts(channels, healthy_client, 1, 5)
+  process.is_alive(connection_pid) |> should.be_true
   let #(frames, bytes) = outbound_queue_usage(connection_pid)
+  frames |> should.equal(10)
   { frames > 0 && frames <= 32 } |> should.be_true
   { bytes > 0 && bytes <= 256 } |> should.be_true
 
-  resume_process(connection_pid)
+  // Every pair also round-trips through the healthy peer, including pairs
+  // sent after the slow peer's budget has overflowed.
+  send_mixed_broadcasts(channels, healthy_client, 6, 45)
+  let stopped =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(1000)
+  process.demonitor_process(monitor)
+  stopped
+  |> should.equal(
+    Ok(process.ProcessDown(monitor, connection_pid, process.Killed)),
+  )
   receive_text(slow_client, 1000) |> should.equal(Error(Nil))
+  close(slow_client)
+
+  // Killing bypasses on_close: the forced-close path must unregister the
+  // socket and its join, and free capacity while the healthy peer stays open.
+  wait_for_socket_counts(channels, #(1, 1), 1000)
+  |> should.equal(Ok(#(1, 1)))
   let assert Ok(reconnected) = connect_websocket(port, "/socket")
   let assert Ok(reconnected) =
     send_text(reconnected, "[null,\"healthy\",\"phoenix\",\"heartbeat\",{}]")
   receive_text(reconnected, 1000) |> should.be_ok
+  wait_for_socket_counts(channels, #(2, 1), 1000)
+  |> should.equal(Ok(#(2, 1)))
   close(reconnected)
+  close(healthy_client)
+  wait_for_socket_counts(channels, #(0, 0), 1000)
+  |> should.equal(Ok(#(0, 0)))
   stop_supervisor(server_pid)
+}
+
+fn wait_for_socket_counts(
+  channels: beryl.Sockets,
+  expected: #(Int, Int),
+  remaining_ms: Int,
+) -> Result(#(Int, Int), snapshot.SnapshotError) {
+  let counts =
+    snapshot.get(channels)
+    |> result.map(fn(state) {
+      #(
+        snapshot.connected_sockets(state),
+        snapshot.joined_socket_topic_pairs(state),
+      )
+    })
+  case counts {
+    Ok(actual) if actual != expected && remaining_ms > 0 -> {
+      process.sleep(10)
+      wait_for_socket_counts(channels, expected, remaining_ms - 10)
+    }
+    other -> other
+  }
 }
 
 fn send_mixed_broadcasts(
@@ -681,7 +979,11 @@ fn start_mixed_outbound_system() -> beryl.Sockets {
       },
       encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
     )
-  start_app_system_with_update(beryl.config(mixed_codec), fn(model, event) {
+  let config =
+    beryl.config(mixed_codec)
+    |> beryl.with_max_connections(max_connections: 2)
+    |> beryl.with_max_connections_per_ip(max_connections: 2)
+  start_app_system_with_update(config, fn(model, event) {
     case event {
       socket.Join(_, _, reference) ->
         socket.Next(model, [socket.AcceptJoin(reference, option.None)])

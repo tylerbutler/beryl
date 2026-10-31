@@ -124,7 +124,8 @@ Each action applies to the current channel's topic. beryl applies actions in lis
 - **`channel.push`:** Send a named event only to this client connection.
 - **`channel.broadcast`:** Send a named event to every client on this topic, including the sender.
 - **`channel.broadcast_from`:** Send a named event to every other client on this topic.
-- **`channel.stay(state)`:** Keep the current connection open without sending anything.
+- **`channel.discard_reply(message.reply)`:** Release a reply ref without answering.
+- **`channel.stay(state)`:** Stay joined with no actions. Pending reply refs still consume capacity.
 </Aside>
 
 ## 2. Start beryl and Mist
@@ -326,14 +327,20 @@ pub fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) 
         )],
       )
 
-    socket.Message(topic, "new_msg", payload, _ref) ->
+    socket.Message(topic, "new_msg", payload, ref) ->
       socket.Next(
         model,
-        [socket.Broadcast(
-          topic,
-          "new_msg",
-          result.unwrap(wire.dynamic_to_json(payload), json.null()),
-        )],
+        [
+          socket.Broadcast(
+            topic,
+            "new_msg",
+            result.unwrap(wire.dynamic_to_json(payload), json.null()),
+          ),
+          ..case ref {
+            Some(ref) -> [socket.DiscardReply(ref)]
+            None -> []
+          }
+        ],
       )
 
     socket.Message(_, _, _, Some(ref)) ->

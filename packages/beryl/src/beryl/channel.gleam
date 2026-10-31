@@ -18,6 +18,7 @@
 ////     channel.accept(0)
 ////     |> channel.on_message(fn(count, message) {
 ////         channel.next(count + 1, [
+////           channel.discard_reply(message.reply),
 ////           channel.broadcast(message.event, json.int(count + 1)),
 ////         ])
 ////       })
@@ -266,6 +267,9 @@ pub type JoinContext(info) {
 /// `reply` is present only when the client asked for a reply; pass it to
 /// [`reply_ok`](#reply_ok), [`reply_error`](#reply_error), or
 /// [`discard_reply`](#discard_reply).
+/// A pending ref consumes socket capacity until you reply, discard it, or
+/// close the topic. Keep the ref in your state if you will reply on a later
+/// turn. [`stay`](#stay) and [`next`](#next) do not release it.
 pub type Message {
   Message(
     /// The client-supplied event name.
@@ -422,11 +426,16 @@ pub opaque type Next(state) {
 }
 
 /// Stay joined with the given state, applying `actions` in order.
+///
+/// Pending reply refs remain charged unless an action replies or discards them.
 pub fn next(state: state, actions: List(Action(Active))) -> Next(state) {
   NextContinue(state: state, actions: actions)
 }
 
 /// Stay joined with the given state and no actions.
+///
+/// This does not release a message's reply ref. Use
+/// `next(state, [discard_reply(message.reply)])` to ignore a client message.
 pub fn stay(state: state) -> Next(state) {
   NextContinue(state: state, actions: [])
 }
@@ -454,7 +463,7 @@ type Callbacks(state, info) {
 
 fn callbacks() -> Callbacks(state, info) {
   Callbacks(
-    message: fn(state, _message) { stay(state) },
+    message: fn(state, message) { next(state, [discard_reply(message.reply)]) },
     info: fn(state, _message) { stay(state) },
     presence: option.None,
     terminate: fn(_state, _reason) { no_closing_actions() },
@@ -519,8 +528,9 @@ fn continuation(
 ///
 /// Start an accepted result with [`accept`](#accept), then pipe it through
 /// the `on_*` functions for the inputs that the channel handles. Unhandled
-/// inputs keep the channel joined and produce no actions. [`handler`](#handler)
-/// seals the private `state` and `info` types.
+/// inputs keep the channel joined. The default message callback discards its
+/// reply ref without sending a reply; other unhandled inputs produce no actions.
+/// [`handler`](#handler) seals the private `state` and `info` types.
 pub opaque type JoinResult(state, info) {
   JoinAccepted(
     state: state,
@@ -545,6 +555,9 @@ pub fn accept(state: state) -> JoinResult(state, info) {
 }
 
 /// Handle client messages on this channel's topic.
+///
+/// Reply to each message, discard its reply ref, or keep the ref for a later
+/// turn. A custom callback replaces the default callback's reply disposal.
 pub fn on_message(
   result: JoinResult(state, info),
   handle: fn(state, Message) -> Next(state),
@@ -626,6 +639,10 @@ pub fn on_presence(
 /// closes this topic, after it removes the channel instance. This phase
 /// allows broadcasts, presence untracking, and presence broadcasts. It does
 /// not allow pushes, replies, or presence tracking.
+///
+/// Cleanup runs even when socket output capacity is full. Returned actions
+/// must fit the callback and socket queue limits. If admission fails, the
+/// runtime logs the rejection and closes the topic without those actions.
 ///
 /// An `on_terminate` panic does not stop the socket. The runtime logs the
 /// panic and completes the close without this callback's actions. The worker

@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Preserve callback failure reasons when committed worker reports are drained during channel closure."

@@ -436,6 +436,10 @@ retirement_revokes_old_replies_and_requires_fresh_rejoin_test_() ->
             Elapsed = call(B, erlang, monotonic_time, [millisecond]) - Started,
             ?assert(Elapsed >= 60000),
             ?assertNot(call(B, ?MODULE, pending_request, [Receiver, OldPid])),
+            %% PendingOnly retires requests on its own independent tick.
+            await({pending_request_retirement, element(2, B)}, fun() ->
+                not call(B, ?MODULE, pending_request, [PendingOnly, UnconfirmedPid])
+            end),
             ?assertNot(call(B, ?MODULE, pending_request,
                 [PendingOnly, UnconfirmedPid])),
             nil = call(B, ?MODULE, release_replies, [PendingGate]),
@@ -517,6 +521,8 @@ with_peer(Name, Run) ->
     Paths = [filename:absname(Path) || Path <- code:get_path()],
     {ok, Controller, Node} = peer:start_link(#{
         name => Name,
+        %% Keep local peer discovery independent of machine-hostname routing.
+        host => "localhost",
         connection => standard_io,
         peer_down => continue,
         args => ["+S", "2:2", "+A", "1", "-connect_all", "false",
