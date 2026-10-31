@@ -231,6 +231,10 @@ Logging configuration for beryl diagnostics.
  the `with_*` functions. beryl can then add logging options without a
  breaking change.
 
+ The level filters this socket system's runtime and transport diagnostics.
+ beryl does not change OTP Logger levels, filters, metadata, or handlers.
+ The host application's logger configuration can further restrict output.
+
 <div class="api-entry-anchor" id="api-type-loglevel" aria-hidden="true"></div>
 
 ### `LogLevel`
@@ -639,7 +643,11 @@ pub fn with_logging(
 ) -> Config
 ```
 
-Configure beryl's internal logging.
+Configure this socket system's runtime and transport logging.
+
+ This sets a local minimum level. The host application owns OTP Logger
+ configuration; enable the desired level there as well. Starting or
+ restarting beryl does not install handlers or configure Palabres.
 
 <div class="api-entry-anchor" id="api-function-with_max_connections" aria-hidden="true"></div>
 

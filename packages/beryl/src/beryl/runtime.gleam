@@ -718,8 +718,6 @@ pub fn start_named(
   init init: fn(ConnectInfo(message)) -> #(model, List(Effect)),
   update update: fn(model, Input(message)) -> Next(model),
 ) -> Result(actor.Started(Subject(Message(message))), actor.StartError) {
-  internal.configure(config.logging)
-
   actor.new_with_initialiser(5000, fn(subject) {
     // Presence acknowledgements arrive on their own subject (the presence
     // actor knows nothing about `Message(message)`) and are folded into the
@@ -741,7 +739,7 @@ pub fn start_named(
         config: config,
         pubsub: pubsub_option,
         subscriber: None,
-        logger: internal.logger("beryl.runtime"),
+        logger: internal.configured_logger("beryl.runtime", config.logging),
         self_subject: subject,
         inbox: inbox,
         current_work: None,
@@ -960,7 +958,7 @@ fn start_socket_actor(
         config: config,
         pubsub: None,
         subscriber: None,
-        logger: internal.logger("beryl.runtime"),
+        logger: internal.configured_logger("beryl.runtime", config.logging),
         self_subject: subject,
         inbox: inbox,
         current_work: None,

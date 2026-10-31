@@ -3,6 +3,7 @@ import beryl
 import beryl/error as beryl_error
 import beryl/group
 import beryl/internal
+import beryl/log
 import beryl/topic
 import beryl/wire
 import beryl/wire/codec
@@ -584,7 +585,7 @@ pub fn group_broadcast_delivers_to_members_and_reports_missing_group_test() -> N
 pub fn payload_preview_metadata_is_bounded_test() -> Nil {
   let config =
     internal.LoggingConfig(
-      level: internal.Info,
+      level: log.Info,
       include_payloads: True,
       payload_preview_bytes: 5,
     )

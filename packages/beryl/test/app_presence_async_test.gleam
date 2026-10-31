@@ -1940,7 +1940,7 @@ pub fn graceful_shutdown_cleanup_is_not_logged_as_a_failure_test() -> Nil {
       ))
     })
 
-  let selector = test_helper.begin_capture()
+  use selector <- test_helper.with_capture()
 
   let frames = app_test_helper.connect(channels, "s1")
   app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
