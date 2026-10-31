@@ -386,7 +386,6 @@ pub fn connection(state: State) -> Connection {
   state.connection
 }
 
-// nolint: unused_exports -- host API used by beryl's cleanup interpreter
 /// The connection's teardown reason, once teardown begins.
 pub fn close_reason(state: State) -> Option(CloseReason) {
   state.closing
@@ -1486,7 +1485,10 @@ pub fn restore(
   let restored = case exported.closed, exported.closing {
     True, Some(reason) -> {
       use reason <- result.map(decode_reason(reason))
-      #(state, [CloseConnection(reason), Deadline(None)])
+      #(State(..state, closing: Some(reason)), [
+        CloseConnection(reason),
+        Deadline(None),
+      ])
     }
     True, None -> Error(InvalidSnapshot)
     False, closing -> {

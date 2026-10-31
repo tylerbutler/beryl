@@ -702,16 +702,42 @@ pub fn failed_join_admission_closes_without_sending_a_join_reply_test() -> Nil {
 }
 
 pub fn closed_connection_snapshot_replays_interrupted_transport_close_test() -> Nil {
-  let assert #(state, [protocol.CloseConnection(protocol.Shutdown)]) =
-    apply(initial(), protocol.Disconnect(protocol.Shutdown), 0)
+  list.each(
+    [
+      protocol.Normal,
+      protocol.Shutdown,
+      protocol.HeartbeatTimeout,
+      protocol.Fault("callback failed"),
+    ],
+    fn(reason) {
+      let #(state, _) = apply(initial(), protocol.Disconnect(reason), 0)
+      let assert Ok(snapshot) = protocol.export(state, 0)
+      let assert Ok(#(restored, actions)) =
+        protocol.restore(snapshot, 100, 1000)
+      let expected = [protocol.CloseConnection(reason), protocol.Deadline(None)]
+      actions |> should.equal(expected)
+      protocol.close_reason(restored) |> should.equal(Some(reason))
+      let assert Ok(second_snapshot) = protocol.export(restored, 1000)
+      let assert Ok(#(twice, actions)) =
+        protocol.restore(second_snapshot, 10, 2000)
+      actions |> should.equal(expected)
+      protocol.close_reason(twice) |> should.equal(Some(reason))
+      let assert #(_, []) =
+        apply(twice, protocol.Receive(protocol.Heartbeat(Some("late"))), 2000)
+      Nil
+    },
+  )
+}
+
+pub fn closed_connection_snapshot_rejects_missing_or_invalid_reason_test() -> Nil {
+  let #(state, _) = apply(initial(), protocol.Disconnect(protocol.Shutdown), 0)
   let assert Ok(snapshot) = protocol.export(state, 0)
-  let assert Ok(#(
-    restored,
-    [protocol.CloseConnection(protocol.Shutdown), protocol.Deadline(None)],
-  )) = protocol.restore(snapshot, 100, 1000)
-  let assert #(_, []) =
-    apply(restored, protocol.Receive(protocol.Heartbeat(Some("late"))), 1000)
-  Nil
+  list.each(["null", "\"unknown\""], fn(closing) {
+    snapshot
+    |> string.replace("\"closing\":\"shutdown\"", "\"closing\":" <> closing)
+    |> protocol.restore(0, 0)
+    |> should.equal(Error(protocol.InvalidSnapshot))
+  })
 }
 
 pub fn final_cleanup_snapshot_replays_interrupted_transport_close_test() -> Nil {
