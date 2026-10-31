@@ -449,11 +449,19 @@ pub fn handler_rejects_connections_over_per_ip_limit_test() -> Nil {
   |> should.equal(Ok(429))
 
   close(client)
-  process.sleep(50)
-
-  let assert Ok(next_client) = connect_websocket(port, "/socket")
-  close(next_client)
+  wait_for_upgrade(port, 1000) |> should.equal(Ok(101))
   stop_supervisor(server_pid)
+}
+
+fn wait_for_upgrade(port: Int, remaining_ms: Int) -> Result(Int, Nil) {
+  case websocket_upgrade_status(port, "/socket") {
+    Ok(429) if remaining_ms > 0 -> {
+      process.sleep(10)
+      wait_for_upgrade(port, remaining_ms - 10)
+    }
+    Ok(status) -> Ok(status)
+    Error(Nil) -> Error(Nil)
+  }
 }
 
 pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() -> Nil {
