@@ -3,8 +3,9 @@
 ## Project Summary
 
 beryl is a Gleam library for type-safe real-time channels and presence on the
-Erlang/BEAM runtime, with a portable protocol core. It's a trellis-managed monorepo with four releasable
-packages, plus runnable examples and an Astro/Starlight documentation website.
+Erlang/BEAM runtime, with a portable protocol core. It's a trellis-managed monorepo
+with three releasable packages, a bundled protocol package, runnable examples,
+and an Astro/Starlight documentation website.
 
 ## Essential Commands
 
@@ -254,8 +255,9 @@ bumps a version that nobody sees:
 - `packages/*/test/`, internal refactors, and formatting that keep the
   consumer-visible behavior the same
 
-All four packages under `packages/` are releasable, so each one takes its own
-fragments. `examples/**` and `benchmarks/**` are release-excluded.
+`beryl`, `beryl_mist`, and `beryl_ewe` each take their own fragments.
+`beryl_protocol` ships inside beryl; write its consumer-visible changes as
+`beryl` fragments. `examples/**` and `benchmarks/**` are release-excluded.
 
 PR CI enforces fragments via `trellis changelog check`. Preview the effect of
 the current fragments with `just version-plan`.
@@ -297,9 +299,10 @@ CI additionally matrix-tests Erlang **27 and 28** (see `.github/workflows/ci.yml
 
 `examples/**` and `benchmarks/**` are excluded from release (`@release` key
 in the root `gleam.toml`). Examples are built and tested, but they get no
-changelog, version, tag, or fragment. All four packages under `packages/` are
-releasable on the `git_only` lifecycle: they get tags and GitHub releases,
-but Hex.pm publishing is disabled.
+changelog, version, tag, or fragment. `beryl_protocol` uses the `workspace`
+lifecycle and ships inside beryl through `publish.bundle`, without separate
+releases. `beryl` uses the `hex` lifecycle; `beryl_mist` and `beryl_ewe` use
+`git_only`. CI creates tags and GitHub releases but keeps Hex.pm uploads disabled.
 
 Benchmarks are workspace members with opt-in dependencies and execution.
 Default build, check, test, lint, docs, and deps tasks exclude them, while

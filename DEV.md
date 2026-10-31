@@ -11,7 +11,7 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
-| [trellis](https://trellis.tylerbutler.com) | 0.10.3+ | Gleam workspace manager (tasks, versions, publishing) |
+| [trellis](https://trellis.tylerbutler.com) | 1.1.0+ | Gleam workspace manager (tasks, versions, publishing) |
 
 **Recommended:** Use [mise](https://mise.jdx.dev/) with the provided
 `.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
@@ -20,8 +20,11 @@ licence_audit. CI matrix-tests Erlang 27 and 28.
 This repository is a trellis-managed workspace: four packages live under
 `packages/`: `beryl_protocol`, `beryl`, `beryl_mist`, and `beryl_ewe`, with
 runnable examples in `examples/` and a root `gleam.toml` holding only the
-`[tools.trellis]` configuration. All four library packages use git-only
-releases. `just` recipes fan out across the workspace through `trellis run`.
+`[tools.trellis]` configuration. `beryl_protocol` uses the `workspace`
+lifecycle and ships inside beryl through `publish.bundle`, without separate
+releases. `beryl` uses the `hex` lifecycle; the transport packages use
+`git_only`. CI keeps Hex uploads disabled. Write protocol changelog fragments
+for `beryl`. `just` recipes fan out across the workspace through `trellis run`.
 Use `just protocol-test` for the shared Erlang/JavaScript suite and
 `just portable-host-test` for the Roost/Durable Object host.
 
