@@ -69,7 +69,7 @@ a Phoenix channel crash skips `terminate/2`. See
 | `{:error, %{reason: ...}}` | `channel.reject(reason)` | `socket.RejectJoin(ref, reason)` |
 | `handle_in/3` | `channel.on_message` | `socket.Message(topic, event, payload, ref)` |
 | `{:reply, {:ok, payload}, socket}` | `channel.reply_ok(message.reply, payload)` / `channel.reply_error(message.reply, payload)` action | `socket.ReplyOk(ref, payload)` / `socket.ReplyError(ref, payload)` |
-| `{:noreply, socket}` | `channel.stay(state)` | `socket.Next(model, [])` |
+| `{:noreply, socket}` (no later reply) | `channel.next(state, [channel.discard_reply(message.reply)])` | `socket.DiscardReply(ref)` when a reply ref is present |
 | `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | keep `Option(ReplyRef)` in the channel's state and call `reply_ok` from a later active callback | store the `ReplyRef` in your model, `socket.ReplyOk` from a later `update` turn |
 | `push(socket, event, payload)` | `channel.push(event, payload)` action | `socket.Push(topic, event, payload)` effect |
 | `broadcast!/3` | `channel.broadcast(event, payload)` action | `socket.Broadcast(topic, event, payload)` effect |
@@ -145,10 +145,11 @@ pub fn room() -> channel.Handler {
 
         "typing" ->
           channel.next(state, [
+            channel.discard_reply(message.reply),
             channel.broadcast_from("typing", json.object([])),
           ])
 
-        _ -> channel.stay(state)
+        _ -> channel.next(state, [channel.discard_reply(message.reply)])
       }
     })
     |> channel.on_info(fn(state: State, note: Note) {
@@ -170,7 +171,7 @@ topic on every effect:
 ```gleam
 import beryl/socket
 import gleam/json
-import gleam/option.{Some}
+import gleam/option.{None, Some}
 
 pub type Message {
   Tick(Int)
@@ -199,10 +200,17 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
         socket.ReplyOk(ref, json.object([#("status", json.string("ok"))])),
       ])
 
-    socket.Message(topic, "typing", _payload, _ref) ->
+    socket.Message(topic, "typing", _payload, ref) ->
       socket.Next(model, [
         socket.BroadcastFrom(topic, "typing", json.object([])),
+        ..case ref {
+          Some(ref) -> [socket.DiscardReply(ref)]
+          None -> []
+        }
       ])
+
+    socket.Message(_, _, _, Some(ref)) ->
+      socket.Next(model, [socket.DiscardReply(ref)])
 
     socket.Info(Tick(at)) ->
       socket.Next(model, [
@@ -214,7 +222,7 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
       ])
 
     socket.Join(..)
-    | socket.Message(..)
+    | socket.Message(_, _, _, None)
     | socket.Binary(..)
     | socket.Closed(..) ->
       socket.Next(model, [])
@@ -224,6 +232,10 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
 
 Both beryl APIs differ from Phoenix in these ways:
 
+- **Pending replies consume capacity.** `channel.stay` and `channel.next` do
+  not release refs on their own. Discard a ref if you will not answer it, or
+  keep it in state for a later reply. The default channel message callback
+  discards refs.
 - **Side effects are values.** Phoenix callbacks call `push` and
   `broadcast_from!`. A beryl callback returns a list. The runtime applies the
   list in order after the turn. List order is wire order, so an acknowledgment

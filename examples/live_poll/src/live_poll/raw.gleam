@@ -85,7 +85,7 @@ pub fn update(
               reply,
             )
           False, Ok(_) | False, Error(_) | True, Error(_) ->
-            socket.Next(model, [])
+            socket.Next(model, discard_reply(reply))
         }
       socket.Info(ClosePoll(topic)) ->
         case room_name(topic) {
@@ -130,7 +130,7 @@ fn handle_command(
       )
     poll.Vote(choice) ->
       case stage {
-        ReadOnly -> socket.Next(model, [])
+        ReadOnly -> socket.Next(model, discard_reply(reply))
         Voting | Timed ->
           case store.vote(polls, room, choice) {
             Ok(state) ->
@@ -162,12 +162,12 @@ fn handle_command(
               )
             store.AlreadyClosed(state) ->
               socket.Next(model, socket.reply_ok(reply, poll.to_json(state)))
-            store.RoomNotFound -> socket.Next(model, [])
+            store.RoomNotFound -> socket.Next(model, discard_reply(reply))
           }
         }
-        ReadOnly | Voting -> socket.Next(model, [])
+        ReadOnly | Voting -> socket.Next(model, discard_reply(reply))
       }
-    poll.Unsupported -> socket.Next(model, [])
+    poll.Unsupported -> socket.Next(model, discard_reply(reply))
   }
 }
 
@@ -184,6 +184,13 @@ fn reply_error(
 ) -> List(socket.Effect) {
   case reply {
     Some(ref) -> [socket.ReplyError(ref, payload)]
+    None -> []
+  }
+}
+
+fn discard_reply(reply: Option(socket.ReplyRef)) -> List(socket.Effect) {
+  case reply {
+    Some(ref) -> [socket.DiscardReply(ref)]
     None -> []
   }
 }

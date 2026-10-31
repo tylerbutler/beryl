@@ -88,7 +88,7 @@ import beryl/socket
 import beryl/topic
 import gleam/json
 import gleam/list
-import gleam/option.{Some}
+import gleam/option.{None, Some}
 
 pub type Message {
   Tick(Int)
@@ -154,10 +154,16 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
         ],
       )
 
-    socket.Message(topic_name, "typing", _payload, _ref) ->
+    socket.Message(topic_name, "typing", _payload, ref) ->
       socket.Next(
         model,
-        [socket.BroadcastFrom(topic_name, "typing", json.object([]))],
+        [
+          socket.BroadcastFrom(topic_name, "typing", json.object([])),
+          ..case ref {
+            Some(ref) -> [socket.DiscardReply(ref)]
+            None -> []
+          }
+        ],
       )
 
     socket.Closed(topic_name, _reason) ->
@@ -186,6 +192,8 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
     socket.Binary(_topic_name, _data) ->
       socket.Next(model, [])
 
+    socket.Message(_, _, _, Some(ref)) ->
+      socket.Next(model, [socket.DiscardReply(ref)])
     socket.Message(_, _, _, None) ->
       socket.Next(model, [])
   }
@@ -196,6 +204,7 @@ A few important details:
 
 - Joins are explicit: return `socket.AcceptJoin(ref, reply)` or `socket.RejectJoin(ref, reason)`.
 - Message replies are explicit too: use `socket.ReplyOk` / `socket.ReplyError` when a client ref is present.
+- Return `socket.DiscardReply(ref)` for messages you will not answer. Pending refs consume socket capacity until you reply, discard them, or close the topic.
 - `socket.Closed(topic, reason)` replaces per-topic cleanup hooks. Prune topic-local state there.
 - `socket.Info(msg)` is a typed message from your own server code.
 
