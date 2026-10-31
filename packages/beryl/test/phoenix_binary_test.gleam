@@ -5,6 +5,7 @@
 import beryl/wire
 import beryl/wire/codec
 import gleam/dynamic/decode
+import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
@@ -139,8 +140,39 @@ pub fn binary_broadcast_encodes_spec_shape_test() -> Nil {
 
 pub fn binary_encoders_reject_oversized_components_test() -> Nil {
   let long = string.repeat("a", 256)
-  wire.binary_push(join_ref: None, topic: long, event: "e", payload: <<>>)
-  |> should.equal(Error(wire.MetadataTooLong("topic", 256)))
-  wire.binary_broadcast(topic: "t", event: long, payload: <<>>)
-  |> should.equal(Error(wire.MetadataTooLong("event", 256)))
+  list.each([<<>>, <<1:size(1)>>], fn(payload) {
+    wire.binary_push(join_ref: None, topic: long, event: "e", payload: payload)
+    |> should.equal(Error(wire.MetadataTooLong("topic", 256)))
+    wire.binary_reply(
+      join_ref: None,
+      ref: Some(long),
+      topic: "t",
+      status: codec.StatusOk,
+      payload: payload,
+    )
+    |> should.equal(Error(wire.MetadataTooLong("ref", 256)))
+    wire.binary_broadcast(topic: "t", event: long, payload: payload)
+    |> should.equal(Error(wire.MetadataTooLong("event", 256)))
+  })
+}
+
+pub fn binary_encoders_reject_partial_byte_payloads_test() -> Nil {
+  list.each([1, 7, 9, 15], fn(size) {
+    let payload = <<1:size(size)>>
+    wire.binary_push(None, "t", "e", payload)
+    |> should.equal(Error(wire.PayloadNotByteAligned))
+    wire.binary_reply(None, None, "t", codec.StatusOk, payload)
+    |> should.equal(Error(wire.PayloadNotByteAligned))
+    wire.binary_broadcast("t", "e", payload)
+    |> should.equal(Error(wire.PayloadNotByteAligned))
+  })
+}
+
+pub fn binary_encoders_preserve_empty_payloads_test() -> Nil {
+  wire.binary_push(None, "t", "e", <<>>)
+  |> should.equal(Ok(codec.BinaryFrame(<<0, 0, 1, 1, "te":utf8>>)))
+  wire.binary_reply(None, None, "t", codec.StatusOk, <<>>)
+  |> should.equal(Ok(codec.BinaryFrame(<<1, 0, 0, 1, 2, "tok":utf8>>)))
+  wire.binary_broadcast("t", "e", <<>>)
+  |> should.equal(Ok(codec.BinaryFrame(<<2, 1, 1, "te":utf8>>)))
 }

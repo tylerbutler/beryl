@@ -262,9 +262,32 @@ receive_binary(Socket, Timeout) ->
     end.
 
 close(Socket) ->
-    _ = gen_tcp:send(Socket, <<16#88, 16#80, 0, 0, 0, 0>>),
-    gen_tcp:close(Socket),
-    nil.
+    Deadline = erlang:monotonic_time(millisecond) + 1000,
+    try
+        case inet:setopts(Socket, [{send_timeout, 1000}]) of
+            ok ->
+                case gen_tcp:send(Socket, <<16#88, 16#80, 0, 0, 0, 0>>) of
+                    ok -> drain_until_closed(Socket, Deadline);
+                    {error, _Reason} -> nil
+                end;
+            {error, _Reason} -> nil
+        end
+    after
+        gen_tcp:close(Socket)
+    end.
+
+%% Let the server finish the close handshake and close TCP itself. Final data
+%% is irrelevant here, but must not reset the overall close deadline.
+drain_until_closed(Socket, Deadline) ->
+    Remaining = Deadline - erlang:monotonic_time(millisecond),
+    case Remaining > 0 of
+        true ->
+            case gen_tcp:recv(Socket, 0, Remaining) of
+                {ok, _Data} -> drain_until_closed(Socket, Deadline);
+                {error, _Reason} -> nil
+            end;
+        false -> nil
+    end.
 
 suspend_server_peer(Socket) ->
     {ok, Peer} = inet:sockname(Socket),
