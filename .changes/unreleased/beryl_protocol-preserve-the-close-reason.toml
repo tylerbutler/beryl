@@ -1,0 +1,3 @@
+package = "beryl_protocol"
+kind = "Fixed"
+body = "Preserve the close reason when restoring a closed snapshot so it can be exported and restored again."
