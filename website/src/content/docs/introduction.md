@@ -103,6 +103,7 @@ checks each branch:
 ```gleam
 import beryl/socket
 import gleam/json
+import gleam/option.{None, Some}
 
 pub type Model {
   Model(user_id: String, room_id: String)
@@ -113,18 +114,27 @@ fn update(model: Model, input: socket.Input(Nil)) -> socket.Next(Model) {
     socket.Join("room:" <> room_id, _payload, ref) ->
       socket.Next(Model(..model, room_id: room_id), [socket.AcceptJoin(ref, None)])
 
-    socket.Message(topic, "typing", _payload, _ref) ->
+    socket.Message(topic, "typing", _payload, ref) ->
       socket.Next(
         model,
-        [socket.BroadcastFrom(
-          topic,
-          "typing",
-          json.object([#("user_id", json.string(model.user_id))]),
-        )],
+        [
+          socket.BroadcastFrom(
+            topic,
+            "typing",
+            json.object([#("user_id", json.string(model.user_id))]),
+          ),
+          ..case ref {
+            Some(ref) -> [socket.DiscardReply(ref)]
+            None -> []
+          }
+        ],
       )
 
+    socket.Message(_, _, _, Some(ref)) ->
+      socket.Next(model, [socket.DiscardReply(ref)])
+
     socket.Join(_, _, _)
-    | socket.Message(_, _, _, _)
+    | socket.Message(_, _, _, None)
     | socket.Binary(_, _)
     | socket.Closed(_, _)
     | socket.Info(_) ->

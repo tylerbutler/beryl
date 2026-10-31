@@ -9,11 +9,14 @@
 import beryl
 import beryl/channel
 import beryl/overload
+import beryl/presence
 import beryl/runtime
+import beryl/socket
 import beryl/transport
 import beryl/wire
 import beryl/work_queue
 import channel_dispatch_helper as helper
+import channel_readme_example_test
 import gleam/erlang/process
 import gleam/int
 import gleam/json
@@ -236,6 +239,85 @@ pub fn a_slow_join_on_one_socket_does_not_block_another_test() -> Nil {
 }
 
 // --- leave ordering ----------------------------------------------------------
+
+pub fn ignored_and_broadcast_only_messages_release_reply_capacity_test() -> Nil {
+  list.each([False, True], fn(broadcast) {
+    let assert Ok(limits) = overload.limits(items: 4, bytes: 4096)
+    let handler = case broadcast {
+      False -> channel.handler("room:*", fn(_) { channel.accept(Nil) })
+      True -> channel_readme_example_test.room()
+    }
+    let channels =
+      helper.start(config() |> beryl.with_socket_queue_limits(limits), [handler])
+    let frames = helper.connect(channels, "s1")
+    helper.join(channels, "s1", "room:a", "j", "r")
+    let _ = helper.recv(frames)
+    let assert Ok(router) = transport.runtime_pid(channels)
+    let queue = socket_queue(router, "s1")
+    wait_for_empty_socket_queue(queue)
+
+    int.range(1, 65, Nil, fn(_, index) {
+      helper.push(channels, "s1", "room:a", "ignored", int.to_string(index))
+      helper.route(channels, "s1", "[null,\"h\",\"phoenix\",\"heartbeat\",{}]")
+      let expected_frames = case broadcast {
+        True -> 2
+        False -> 1
+      }
+      let received =
+        list.map(list.repeat(Nil, expected_frames), fn(_) {
+          helper.recv(frames)
+        })
+      list.any(received, string.contains(_, "\"phoenix\"")) |> should.be_true
+      case broadcast {
+        True ->
+          list.any(received, string.contains(_, "\"ignored\""))
+          |> should.be_true
+        False -> Nil
+      }
+      wait_for_empty_socket_queue(queue)
+    })
+    let assert Ok(current) = work_queue.snapshot(queue)
+    current.high_items |> fn(items) { items <= 4 } |> should.be_true
+    helper.recv_none(frames)
+    beryl.stop(channels) |> should.equal(Ok(Nil))
+  })
+}
+
+pub fn custom_handler_keeps_deferred_refs_and_rejects_duplicate_wire_refs_test() -> Nil {
+  let senders = process.new_subject()
+  let assert Ok(limits) = overload.limits(items: 4, bytes: 4096)
+  let channels =
+    helper.start(config() |> beryl.with_socket_queue_limits(limits), [
+      channel.handler("room:*", fn(context) {
+        process.send(senders, context.self)
+        channel.accept(None)
+        |> channel.on_message(fn(_, message) { channel.stay(message.reply) })
+        |> channel.on_info(fn(reply, _: Nil) {
+          channel.next(None, [channel.reply_ok(reply, json.string("later"))])
+        })
+      }),
+    ])
+  let frames = helper.connect(channels, "s1")
+  helper.join(channels, "s1", "room:a", "j", "r")
+  let _ = helper.recv(frames)
+  let assert Ok(sender) = process.receive(senders, 1000)
+  let assert Ok(router) = transport.runtime_pid(channels)
+  let queue = socket_queue(router, "s1")
+  list.each([1, 2], fn(_) {
+    helper.push(channels, "s1", "room:a", "deferred", "same")
+    helper.route(channels, "s1", "[null,\"h\",\"phoenix\",\"heartbeat\",{}]")
+    helper.recv(frames) |> string.contains("\"phoenix\"") |> should.be_true
+    let assert Ok(current) = work_queue.snapshot(queue)
+    current.items |> fn(items) { items >= 1 } |> should.be_true
+    helper.push(channels, "s1", "room:a", "duplicate", "same")
+    helper.recv(frames) |> string.contains("duplicate_ref") |> should.be_true
+    channel.notify(sender, Nil) |> should.equal(Ok(Nil))
+    helper.recv(frames) |> string.contains("\"later\"") |> should.be_true
+    wait_for_empty_socket_queue(queue)
+  })
+  helper.recv_none(frames)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
 
 pub fn failures_while_draining_send_error_and_preserve_sibling_test() -> Nil {
   use <- unitest.tag("serial")
@@ -637,6 +719,263 @@ pub fn a_blocking_terminate_is_bounded_and_the_worker_killed_test() -> Nil {
 }
 
 // --- socket lifetime -----------------------------------------------------------
+
+pub fn full_socket_output_does_not_skip_termination_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each(["leave", "disconnect", "shutdown"], fn(close) {
+    list.each([0, 1, 3], fn(action_count) {
+      let entered = process.new_subject()
+      let workers = process.new_subject()
+      let assert Ok(limits) = overload.limits(items: 4, bytes: 4096)
+      let assert Ok(effect_limits) = overload.limits(items: 2, bytes: 4096)
+      let channels =
+        helper.start(
+          config()
+            |> beryl.with_socket_queue_limits(limits)
+            |> beryl.with_effect_limits(effect_limits),
+          [
+            channel.handler("room:*", fn(_) {
+              process.send(workers, process.self())
+              channel.accept(Nil)
+              |> channel.on_terminate(fn(_, reason) {
+                process.send(entered, helper.reason_name(reason))
+                list.repeat(
+                  channel.broadcast("rejected", json.null()),
+                  action_count,
+                )
+              })
+            }),
+          ],
+        )
+      let frames = helper.connect(channels, "s1")
+      let peer = helper.connect(channels, "s2")
+      helper.join(channels, "s1", "room:a", "j", "r")
+      let _ = helper.recv(frames)
+      let assert Ok(worker) = process.receive(workers, 1000)
+      helper.join(channels, "s2", "room:a", "j", "r")
+      let _ = helper.recv(peer)
+      let assert Ok(_) = process.receive(workers, 1000)
+      let assert Ok(router) = transport.runtime_pid(channels)
+      let queue = socket_queue(router, "s1")
+      wait_for_empty_socket_queue(queue)
+      // A leave holds its own input reservation until the close completes.
+      let retained = case close {
+        "leave" -> 3
+        _ -> 4
+      }
+      let reservations =
+        list.map(list.repeat(Nil, retained), fn(_) {
+          let assert Ok(reservation) = work_queue.retain(queue, Nil)
+          reservation
+        })
+
+      case close {
+        "leave" -> {
+          helper.leave(channels, "s1", "room:a", "j", "leave")
+          helper.recv(frames) |> string.contains("\"leave\"") |> should.be_true
+        }
+        "disconnect" -> helper.disconnect(channels, "s1")
+        _ -> beryl.stop(channels) |> should.equal(Ok(Nil))
+      }
+      let expected = case close {
+        "shutdown" -> "shutdown"
+        _ -> "normal"
+      }
+      process.receive(entered, 1000) |> should.equal(Ok(expected))
+      helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+      wait_until_dead(worker)
+      case close {
+        "leave" -> {
+          let assert Ok(current) = work_queue.snapshot(queue)
+          current.high_items |> should.equal(4)
+          list.each(reservations, work_queue.release(queue, _))
+          wait_for_empty_socket_queue(queue)
+          helper.disconnect(channels, "s1")
+        }
+        "disconnect" | "shutdown" ->
+          test_helper.wait_until(
+            fn() { work_queue.snapshot(queue) == Error(overload.Unavailable) },
+            1000,
+            5,
+          )
+        _ -> should.fail()
+      }
+      case close {
+        "shutdown" -> {
+          process.receive(entered, 1000) |> should.equal(Ok("shutdown"))
+          helper.recv(peer) |> string.contains("phx_close") |> should.be_true
+        }
+        _ -> {
+          helper.recv_none(peer)
+          process.receive(entered, 0) |> should.equal(Error(Nil))
+          beryl.stop(channels) |> should.equal(Ok(Nil))
+          process.receive(entered, 1000) |> should.equal(Ok("shutdown"))
+          helper.recv(peer) |> string.contains("phx_close") |> should.be_true
+        }
+      }
+      process.receive(entered, 0) |> should.equal(Error(Nil))
+    })
+  })
+}
+
+pub fn full_socket_output_keeps_termination_panic_and_timeout_bounded_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each([True, False], fn(crash) {
+    let entered = process.new_subject()
+    let workers = process.new_subject()
+    let assert Ok(limits) = overload.limits(items: 4, bytes: 4096)
+    let channels =
+      helper.start(config() |> beryl.with_socket_queue_limits(limits), [
+        channel.handler("room:*", fn(_) {
+          process.send(workers, process.self())
+          channel.accept(Nil)
+          |> channel.on_terminate(fn(_, _) {
+            process.send(entered, Nil)
+            case crash {
+              True -> panic as "cleanup failed with full output"
+              False -> process.receive_forever(process.new_subject())
+            }
+          })
+        }),
+      ])
+    let frames = helper.connect(channels, "s1")
+    helper.join(channels, "s1", "room:a", "j", "r")
+    let _ = helper.recv(frames)
+    let assert Ok(worker) = process.receive(workers, 1000)
+    let assert Ok(router) = transport.runtime_pid(channels)
+    let queue = socket_queue(router, "s1")
+    wait_for_empty_socket_queue(queue)
+    list.each(list.repeat(Nil, 4), fn(_) {
+      let assert Ok(_) = work_queue.retain(queue, Nil)
+      Nil
+    })
+    beryl.stop(channels) |> should.equal(Ok(Nil))
+    process.receive(entered, 1000) |> should.equal(Ok(Nil))
+    helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+    wait_until_dead(worker)
+    work_queue.snapshot(queue) |> should.equal(Error(overload.Unavailable))
+    process.receive(entered, 0) |> should.equal(Error(Nil))
+  })
+}
+
+pub fn empty_termination_preserves_committed_initial_presence_output_test() -> Nil {
+  use <- unitest.tag("serial")
+  let initial_gate = new_gate()
+  let initial_started = process.new_subject()
+  let socket_blocked = process.new_subject()
+  let terminating = process.new_subject()
+  let assert Ok(presence) =
+    presence.start(presence.default_config("termination-order"))
+  let channels =
+    helper.start(config() |> beryl.with_presence_handle(presence), [
+      channel.handler("room:*", fn(_) {
+        channel.accept(Nil)
+        |> channel.on_presence(fn(_, _) {
+          process.send(initial_started, process.self())
+          wait_for_gate(initial_gate)
+          channel.next(Nil, [channel.push("initial", json.null())])
+        })
+        |> channel.on_terminate(fn(_, _) {
+          process.send(terminating, Nil)
+          []
+        })
+      }),
+      channel.handler("other:*", fn(_) { channel.accept(Nil) }),
+    ])
+  let frames = process.new_subject()
+  let assert Ok(router) = transport.runtime_pid(channels)
+  transport.admit_socket(
+    sockets: channels,
+    owner: router,
+    socket_id: "s1",
+    send: fn(frame) {
+      case string.contains(frame, "\"hold\"") {
+        True -> {
+          let release = process.new_subject()
+          process.send(socket_blocked, release)
+          process.receive(release, 5000) |> should.equal(Ok(Nil))
+        }
+        False -> Nil
+      }
+      process.send(frames, frame)
+      Ok(Nil)
+    },
+    send_binary: fn(_) { Ok(Nil) },
+    codec: None,
+    seed: socket.empty_seed(),
+    close: fn() { Nil },
+  )
+  |> should.equal(Ok(Nil))
+  helper.join(channels, "s1", "other:a", "o", "o")
+  let _ = helper.recv(frames)
+  helper.join(channels, "s1", "room:a", "j", "j")
+  let _ = helper.recv(frames)
+  let assert Ok(worker) = process.receive(initial_started, 1000)
+  let queue = socket_queue(router, "s1")
+  with_suspended(socket_actor(router, "s1"), fn() {
+    let assert Ok(before) = work_queue.snapshot(queue)
+    helper.leave(channels, "s1", "room:a", "j", "leave")
+    test_helper.wait_until(
+      fn() {
+        let assert Ok(current) = work_queue.snapshot(queue)
+        current.items == before.items + 1
+      },
+      1000,
+      5,
+    )
+    // Keep the committed report in ETS while the worker sends its terminal signal.
+    list.each(["hold", "noise", "noise", "noise", "noise"], fn(event) {
+      work_queue.send(
+        queue,
+        runtime.Broadcast("other:a", event, json.null(), None),
+      )
+      |> should.equal(Ok(Nil))
+    })
+    release_gate(initial_gate)
+    test_helper.wait_until(
+      fn() { worker_report_pending(router, "s1", worker) },
+      1000,
+      5,
+    )
+  })
+  let assert Ok(release_socket) = process.receive(socket_blocked, 1000)
+  process.receive(terminating, 1000) |> should.equal(Ok(Nil))
+  wait_until_dead(worker)
+  process.send(release_socket, Nil)
+  let received = list.map(list.repeat(Nil, 8), fn(_) { helper.recv(frames) })
+  let assert [initial, closed] =
+    list.filter(received, fn(frame) {
+      string.contains(frame, "\"initial\"")
+      || string.contains(frame, "\"phx_close\"")
+    })
+  initial |> string.contains("\"initial\"") |> should.be_true
+  closed |> string.contains("\"phx_close\"") |> should.be_true
+  list.each(
+    [#("\"leave\"", 1), #("\"hold\"", 1), #("\"noise\"", 4)],
+    fn(expected) {
+      received
+      |> list.filter(string.contains(_, expected.0))
+      |> list.length
+      |> should.equal(expected.1)
+    },
+  )
+  wait_for_empty_socket_queue(queue)
+  process.receive(terminating, 0) |> should.equal(Error(Nil))
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
+
+fn wait_for_empty_socket_queue(
+  queue: work_queue.Queue(runtime.Message(Nil)),
+) -> Nil {
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = work_queue.snapshot(queue)
+      current.items == 0 && current.bytes == 0
+    },
+    1000,
+    5,
+  )
+}
 
 pub fn a_disconnect_terminates_busy_workers_test() -> Nil {
   let reports = process.new_subject()

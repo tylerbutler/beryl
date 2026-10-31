@@ -45,9 +45,18 @@
 ////         case event {
 ////           Join("room:" <> _, _payload, ref) ->
 ////             Next(model, [AcceptJoin(ref, option.None)])
-////           Message(topic, "new_msg", payload, _ref) ->
-////             Next(model, [Broadcast(topic, "new_msg", payload)])
-////           Join(..) | Message(..) | Binary(..) | Closed(..) | Info(..) ->
+////           Message(topic, "new_msg", payload, ref) ->
+////             Next(model, [
+////               Broadcast(topic, "new_msg", payload),
+////               ..case ref {
+////                 option.Some(ref) -> [socket.DiscardReply(ref)]
+////                 option.None -> []
+////               }
+////             ])
+////           Message(_, _, _, option.Some(ref)) ->
+////             Next(model, [socket.DiscardReply(ref)])
+////           Message(_, _, _, option.None)
+////           | Join(..) | Binary(..) | Closed(..) | Info(..) ->
 ////             Next(model, [])
 ////         }
 ////       },

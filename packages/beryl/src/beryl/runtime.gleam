@@ -239,9 +239,14 @@ pub type WorkerReport {
   /// more work. The socket closes the topic and runs `on_terminate`.
   WorkerCrashed(crash: String, source: Source)
   WorkerAdmissionFailed(error: overload.AdmissionError, source: Source)
-  /// `on_terminate` completed, or it panicked and set `crash`. The worker is
-  /// stopping.
-  WorkerTerminated(effects: List(Effect), crash: Option(String))
+  /// The worker is stopping after cleanup and separate output admission.
+  WorkerTerminated(outcome: Result(List(Effect), WorkerTerminationError))
+}
+
+/// A cleanup callback failure or rejection of its returned output.
+pub type WorkerTerminationError {
+  TerminationCrashed(crash: String)
+  TerminationOutputRejected(error: overload.AdmissionError)
 }
 
 pub type ReportReservation {
@@ -2739,7 +2744,10 @@ fn await_worker_message(
       if pid == awaited
     ->
       case report {
-        WorkerTerminated(..) -> #(state, message)
+        WorkerTerminated(..) -> #(
+          run(state, socket_id, take_committed_inbox_steps(state, worker)),
+          message,
+        )
         WorkerRan(..)
         | WorkerCrashed(..)
         | WorkerAdmissionFailed(..)
@@ -7652,33 +7660,43 @@ fn terminate_worker(
   reason: StopReason,
 ) -> Result(WorkerState, Nil) {
   work_queue.close(link.input)
-  case link.reserve_output() {
-    Error(error) ->
-      link.report(WorkerTerminated([], Some(overload.describe(error))), None)
-    Ok(output) -> {
-      // Crash boundary: see `internal.rescue`. The topic closes in both cases.
-      // A panic discards only the termination actions.
-      let report = case internal.rescue(fn() { worker.on_terminate(reason) }) {
-        Ok(effects) ->
-          case validate_effects(effects, link.effect_limits) {
-            Ok(Nil) -> WorkerTerminated(effects, None)
-            Error(error) -> WorkerTerminated([], Some(overload.describe(error)))
-          }
-        Error(crash) -> WorkerTerminated([], Some(crash))
-      }
-      case link.publish_output(ReportReservation(None, output), report) {
-        Ok(_) -> Nil
-        Error(error) -> {
-          link.release_output(output)
+  // Cleanup must run even when ordinary output capacity is full.
+  // Crash boundary: see `internal.rescue`.
+  case internal.rescue(fn() { worker.on_terminate(reason) }) {
+    Error(crash) ->
+      link.report(WorkerTerminated(Error(TerminationCrashed(crash))), None)
+    Ok([]) -> link.report(WorkerTerminated(Ok([])), None)
+    Ok(effects) ->
+      case publish_termination_effects(link, effects) {
+        Ok(Nil) -> Nil
+        Error(error) ->
           link.report(
-            WorkerTerminated([], Some(overload.describe(error))),
+            WorkerTerminated(Error(TerminationOutputRejected(error))),
             None,
           )
-        }
       }
-    }
   }
   Error(Nil)
+}
+
+fn publish_termination_effects(
+  link: WorkerLink,
+  effects: List(Effect),
+) -> Result(Nil, overload.AdmissionError) {
+  use _ <- result.try(validate_effects(effects, link.effect_limits))
+  use output <- result.try(link.reserve_output())
+  case
+    link.publish_output(
+      ReportReservation(None, output),
+      WorkerTerminated(Ok(effects)),
+    )
+  {
+    Ok(_) -> Ok(Nil)
+    Error(error) -> {
+      link.release_output(output)
+      Error(error)
+    }
+  }
 }
 
 /// Run one callback inside the crash boundary and report its result.
@@ -8538,6 +8556,9 @@ fn resume_worker_close(
             _ -> dict.insert(state.queued, socket_id, list.reverse(others))
           },
         )
+      // A direct termination report can overtake committed output in the inbox.
+      let in_flight =
+        list.append(in_flight, take_committed_inbox_steps(state, worker))
       let steps =
         list.append(in_flight, [
           StepEffects(
@@ -8576,11 +8597,16 @@ fn worker_termination_effects(
 ) -> Option(List(Effect)) {
   let awaited = worker.pid
   case message {
-    WorkerReport(worker: pid, report: WorkerTerminated(effects, crash), ..)
+    WorkerReport(worker: pid, report: WorkerTerminated(outcome), ..)
       if pid == awaited
     -> {
-      log_terminate_crash(state, socket_id, topic_name, crash)
-      Some(effects)
+      case outcome {
+        Ok(effects) -> Some(effects)
+        Error(error) -> {
+          log_termination_error(state, socket_id, topic_name, error)
+          Some([])
+        }
+      }
     }
     WorkerDown(process.ProcessDown(pid:, ..) as down) if pid == awaited -> {
       log_worker_exit(state, socket_id, topic_name, down)
@@ -8663,20 +8689,26 @@ fn kill_stuck_worker(
   process.kill(worker.pid)
 }
 
-fn log_terminate_crash(
+fn log_termination_error(
   state: State(model, message),
   socket_id: String,
   topic_name: String,
-  crash: Option(String),
+  error: WorkerTerminationError,
 ) -> Nil {
-  case crash {
-    None -> Nil
-    Some(crash) ->
+  case error {
+    TerminationCrashed(crash) ->
       state.logger
       |> log.error("Update crashed handling closed", [
         #("socket_id", socket_id),
         #("topic", topic_name),
         #("crash", crash),
+      ])
+    TerminationOutputRejected(error) ->
+      state.logger
+      |> log.warn("Termination output admission rejected", [
+        #("socket_id", socket_id),
+        #("topic", topic_name),
+        #("reason", overload.describe(error)),
       ])
   }
 }

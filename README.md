@@ -55,6 +55,7 @@ fn room_channel() -> channel.Handler {
     channel.accept(State(room: context.topic))
     |> channel.on_message(fn(state, message) {
       channel.next(state, [
+        channel.discard_reply(message.reply),
         channel.broadcast(
           message.event,
           wire.dynamic_to_json(message.payload),

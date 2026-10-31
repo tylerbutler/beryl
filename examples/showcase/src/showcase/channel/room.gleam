@@ -117,18 +117,18 @@ fn accept_room(
             )
 
           "typing" ->
-            channel.next(
-              state,
-              typing(application_context, state, typing: True),
-            )
+            channel.next(state, [
+              channel.discard_reply(message.reply),
+              ..typing(application_context, state, typing: True)
+            ])
 
           "stop_typing" ->
-            channel.next(
-              state,
-              typing(application_context, state, typing: False),
-            )
+            channel.next(state, [
+              channel.discard_reply(message.reply),
+              ..typing(application_context, state, typing: False)
+            ])
 
-          _ -> channel.stay(state)
+          _ -> channel.next(state, [channel.discard_reply(message.reply)])
         }
       })
       |> channel.on_info(fn(state, note) {

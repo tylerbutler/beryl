@@ -1,6 +1,6 @@
 import beryl/socket
 import gleam/json
-import gleam/option.{None}
+import gleam/option.{None, Some}
 
 pub type CounterMessage {
   Increment
@@ -28,7 +28,9 @@ pub fn counter_update(
     socket.Info(Increment) -> socket.Next(count + 1, [])
     socket.Message("counter:demo", "get_count", _payload, reply) ->
       socket.Next(count, socket.reply_ok(reply, json.int(count)))
-    socket.Message(_, _, _, _) | socket.Binary(_, _) | socket.Closed(_, _) ->
+    socket.Message(_, _, _, Some(ref)) ->
+      socket.Next(count, [socket.DiscardReply(ref)])
+    socket.Message(_, _, _, None) | socket.Binary(_, _) | socket.Closed(_, _) ->
       socket.Next(count, [])
   }
 }
