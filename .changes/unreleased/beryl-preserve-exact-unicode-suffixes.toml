@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Security"
-body = "Preserve exact Unicode suffixes in prefix wildcard captures so distinct topics cannot share channel parameters."

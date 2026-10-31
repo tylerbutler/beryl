@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Reject partial-byte payloads in Phoenix binary encoders with PayloadNotByteAligned. Exhaustive BinaryEncodeError matches must handle the new variant."
