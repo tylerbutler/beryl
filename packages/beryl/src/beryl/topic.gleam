@@ -131,7 +131,7 @@ pub fn extract_id(
     Exact(_) -> Error(NoWildcard)
     Wildcard(prefix) -> {
       case string.starts_with(topic, prefix) {
-        True -> Ok(string.drop_start(topic, string.length(prefix)))
+        True -> Ok(string.remove_prefix(topic, prefix))
         False -> Error(TopicMismatch)
       }
     }
@@ -169,7 +169,7 @@ pub fn extract_wildcards(
 
     Wildcard(prefix) ->
       case string.starts_with(topic, prefix) {
-        True -> Ok([string.drop_start(topic, string.length(prefix))])
+        True -> Ok([string.remove_prefix(topic, prefix)])
         False -> Error(TopicMismatch)
       }
 
