@@ -8559,8 +8559,13 @@ fn resume_worker_close(
       // A direct termination report can overtake committed output in the inbox.
       let in_flight =
         list.append(in_flight, take_committed_inbox_steps(state, worker))
+      // Failures change this close's reason; starting another close is too late.
+      let #(reason, in_flight) =
+        list.map_fold(in_flight, reason, fn(reason, step) {
+          closing_worker_report_step(state, topic_name, reason, step)
+        })
       let steps =
-        list.append(in_flight, [
+        list.append(list.flatten(in_flight), [
           StepEffects(
             effects,
             None,
@@ -8576,6 +8581,36 @@ fn resume_worker_close(
         ])
       drain_queue(run(state, socket_id, steps), socket_id)
     }
+  }
+}
+
+fn closing_worker_report_step(
+  state: State(model, message),
+  topic_name: String,
+  reason: StopReason,
+  step: Step(message),
+) -> #(StopReason, List(Step(message))) {
+  case step {
+    StepWorkerReport(_, WorkerCrashed(crash, _), continuation) -> {
+      state.logger
+      |> log.error("Worker callback failed during close", [
+        #("topic", topic_name),
+        #("crash", crash),
+      ])
+      #(socket.Errored(crash), continuation_steps(continuation, [], None))
+    }
+    StepWorkerReport(_, WorkerAdmissionFailed(error, _), continuation) -> {
+      state.logger
+      |> log.warn("Worker result rejected during close", [
+        #("topic", topic_name),
+        #("reason", overload.describe(error)),
+      ])
+      #(
+        socket.AdmissionRejected(error),
+        continuation_steps(continuation, [], None),
+      )
+    }
+    _ -> #(reason, [step])
   }
 }
 
