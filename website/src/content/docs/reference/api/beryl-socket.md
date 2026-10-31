@@ -49,9 +49,9 @@ Types for building app-side dispatch systems with `beryl.child_spec`.
 <li><a href="#api-type-connectseed"><code>ConnectSeed</code></a></li>
 <li><a href="#api-type-effect"><code>Effect</code></a></li>
 <li><a href="#api-type-input"><code>Input</code></a></li>
-<li><a href="#api-type-joinref"><code>JoinRef</code></a></li>
+<li><a href="#api-type-joinreference"><code>JoinReference</code></a></li>
 <li><a href="#api-type-next"><code>Next</code></a></li>
-<li><a href="#api-type-replyref"><code>ReplyRef</code></a></li>
+<li><a href="#api-type-replyreference"><code>ReplyReference</code></a></li>
 <li><a href="#api-type-sender"><code>Sender</code></a></li>
 <li><a href="#api-type-stopreason"><code>StopReason</code></a></li>
   </ul>
@@ -112,22 +112,22 @@ Connection metadata that the transport builds before the WebSocket
 ```gleam
 pub type Effect {
   AcceptJoin(
-    ref: JoinRef,
+    reference: JoinReference,
     reply: option.Option(json.Json)
   )
   RejectJoin(
-    ref: JoinRef,
+    reference: JoinReference,
     reason: json.Json
   )
   ReplyOk(
-    ref: ReplyRef,
+    reference: ReplyReference,
     payload: json.Json
   )
   ReplyError(
-    ref: ReplyRef,
+    reference: ReplyReference,
     payload: json.Json
   )
-  DiscardReply(ref: ReplyRef)
+  DiscardReply(reference: ReplyReference)
   Push(
     topic: String,
     event: String,
@@ -175,20 +175,20 @@ One update may return several effects, applied strictly in list order
 
 ```gleam
 AcceptJoin(
-  ref: JoinRef,
+  reference: JoinReference,
   reply: option.Option(json.Json)
 )
 ```
 
 Accept a pending join. This subscribes the socket to the topic and sends
  the join acknowledgment with an optional reply payload. The effect is
- valid only while the `Join` input's ref is pending.
+ valid only while the `Join` input's reference is pending.
 
 ##### `RejectJoin`
 
 ```gleam
 RejectJoin(
-  ref: JoinRef,
+  reference: JoinReference,
   reason: json.Json
 )
 ```
@@ -199,35 +199,35 @@ Reject a pending join with an error payload.
 
 ```gleam
 ReplyOk(
-  ref: ReplyRef,
+  reference: ReplyReference,
   payload: json.Json
 )
 ```
 
-Reply successfully to a client message ref.
+Reply successfully to a client message reference.
 
 ##### `ReplyError`
 
 ```gleam
 ReplyError(
-  ref: ReplyRef,
+  reference: ReplyReference,
   payload: json.Json
 )
 ```
 
-Reply with an error to a client message ref.
+Reply with an error to a client message reference.
 
 ##### `DiscardReply`
 
 ```gleam
-DiscardReply(ref: ReplyRef)
+DiscardReply(reference: ReplyReference)
 ```
 
-Discard a client message ref without sending a reply.
+Discard a client message reference without sending a reply.
 
  Use this when the application intentionally will not answer a referenced
  message. It releases the retained socket capacity and permits later reuse
- of the same wire ref. A completed or stale ref has no effect.
+ of the same wire `ref`. A completed or stale reference has no effect.
 
 ##### `Push`
 
@@ -360,13 +360,13 @@ pub type Input(a) {
   Join(
     topic: String,
     payload: dynamic.Dynamic,
-    ref: JoinRef
+    reference: JoinReference
   )
   Message(
     topic: String,
     event: String,
     payload: dynamic.Dynamic,
-    ref: option.Option(ReplyRef)
+    reference: option.Option(ReplyReference)
   )
   Binary(
     topic: String,
@@ -390,7 +390,7 @@ Everything the runtime delivers to the app's `update` function.
 Join(
   topic: String,
   payload: dynamic.Dynamic,
-  ref: JoinRef
+  reference: JoinReference
 )
 ```
 
@@ -405,11 +405,11 @@ Message(
   topic: String,
   event: String,
   payload: dynamic.Dynamic,
-  ref: option.Option(ReplyRef)
+  reference: option.Option(ReplyReference)
 )
 ```
 
-A client message on a joined topic. `ref` is present for messages
+A client message on a joined topic. `reference` is present for messages
  that expect a reply.
 
 ##### `Binary`
@@ -447,19 +447,22 @@ Info(a)
 A typed server-side message, sent via the socket's `Sender` (see
  `ConnectInfo.self` and `notify`).
 
-<div class="api-entry-anchor" id="api-type-joinref" aria-hidden="true"></div>
+<div class="api-entry-anchor" id="api-type-joinreference" aria-hidden="true"></div>
 
-### `JoinRef`
+### `JoinReference`
 
 ```gleam
-pub type JoinRef
+pub type JoinReference
 ```
 
 A pending join correlation handle.
 
- Pass it back in `AcceptJoin` or `RejectJoin`. A join ref is valid only for
- its pending join. It carries a unique runtime token. A delayed completion
+ Pass it back in `AcceptJoin` or `RejectJoin`. A join reference is valid only
+ for its pending join. It carries a unique runtime token. A delayed completion
  for an older same-topic join cannot answer a replacement or retry.
+
+ The runtime links this handle to Phoenix's `join_ref` and message `ref`.
+ Return the exact handle from `Join`; do not reconstruct it from wire values.
 
 <div class="api-entry-anchor" id="api-type-next" aria-hidden="true"></div>
 
@@ -503,21 +506,24 @@ Tear down the socket: every joined topic receives a `Closed` input,
  configured terminal frames are sent, and the transport connection is
  closed.
 
-<div class="api-entry-anchor" id="api-type-replyref" aria-hidden="true"></div>
+<div class="api-entry-anchor" id="api-type-replyreference" aria-hidden="true"></div>
 
-### `ReplyRef`
+### `ReplyReference`
 
 ```gleam
-pub type ReplyRef
+pub type ReplyReference
 ```
 
 A client message reply correlation handle.
 
  Pass it back in `ReplyOk`, `ReplyError`, or `DiscardReply`. You can store
- reply refs in the model and answer them in a later `update` turn, for
+ reply references in the model and answer them in a later `update` turn, for
  example after an asynchronous lookup. They do not expire. They are
  single-use and remain valid only while the topic instance that received
  the message stays open.
+
+ The runtime links this handle to Phoenix's per-message `ref` and channel
+ `join_ref`. The handle also carries a unique runtime token.
 
 <div class="api-entry-anchor" id="api-type-sender" aria-hidden="true"></div>
 
@@ -642,14 +648,12 @@ Read socket queue accounting without waiting for its callback.
 
 ```gleam
 pub fn reply_ok(
-  option.Option(ReplyRef),
+  option.Option(ReplyReference),
   json.Json
 ) -> List(Effect)
 ```
 
-Return a `ReplyOk` effect when the client supplied a ref.
+Return a `ReplyOk` effect when the client requested a reply.
 
- `Message` inputs carry `Option(ReplyRef)` (refless messages expect no
- reply) while the `ReplyOk` effect demands a `ReplyRef`, so every handler
- that replies conditionally needs this check. This function returns no
- effects when the client did not supply a ref.
+ `Message` inputs carry `Option(ReplyReference)`, while `ReplyOk` requires
+ a `ReplyReference`. This helper returns no effects for `None`.

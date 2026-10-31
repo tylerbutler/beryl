@@ -48,8 +48,8 @@ state. It does not receive `phx_reply`.
    that a match branch covers the client topic:
    ```gleam
    // "room:" <> _ matches "room:lobby", "room:42", etc.
-   socket.Join("room:" <> _, payload, ref) ->
-     socket.Next(model, [socket.AcceptJoin(ref, option.None)])
+   socket.Join("room:" <> _, payload, reference) ->
+     socket.Next(model, [socket.AcceptJoin(reference, option.None)])
    ```
    With `beryl/channel`, confirm a handler pattern matches the topic. The
    layer rejects an unclaimed topic with `{"reason": "unmatched topic"}`.

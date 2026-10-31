@@ -6,7 +6,7 @@
 import beryl/channel
 import beryl/group.{type Groups}
 import beryl/overload
-import beryl/socket.{type ReplyRef}
+import beryl/socket.{type ReplyReference}
 import example_helper/broadcast_hub
 import example_helper/color
 import example_helper/payload
@@ -170,16 +170,19 @@ fn accept_room(
 fn new_message(
   state: State,
   raw: Dynamic,
-  ref: Option(ReplyRef),
+  reference: Option(ReplyReference),
 ) -> List(channel.Action(channel.Active)) {
   case string.trim(payload.string_or(raw, "text", "")) {
     "" -> [
-      channel.reply_ok(ref, error_with_code(422, "Message cannot be empty")),
+      channel.reply_ok(
+        reference,
+        error_with_code(422, "Message cannot be empty"),
+      ),
     ]
     text -> [
       channel.broadcast("new_msg", user_message(state, text)),
       channel.reply_ok(
-        ref,
+        reference,
         json.object([
           #("status", json.string("ok")),
           #("timestamp", json.int(timestamp_ms())),

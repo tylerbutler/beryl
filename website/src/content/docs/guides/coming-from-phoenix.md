@@ -64,13 +64,13 @@ a Phoenix channel crash skips `terminate/2`. See
 | `channel "room:*", RoomChannel` routing table | the handler list passed to `channel.child_spec` | topic pattern match in `update`, with `beryl/topic` helpers |
 | One channel process per joined topic | one socket actor per connection and one worker process per joined topic, each with its own private state | one socket actor and one `model` per connection, covering all its topics |
 | `socket.assigns` + `assign/3` | the channel's own `state` type, returned from each callback | your `model`, returned from each `update` |
-| `join/3` callback | the handler's `join` callback | `socket.Join(topic, payload, ref)` |
-| `{:ok, socket}` / `{:ok, reply, socket}` | `channel.accept(state)` / `accept(..) |> channel.with_reply(reply)` | `socket.AcceptJoin(ref, None)` / `socket.AcceptJoin(ref, Some(reply))` |
-| `{:error, %{reason: ...}}` | `channel.reject(reason)` | `socket.RejectJoin(ref, reason)` |
-| `handle_in/3` | `channel.on_message` | `socket.Message(topic, event, payload, ref)` |
-| `{:reply, {:ok, payload}, socket}` | `channel.reply_ok(message.reply, payload)` / `channel.reply_error(message.reply, payload)` action | `socket.ReplyOk(ref, payload)` / `socket.ReplyError(ref, payload)` |
-| `{:noreply, socket}` (no later reply) | `channel.next(state, [channel.discard_reply(message.reply)])` | `socket.DiscardReply(ref)` when a reply ref is present |
-| `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | keep `Option(ReplyRef)` in the channel's state and call `reply_ok` from a later active callback | store the `ReplyRef` in your model, `socket.ReplyOk` from a later `update` turn |
+| `join/3` callback | the handler's `join` callback | `socket.Join(topic, payload, reference)` |
+| `{:ok, socket}` / `{:ok, reply, socket}` | `channel.accept(state)` / `accept(..) |> channel.with_reply(reply)` | `socket.AcceptJoin(reference, None)` / `socket.AcceptJoin(reference, Some(reply))` |
+| `{:error, %{reason: ...}}` | `channel.reject(reason)` | `socket.RejectJoin(reference, reason)` |
+| `handle_in/3` | `channel.on_message` | `socket.Message(topic, event, payload, reference)` |
+| `{:reply, {:ok, payload}, socket}` | `channel.reply_ok(message.reply, payload)` / `channel.reply_error(message.reply, payload)` action | `socket.ReplyOk(reference, payload)` / `socket.ReplyError(reference, payload)` |
+| `{:noreply, socket}` (no later reply) | `channel.next(state, [channel.discard_reply(message.reply)])` | `socket.DiscardReply(reference)` when a reply reference is present |
+| `socket_ref/1` + `Phoenix.Channel.reply/2` (reply later) | keep `Option(ReplyReference)` in the channel's state and call `reply_ok` from a later active callback | store the `ReplyReference` in your model, `socket.ReplyOk` from a later `update` turn |
 | `push(socket, event, payload)` | `channel.push(event, payload)` action | `socket.Push(topic, event, payload)` effect |
 | `broadcast!/3` | `channel.broadcast(event, payload)` action | `socket.Broadcast(topic, event, payload)` effect |
 | `broadcast_from!/3` | `channel.broadcast_from(event, payload)` action | `socket.BroadcastFrom(topic, event, payload)` effect |
@@ -85,6 +85,11 @@ a Phoenix channel crash skips `terminate/2`. See
 | `Phoenix.Presence.update/4` | repeat `channel.presence_track(key, meta)`; for standalone refs, `presence.update(handle, ref, meta)` | repeat `socket.PresenceTrack(topic, key, meta)`; for standalone refs, `presence.update(handle, ref, meta)` |
 | `push(socket, "presence_state", Presence.list(socket))` | `channel.push_presence("presence_state", presence_wire.encode_state)` | `socket.PushPresence(topic, "presence_state", presence_wire.encode_state)` |
 | `intercept` / `handle_out` | no equivalent; create payloads before `broadcast`, or use `push` for one socket | no equivalent; use the same approach |
+
+Phoenix names the wire fields `join_ref` and `ref`. In beryl's app-facing API,
+use `socket.JoinReference`, `socket.ReplyReference`, and the `reference` argument
+label. These opaque handles include unique runtime tokens; return the exact
+handle from the input. The wire/codec API keeps Phoenix's field names.
 
 ## Compare room channel examples
 
@@ -187,30 +192,30 @@ fn init(_info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) {
 
 fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
   case input {
-    socket.Join("room:" <> room_id, _payload, ref) ->
+    socket.Join("room:" <> room_id, _payload, reference) ->
       socket.Next(Model(room_id: room_id), [
         socket.AcceptJoin(
-          ref,
+          reference,
           Some(json.object([#("room_id", json.string(room_id))])),
         ),
       ])
 
-    socket.Message(_topic, "ping", _payload, Some(ref)) ->
+    socket.Message(_topic, "ping", _payload, Some(reference)) ->
       socket.Next(model, [
-        socket.ReplyOk(ref, json.object([#("status", json.string("ok"))])),
+        socket.ReplyOk(reference, json.object([#("status", json.string("ok"))])),
       ])
 
-    socket.Message(topic, "typing", _payload, ref) ->
+    socket.Message(topic, "typing", _payload, reference) ->
       socket.Next(model, [
         socket.BroadcastFrom(topic, "typing", json.object([])),
-        ..case ref {
-          Some(ref) -> [socket.DiscardReply(ref)]
+        ..case reference {
+          Some(reference) -> [socket.DiscardReply(reference)]
           None -> []
         }
       ])
 
-    socket.Message(_, _, _, Some(ref)) ->
-      socket.Next(model, [socket.DiscardReply(ref)])
+    socket.Message(_, _, _, Some(reference)) ->
+      socket.Next(model, [socket.DiscardReply(reference)])
 
     socket.Info(Tick(at)) ->
       socket.Next(model, [
@@ -233,9 +238,9 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
 Both beryl APIs differ from Phoenix in these ways:
 
 - **Pending replies consume capacity.** `channel.stay` and `channel.next` do
-  not release refs on their own. Discard a ref if you will not answer it, or
+  not release references on their own. Discard a reference if you will not answer it, or
   keep it in state for a later reply. The default channel message callback
-  discards refs.
+  discards references.
 - **Side effects are values.** Phoenix callbacks call `push` and
   `broadcast_from!`. A beryl callback returns a list. The runtime applies the
   list in order after the turn. List order is wire order, so an acknowledgment

@@ -48,9 +48,9 @@ frames, or select a compatible client.
 
 | Goal | API | Notes |
 |---|---|---|
-| Accept a join | `socket.AcceptJoin(ref, reply)` from `socket.Join` | Sends the join `phx_reply` and subscribes the socket to the topic |
-| Reject a join | `socket.RejectJoin(ref, reason)` from `socket.Join` | Fails the join immediately; unanswered joins are rejected automatically too |
-| Reply to an incoming message | `socket.ReplyOk(ref, payload)` or `socket.ReplyError(ref, payload)` from `socket.Message(..., Some(ref))` | Sends `phx_reply`; replies are keyed by ref, not by event name |
+| Accept a join | `socket.AcceptJoin(reference, reply)` from `socket.Join` | Sends the join `phx_reply` and subscribes the socket to the topic |
+| Reject a join | `socket.RejectJoin(reference, reason)` from `socket.Join` | Fails the join immediately; unanswered joins are rejected automatically too |
+| Reply to an incoming message | `socket.ReplyOk(reference, payload)` or `socket.ReplyError(reference, payload)` from `socket.Message(..., Some(reference))` | Sends `phx_reply`; replies use the message's reference, not its event name |
 | Push to the current socket only | `socket.Push(topic, event, payload)` | Server-originated push on a topic this socket already joined |
 | No response | `socket.Next(model, [])` | Continue without outgoing frames or side effects |
 | Broadcast to all sockets on a topic | `socket.Broadcast(topic, event, payload)` inside `update`, or `beryl.broadcast(sockets, topic, event, payload)` outside it | All subscribers, including the sender |
