@@ -16,7 +16,7 @@
 ////   through a `beryl.child_spec` runtime, reusing that per-topic surface.
 
 import beryl/overload
-import beryl/socket.{type Effect, type JoinRef}
+import beryl/socket.{type Effect, type JoinReference}
 import beryl/topic
 import example_helper/color
 import example_helper/payload
@@ -50,7 +50,7 @@ pub fn join(
   socket_id: String,
   topic: String,
   payload: Dynamic,
-  ref: JoinRef,
+  reference: JoinReference,
 ) -> #(Model, List(Effect)) {
   let username = payload.string_or(payload, "username", "Anonymous")
   let color = color.pastel_for(socket_id)
@@ -73,7 +73,7 @@ pub fn join(
     meta,
   )
   #(Model(username: username, color: color), [
-    socket.AcceptJoin(ref, Some(reply)),
+    socket.AcceptJoin(reference, Some(reply)),
   ])
 }
 
@@ -158,15 +158,15 @@ pub fn cursor_rooms_update(
   let pattern = topic.parse_pattern("cursor:*")
   fn(state: CursorRooms, input) {
     case input {
-      socket.Join(topic_name, payload, ref) ->
+      socket.Join(topic_name, payload, reference) ->
         case topic.matches(pattern, topic_name) {
           False ->
             socket.Next(state, [
-              socket.RejectJoin(ref, unknown_topic()),
+              socket.RejectJoin(reference, unknown_topic()),
             ])
           True -> {
             let #(model, effects) =
-              join(context, state.socket_id, topic_name, payload, ref)
+              join(context, state.socket_id, topic_name, payload, reference)
             case socket.notify(state.self, PublishRoster(topic_name)) {
               Ok(Nil) -> Nil
               Error(error) ->
@@ -185,7 +185,7 @@ pub fn cursor_rooms_update(
           }
         }
 
-      socket.Message(topic_name, event_name, payload, ref) ->
+      socket.Message(topic_name, event_name, payload, reference) ->
         case
           topic.matches(pattern, topic_name),
           dict.get(state.topics, topic_name)
@@ -205,11 +205,11 @@ pub fn cursor_rooms_update(
                 ..state,
                 topics: dict.insert(state.topics, topic_name, model),
               ),
-              list.append(discard_reply(ref), effects),
+              list.append(discard_reply(reference), effects),
             )
           }
           False, Ok(_) | False, Error(_) | True, Error(_) ->
-            socket.Next(state, discard_reply(ref))
+            socket.Next(state, discard_reply(reference))
         }
 
       socket.Closed(topic_name, _reason) ->
@@ -243,9 +243,9 @@ fn unknown_topic() -> json.Json {
   json.object([#("reason", json.string("unknown_topic"))])
 }
 
-fn discard_reply(reply: Option(socket.ReplyRef)) -> List(Effect) {
+fn discard_reply(reply: Option(socket.ReplyReference)) -> List(Effect) {
   case reply {
-    Some(ref) -> [socket.DiscardReply(ref)]
+    Some(reference) -> [socket.DiscardReply(reference)]
     None -> []
   }
 }

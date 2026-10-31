@@ -50,8 +50,8 @@ sequenceDiagram
   Wire-->>Router: route_decoded(join)
   Router->>Socket: forward decoded join
   Socket->>Socket: validate topic (length, reserved names, rate, cap)
-  Socket->>App: update(model, Join(topic, payload, ref))
-  App-->>Socket: Next(model, [AcceptJoin(ref, reply)]) / [RejectJoin(ref, reason)]
+  Socket->>App: update(model, Join(topic, payload, reference))
+  App-->>Socket: Next(model, [AcceptJoin(reference, reply)]) / [RejectJoin(reference, reason)]
   Socket->>Router: index subscription (on accept)
   Socket-->>Client: phx_reply (ok/error)
 ```
@@ -72,7 +72,7 @@ sequenceDiagram
   participant App as your update
   Client->>Router: decoded frame [.., topic, event, payload]
   Router->>Socket: forward frame
-  Socket->>App: update(model, Message(topic, event, payload, ref))
+  Socket->>App: update(model, Message(topic, event, payload, reference))
   App-->>Socket: Next(model, effects)
   Socket-->>Client: apply effects in order (ReplyOk, Push, ...)
 ```
@@ -147,7 +147,7 @@ worker runs the channel's callbacks and reports its actions back.
 
 | Runtime input | Channel layer behavior |
 |---|---|
-| `Join(topic, payload, ref)` | First matching handler wins. Its `join` runs while the worker starts, and the socket actor waits for it. The result emits `AcceptJoin` followed by ordered join actions, or `RejectJoin`. No match is refused with `{"reason": "unmatched topic"}` before a worker starts |
+| `Join(topic, payload, reference)` | First matching handler wins. Its `join` runs while the worker starts, and the socket actor waits for it. The result emits `AcceptJoin` followed by ordered join actions, or `RejectJoin`. No match is refused with `{"reason": "unmatched topic"}` before a worker starts |
 | `Message(topic, ..)` | The socket actor sends it to the topic worker. The worker runs `on_message` and reports its actions |
 | `Binary(topic, ..)` | Ignored by the channel layer |
 | `channel.notify` mail | The sender sends it to its join worker. Mail for an ended join reaches no process |

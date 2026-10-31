@@ -54,7 +54,7 @@
 ////
 //// Each accepted topic runs in its own worker process under a supervisor
 //// that its socket actor owns. The socket actor owns the protocol state,
-//// refs, subscriptions, presence data, and frame writes. The worker runs
+//// references, subscriptions, presence data, and frame writes. The worker runs
 //// `join` during startup. The socket actor waits for a maximum of five
 //// seconds. The worker also runs `on_message` and `on_info`, and sends its
 //// actions to the socket actor.
@@ -267,9 +267,9 @@ pub type JoinContext(info) {
 /// `reply` is present only when the client asked for a reply; pass it to
 /// [`reply_ok`](#reply_ok), [`reply_error`](#reply_error), or
 /// [`discard_reply`](#discard_reply).
-/// A pending ref consumes socket capacity until you reply, discard it, or
-/// close the topic. Keep the ref in your state if you will reply on a later
-/// turn. [`stay`](#stay) and [`next`](#next) do not release it.
+/// A pending reference consumes socket capacity until you reply, discard it, or
+/// close the topic. Keep the reference in your state if you will reply on a
+/// later turn. [`stay`](#stay) and [`next`](#next) do not release it.
 pub type Message {
   Message(
     /// The client-supplied event name.
@@ -277,7 +277,7 @@ pub type Message {
     /// The raw client payload, to decode with `gleam/dynamic/decode`.
     payload: dynamic.Dynamic,
     /// Reply correlation handle, when the client requested a reply.
-    reply: option.Option(socket.ReplyRef),
+    reply: option.Option(socket.ReplyReference),
   )
 }
 
@@ -305,15 +305,15 @@ pub opaque type Action(phase) {
   BroadcastFromAction(event: String, payload: json.Json)
   ReplyOkAction(
     phase: phase,
-    reply: option.Option(socket.ReplyRef),
+    reply: option.Option(socket.ReplyReference),
     payload: json.Json,
   )
   ReplyErrorAction(
     phase: phase,
-    reply: option.Option(socket.ReplyRef),
+    reply: option.Option(socket.ReplyReference),
     payload: json.Json,
   )
-  DiscardReplyAction(phase: phase, reply: option.Option(socket.ReplyRef))
+  DiscardReplyAction(phase: phase, reply: option.Option(socket.ReplyReference))
   PresenceTrackAction(phase: phase, key: String, meta: json.Json)
   PresenceUntrackAction(key: String)
   PushPresenceAction(
@@ -349,7 +349,7 @@ pub fn broadcast_from(event: String, payload: json.Json) -> Action(phase) {
 /// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
 /// produces no effect.
 pub fn reply_ok(
-  reply: option.Option(socket.ReplyRef),
+  reply: option.Option(socket.ReplyReference),
   payload: json.Json,
 ) -> Action(Active) {
   ReplyOkAction(Active, reply, payload)
@@ -360,7 +360,7 @@ pub fn reply_ok(
 /// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
 /// produces no effect.
 pub fn reply_error(
-  reply: option.Option(socket.ReplyRef),
+  reply: option.Option(socket.ReplyReference),
   payload: json.Json,
 ) -> Action(Active) {
   ReplyErrorAction(Active, reply, payload)
@@ -371,7 +371,9 @@ pub fn reply_error(
 /// Use this for messages the application intentionally will not answer.
 /// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
 /// produces no effect.
-pub fn discard_reply(reply: option.Option(socket.ReplyRef)) -> Action(Active) {
+pub fn discard_reply(
+  reply: option.Option(socket.ReplyReference),
+) -> Action(Active) {
   DiscardReplyAction(Active, reply)
 }
 
@@ -427,14 +429,15 @@ pub opaque type Next(state) {
 
 /// Stay joined with the given state, applying `actions` in order.
 ///
-/// Pending reply refs remain charged unless an action replies or discards them.
+/// Pending reply references remain charged unless an action replies or
+/// discards them.
 pub fn next(state: state, actions: List(Action(Active))) -> Next(state) {
   NextContinue(state: state, actions: actions)
 }
 
 /// Stay joined with the given state and no actions.
 ///
-/// This does not release a message's reply ref. Use
+/// This does not release a message's reply reference. Use
 /// `next(state, [discard_reply(message.reply)])` to ignore a client message.
 pub fn stay(state: state) -> Next(state) {
   NextContinue(state: state, actions: [])
@@ -529,7 +532,8 @@ fn continuation(
 /// Start an accepted result with [`accept`](#accept), then pipe it through
 /// the `on_*` functions for the inputs that the channel handles. Unhandled
 /// inputs keep the channel joined. The default message callback discards its
-/// reply ref without sending a reply; other unhandled inputs produce no actions.
+/// reply reference without sending a reply; other unhandled inputs produce
+/// no actions.
 /// [`handler`](#handler) seals the private `state` and `info` types.
 pub opaque type JoinResult(state, info) {
   JoinAccepted(
@@ -556,8 +560,8 @@ pub fn accept(state: state) -> JoinResult(state, info) {
 
 /// Handle client messages on this channel's topic.
 ///
-/// Reply to each message, discard its reply ref, or keep the ref for a later
-/// turn. A custom callback replaces the default callback's reply disposal.
+/// Reply to each message, discard its reply reference, or keep the reference
+/// for a later turn. A custom callback replaces the default callback's reply disposal.
 pub fn on_message(
   result: JoinResult(state, info),
   handle: fn(state, Message) -> Next(state),
@@ -902,7 +906,7 @@ fn step(
 
 /// Lower actions to core effects, preserving strict left-to-right order.
 ///
-/// Reply actions with no ref lower to zero effects.
+/// Reply actions with no reference lower to zero effects.
 @internal
 pub fn effects(
   topic: String,
@@ -926,13 +930,13 @@ fn effect(topic: String, action: Action(phase)) -> List(socket.Effect) {
     | ReplyErrorAction(reply: option.None, ..)
     | DiscardReplyAction(reply: option.None, ..) -> []
     ReplyOkAction(reply: option.Some(reply), payload: payload, ..) -> [
-      socket.ReplyOk(ref: reply, payload: payload),
+      socket.ReplyOk(reference: reply, payload: payload),
     ]
     ReplyErrorAction(reply: option.Some(reply), payload: payload, ..) -> [
-      socket.ReplyError(ref: reply, payload: payload),
+      socket.ReplyError(reference: reply, payload: payload),
     ]
     DiscardReplyAction(reply: option.Some(reply), ..) -> [
-      socket.DiscardReply(ref: reply),
+      socket.DiscardReply(reference: reply),
     ]
     PresenceTrackAction(key: key, meta: meta, ..) -> [
       socket.PresenceTrack(topic: topic, key: key, meta: meta),
