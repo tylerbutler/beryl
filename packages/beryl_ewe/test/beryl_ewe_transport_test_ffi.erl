@@ -3,12 +3,23 @@
          websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
          send_text/2, send_binary/2, receive_text/2, receive_binary/2,
          close/1, http_get/2, stop_supervisor/1,
-         suspend_server_peer/1, resume_process/1, outbound_queue_usage/1,
+         suspend_server_peer/1, outbound_queue_usage/1,
          attach_transport_events/0, detach_transport_events/1,
          receive_upgrade_event/1, receive_frame_event/1,
          receive_message_event/1, coalesced_upgrade_frames/0,
          split_upgrade_frames/0, empty_text_control_frames/0,
-         empty_binary_frames/0]).
+         empty_binary_frames/0, connect_tcp/1]).
+
+%% The calling Gleam test owns this passive socket and closes it via glisten.
+%% gen_tcp's {ok, Socket}/{error, inet:posix()} matches Glisten's types.
+connect_tcp(Port) ->
+    gen_tcp:connect(
+        {127, 0, 0, 1},
+        Port,
+        [binary, {active, false}, {packet, raw}, {nodelay, true},
+         {send_timeout, 1000}],
+        1000
+    ).
 
 attach_transport_events() ->
     HandlerId = {beryl_ewe_transport_test, make_ref()},
@@ -311,10 +322,6 @@ find_server_peer([Port | Rest], Peer) ->
         _ ->
             find_server_peer(Rest, Peer)
     end.
-
-resume_process(Pid) ->
-    true = erlang:resume_process(Pid),
-    nil.
 
 outbound_queue_usage(Pid) ->
     {messages, Messages} = erlang:process_info(Pid, messages),
