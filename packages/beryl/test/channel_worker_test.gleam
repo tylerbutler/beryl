@@ -860,6 +860,15 @@ pub fn full_socket_output_keeps_termination_panic_and_timeout_bounded_test() -> 
 
 pub fn empty_termination_preserves_committed_initial_presence_output_test() -> Nil {
   use <- unitest.tag("serial")
+  committed_initial_presence_during_close(False)
+}
+
+pub fn empty_termination_preserves_committed_initial_presence_crash_test() -> Nil {
+  use <- unitest.tag("serial")
+  committed_initial_presence_during_close(True)
+}
+
+fn committed_initial_presence_during_close(crash: Bool) -> Nil {
   let initial_gate = new_gate()
   let initial_started = process.new_subject()
   let socket_blocked = process.new_subject()
@@ -873,7 +882,10 @@ pub fn empty_termination_preserves_committed_initial_presence_output_test() -> N
         |> channel.on_presence(fn(_, _) {
           process.send(initial_started, process.self())
           wait_for_gate(initial_gate)
-          channel.next(Nil, [channel.push("initial", json.null())])
+          case crash {
+            True -> panic as "initial presence failed during leave"
+            False -> channel.next(Nil, [channel.push("initial", json.null())])
+          }
         })
         |> channel.on_terminate(fn(_, _) {
           process.send(terminating, Nil)
@@ -942,14 +954,29 @@ pub fn empty_termination_preserves_committed_initial_presence_output_test() -> N
   process.receive(terminating, 1000) |> should.equal(Ok(Nil))
   wait_until_dead(worker)
   process.send(release_socket, Nil)
-  let received = list.map(list.repeat(Nil, 8), fn(_) { helper.recv(frames) })
-  let assert [initial, closed] =
+  let frame_count = case crash {
+    True -> 7
+    False -> 8
+  }
+  let received =
+    list.map(list.repeat(Nil, frame_count), fn(_) { helper.recv(frames) })
+  let lifecycle =
     list.filter(received, fn(frame) {
       string.contains(frame, "\"initial\"")
       || string.contains(frame, "\"phx_close\"")
+      || string.contains(frame, "\"phx_error\"")
     })
-  initial |> string.contains("\"initial\"") |> should.be_true
-  closed |> string.contains("\"phx_close\"") |> should.be_true
+  case crash {
+    True -> {
+      let assert [failed] = lifecycle
+      failed |> string.contains("\"phx_error\"") |> should.be_true
+    }
+    False -> {
+      let assert [initial, closed] = lifecycle
+      initial |> string.contains("\"initial\"") |> should.be_true
+      closed |> string.contains("\"phx_close\"") |> should.be_true
+    }
+  }
   list.each(
     [#("\"leave\"", 1), #("\"hold\"", 1), #("\"noise\"", 4)],
     fn(expected) {
@@ -959,6 +986,10 @@ pub fn empty_termination_preserves_committed_initial_presence_output_test() -> N
       |> should.equal(expected.1)
     },
   )
+  wait_for_empty_socket_queue(queue)
+  beryl.broadcast(channels, "other:a", "alive", json.null())
+  |> should.equal(Ok(Nil))
+  helper.recv(frames) |> string.contains("\"alive\"") |> should.be_true
   wait_for_empty_socket_queue(queue)
   process.receive(terminating, 0) |> should.equal(Error(Nil))
   beryl.stop(channels) |> should.equal(Ok(Nil))
