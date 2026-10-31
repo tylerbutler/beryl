@@ -1,5 +1,16 @@
 # beryl_ewe changelog
 
+## v0.3.0 - 2026-10-31
+
+### Changed
+
+- Upgrade Ewe to 9.0.0. Handler responses now use ewe.Body instead of ewe.ResponseBody; applications must also update Ewe body constructors and server builder labels. Route HTTP/2 extended CONNECT through the same admission checks as HTTP/1 WebSockets, using the parsed authority for same-origin checks.
+
+### Dependencies
+
+- use the Hex release of unitest
+- Updated beryl to 0.6.0
+
 ## v0.2.3 - 2026-09-24
 
 ### Fixed

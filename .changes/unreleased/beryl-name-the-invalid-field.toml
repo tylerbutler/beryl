@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Name the invalid field in binary push frame UTF-8 errors: join_ref or ref."
