@@ -6,6 +6,7 @@
 //// segment-aware wildcards where "*" occupies a complete colon-delimited
 //// segment.
 
+import beryl_protocol
 import gleam/bool
 import gleam/list
 import gleam/result
@@ -243,16 +244,8 @@ pub fn from_segments(parts: List(String)) -> String {
 /// - not contain control characters (codepoints 0–31 or 127); and
 /// - not start or end with `":"`.
 pub fn validate(topic: String) -> Result(String, TopicError) {
-  use <- bool.guard(when: string.is_empty(topic), return: Error(EmptyTopic))
-  use <- bool.guard(
-    when: string.starts_with(topic, ":") || string.ends_with(topic, ":"),
-    return: Error(InvalidFormat("topic cannot start or end with ':'")),
-  )
-  use <- bool.guard(
-    when: has_control_characters(topic),
-    return: Error(InvalidFormat("topic contains control characters")),
-  )
-  Ok(topic)
+  beryl_protocol.validate_topic(topic)
+  |> result.map_error(validation_error)
 }
 
 /// Validate a topic pattern string.
@@ -264,12 +257,8 @@ pub fn validate(topic: String) -> Result(String, TopicError) {
 /// The bare pattern `"*"` is valid: it parses to a catch-all wildcard that
 /// matches every topic.
 pub fn validate_pattern(pattern: String) -> Result(String, TopicError) {
-  use <- bool.guard(when: string.is_empty(pattern), return: Error(EmptyTopic))
-  use <- bool.guard(
-    when: has_control_characters(pattern),
-    return: Error(InvalidFormat("pattern contains control characters")),
-  )
-  Ok(pattern)
+  beryl_protocol.validate_pattern(pattern)
+  |> result.map_error(validation_error)
 }
 
 /// Validate an event name.
@@ -278,15 +267,8 @@ pub fn validate_pattern(pattern: String) -> Result(String, TopicError) {
 /// - not be empty; and
 /// - not contain control characters (codepoints 0–31 or 127).
 pub fn validate_event(event: String) -> Result(String, TopicError) {
-  use <- bool.guard(
-    when: string.is_empty(event),
-    return: Error(InvalidFormat("event name is empty")),
-  )
-  use <- bool.guard(
-    when: has_control_characters(event),
-    return: Error(InvalidFormat("event contains control characters")),
-  )
-  Ok(event)
+  beryl_protocol.validate_event(event)
+  |> result.map_error(validation_error)
 }
 
 /// Escape control characters in a string for safe use in log metadata.
@@ -307,12 +289,11 @@ pub fn sanitize_for_log(value: String) -> String {
   |> string.join("")
 }
 
-fn has_control_characters(value: String) -> Bool {
-  string.to_utf_codepoints(value)
-  |> list.any(fn(codepoint) {
-    let code = string.utf_codepoint_to_int(codepoint)
-    code < 32 || code == 127
-  })
+fn validation_error(error: beryl_protocol.ValidationError) -> TopicError {
+  case error {
+    beryl_protocol.EmptyTopic -> EmptyTopic
+    beryl_protocol.InvalidFormat(message) -> InvalidFormat(message)
+  }
 }
 
 /// Errors returned when validating a topic or topic pattern.

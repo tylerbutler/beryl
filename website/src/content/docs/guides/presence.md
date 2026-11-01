@@ -503,17 +503,21 @@ Start and supervise the standalone presence actor, then attach its handle with
 calling the synchronous public mutation functions:
 
 ```gleam
-socket.Join(topic, _payload, ref) ->
+socket.Join(topic, _payload, reference) ->
   socket.Next(model, [
-    socket.AcceptJoin(ref, option.None),
+    socket.AcceptJoin(reference, option.None),
     socket.PresenceTrack(topic, model.user_id, meta),
     socket.BroadcastPresence(topic, "presence_list", encode_presence),
   ])
 
-socket.Message(topic, "offline", _payload, _ref) ->
+socket.Message(topic, "offline", _payload, reference) ->
   socket.Next(model, [
     socket.PresenceUntrack(topic, model.user_id),
     socket.BroadcastPresence(topic, "presence_list", encode_presence),
+    ..case reference {
+      option.Some(reference) -> [socket.DiscardReply(reference)]
+      option.None -> []
+    }
   ])
 ```
 

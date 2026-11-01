@@ -123,6 +123,7 @@ fn sync_state(
         False -> {
           document_store.merge_state(context.store, model.document_key, state)
           channel.next(model, [
+            channel.discard_reply(message.reply),
             channel.broadcast_from(
               "doc_state",
               json.object([#("state", json.string(state))]),

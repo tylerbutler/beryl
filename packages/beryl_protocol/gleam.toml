@@ -1,0 +1,46 @@
+name = "beryl_protocol"
+version = "0.1.0"
+description = "Portable sans-IO channel protocol transitions for beryl"
+licences = ["MIT"]
+repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "packages/beryl_protocol" }
+gleam = ">= 1.13.0"
+
+[dependencies]
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+gleam_json = ">= 3.1.0 and < 4.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
+glinter = ">= 2.19.0 and < 3.0.0"
+
+[tools.licence_audit]
+allow = ["Apache-2.0", "ISC", "MIT"]
+deny = []
+
+[tools.glinter]
+warnings_as_errors = true
+
+[tools.glinter.rules]
+thrown_away_error = "error"
+discarded_result = "error"
+unused_exports = "error"
+deep_nesting = "error"
+prefer_guard_clause = "error"
+error_context_lost = "error"
+unqualified_import = "error"
+stringly_typed_error = "error"
+short_variable_name = "error"
+string_inspect = "error"
+assert_ok_pattern = "off"
+echo = "off"
+panic_without_message = "off"
+todo_without_message = "off"
+unnecessary_variable = "off"
+redundant_case = "off"
+trailing_underscore = "off"
+unnecessary_string_concatenation = "off"
+missing_type_annotation = "off"
+label_possible = "off"
+missing_labels = "off"
+unnecessary_let_assert = "off"
+duplicate_import = "off"

@@ -406,7 +406,9 @@ Initialize a new WebSocket connection in its connection process.
  `force_close` must immediately close the underlying socket. beryl calls
  it if binding fails or the outbound budget is full, so a blocked writer
  cannot retain an unbounded mailbox. Return an error when the close fails
- unexpectedly; beryl logs that failure.
+ unexpectedly; beryl logs that failure. beryl releases the connection slot
+ and reports the disconnect before calling it, since a forced stop can
+ bypass the transport's normal close callback.
 
 <div class="api-entry-anchor" id="api-function-is_websocket_request" aria-hidden="true"></div>
 

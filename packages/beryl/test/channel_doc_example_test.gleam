@@ -24,6 +24,7 @@ pub fn room() -> channel.Handler {
       channel.accept(0)
       |> channel.on_message(fn(count, message) {
         channel.next(count + 1, [
+          channel.discard_reply(message.reply),
           channel.broadcast(message.event, json.int(count + 1)),
         ])
       })
