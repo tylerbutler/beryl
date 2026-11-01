@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Return typed Result errors from group operations and PubSub startup, membership, broadcasts, and subscriber queries instead of exiting callers. Handle startup and query Results, match GroupCallFailed and PubSubError, and preserve the existing scoped broadcast wire format."

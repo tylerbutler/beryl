@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Run channel termination cleanup when socket output capacity is full, and report rejected cleanup actions as admission failures."
