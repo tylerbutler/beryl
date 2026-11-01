@@ -4746,7 +4746,7 @@ fn execute_close_topic(
             Error(Nil) ->
               unsubscribe_topic(state, socket_id, topic_name, reason)
           }
-          let state = remove_channel_bucket(state, socket_id, topic_name)
+          // Keep rate buckets until socket teardown so rejoining cannot refill them.
           let state = remove_topic_subscriber(state, socket_id, topic_name)
           case worker {
             Ok(worker) ->
@@ -6945,25 +6945,6 @@ fn take_channel_token(
     ),
     result.is_ok(taken),
   )
-}
-
-fn remove_channel_bucket(
-  state: State(model, message),
-  socket_id: String,
-  topic_name: String,
-) -> State(model, message) {
-  case dict.get(state.channel_buckets, socket_id) {
-    Error(Nil) -> state
-    Ok(socket_buckets) ->
-      State(
-        ..state,
-        channel_buckets: dict.insert(
-          state.channel_buckets,
-          socket_id,
-          dict.delete(socket_buckets, topic_name),
-        ),
-      )
-  }
 }
 
 fn remove_socket_rate_limits(
