@@ -19,17 +19,17 @@ pub fn counter_update(
   input: socket.Input(CounterMessage),
 ) -> socket.Next(Int) {
   case input {
-    socket.Join("counter:demo", _payload, ref) ->
-      socket.Next(count, [socket.AcceptJoin(ref, None)])
-    socket.Join(_, _, ref) ->
+    socket.Join("counter:demo", _payload, reference) ->
+      socket.Next(count, [socket.AcceptJoin(reference, None)])
+    socket.Join(_, _, reference) ->
       socket.Next(count, [
-        socket.RejectJoin(ref, json.string("unknown topic")),
+        socket.RejectJoin(reference, json.string("unknown topic")),
       ])
     socket.Info(Increment) -> socket.Next(count + 1, [])
     socket.Message("counter:demo", "get_count", _payload, reply) ->
       socket.Next(count, socket.reply_ok(reply, json.int(count)))
-    socket.Message(_, _, _, Some(ref)) ->
-      socket.Next(count, [socket.DiscardReply(ref)])
+    socket.Message(_, _, _, Some(reference)) ->
+      socket.Next(count, [socket.DiscardReply(reference)])
     socket.Message(_, _, _, None) | socket.Binary(_, _) | socket.Closed(_, _) ->
       socket.Next(count, [])
   }

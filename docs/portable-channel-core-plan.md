@@ -26,7 +26,7 @@ Paths in this table are relative to the repository root.
 | Decoded dispatch and validation | `packages/beryl/src/beryl/runtime.gleam`: `dispatch_inbound`, `resolve_event_topic`, `is_valid_topic`, `is_valid_event`; public validation in `beryl/topic.gleam` |
 | Join and replacement | Runtime: `handle_join_inner`, `execute_deliver_join`, `apply_accept_join`, `apply_reject_join`, `matching_pending_join`; `app_dispatch_test.gleam`, `app_protocol_test.gleam` |
 | Membership and cleanup | Runtime: `execute_close_topic`, `unsubscribe_topic`, `execute_close_cleanup`, `execute_teardown`; `app_presence_async_test.gleam`, `app_kick_stop_test.gleam`, `channel_lifecycle_actions_test.gleam` |
-| Reply capabilities and capacity | `beryl/socket.gleam`: opaque `JoinRef` and `ReplyRef`; runtime: `route_message_with_ref`, `register_reply_ref`, `apply_reply`, `apply_discard_reply`; `app_ref_test.gleam`, `runtime_overload_test.gleam` |
+| Reply capabilities and capacity | `beryl/socket.gleam`: opaque `JoinReference` and `ReplyReference`; runtime: `route_message_with_ref`, `register_reply_reference`, `apply_reply`, `apply_discard_reply`; `app_ref_test.gleam`, `runtime_overload_test.gleam` |
 | Heartbeats | Runtime: `handle_heartbeat`, `handle_check_heartbeats`; `app_heartbeat_test.gleam`, `protocol_hardening_test.gleam` |
 | Framing and codec options | `beryl/wire.gleam`, `beryl/wire/codec.gleam`; `wire_codec_test.gleam`, `phoenix_binary_test.gleam`, `per_socket_codec_test.gleam`, `app_topic_fallback_test.gleam` |
 | Ordering and channel parity | `effect_ordering_test.gleam`, `channel_wire_matrix.gleam`, `channel_wire_matrix_test.gleam`; Mist's `phoenix_contract_test.gleam` and both transport suites |

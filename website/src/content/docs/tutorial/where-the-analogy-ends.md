@@ -201,7 +201,7 @@ keep these differences in view:
 - One actor stores each socket model. A separate router stores the socket list
   and the subscribers.
 - Client payload stays `Dynamic` until your code decodes it.
-- `JoinRef` and `ReplyRef` are protocol tokens. Do not try to rebuild them.
+- `JoinReference` and `ReplyReference` are protocol tokens. Do not try to rebuild them.
 - The order of your effect list is the order on the wire.
 - Raw effects can work across topics. Channel actions apply to one topic, and
   the close phase allows fewer of them.

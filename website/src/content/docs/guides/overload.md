@@ -18,9 +18,9 @@ into a callback or a suspended effect list does not release its capacity.
 | Each callback result | 256 effects | 8 MiB |
 
 The socket limit includes input, pending worker reports, active effect lists,
-and unanswered reply refs. Callback completion does not release an unanswered
-ref, and reply refs do not expire. `socket.DiscardReply` or
-`channel.discard_reply` releases a ref without sending a wire reply. A reply,
+and unanswered reply references. Callback completion does not release an unanswered
+reference, and reply references do not expire. `socket.DiscardReply` or
+`channel.discard_reply` releases a reference without sending a wire reply. A reply,
 explicit discard, topic close, or socket close releases its capacity. When the
 socket budget is full, the runtime rejects new work and closes client input
 that it cannot safely retain.
@@ -68,7 +68,7 @@ let config =
 
 Use `presence.with_queue_limits(config, limit)` for a presence actor. These
 limits are safety defaults, not measured throughput recommendations. Keep room
-for input, results, reply refs, and cleanup at the same time.
+for input, results, reply references, and cleanup at the same time.
 
 ## Handle send results
 
@@ -120,7 +120,7 @@ and panic behavior if that actor is unavailable.
 
 Mist and Ewe close the connection when the shared frame pipeline cannot admit
 a text or binary frame. Worker input or callback-result rejection closes the
-affected topic with `phx_error`. Socket input, report, reply-ref, or index
+affected topic with `phx_error`. Socket input, report, reply-reference, or index
 admission failure closes the socket. An oversized join result cannot send
 join success or apply a prefix of its actions.
 

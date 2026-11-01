@@ -173,14 +173,14 @@ can join the topic:
 ```gleam
 fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
   case input {
-    socket.Join(topic, _payload, ref) ->
+    socket.Join(topic, _payload, reference) ->
       case model {
         Authenticated(claims) ->
           case authorized_for_topic(claims, topic) {
-            True -> socket.Next(model, [socket.AcceptJoin(ref, option.None)])
-            False -> socket.Next(model, [socket.RejectJoin(ref, forbidden())])
+            True -> socket.Next(model, [socket.AcceptJoin(reference, option.None)])
+            False -> socket.Next(model, [socket.RejectJoin(reference, forbidden())])
           }
-        Anonymous -> socket.Next(model, [socket.RejectJoin(ref, forbidden())])
+        Anonymous -> socket.Next(model, [socket.RejectJoin(reference, forbidden())])
       }
     // ...
   }

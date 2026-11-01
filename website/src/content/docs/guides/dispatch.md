@@ -40,8 +40,8 @@ let assert Ok(_root) =
 
 `socket.Input(msg)` has these variants:
 
-- `socket.Join(topic, payload, ref)`
-- `socket.Message(topic, event, payload, ref)`
+- `socket.Join(topic, payload, reference)`
+- `socket.Message(topic, event, payload, reference)`
 - `socket.Binary(topic, data)`
 - `socket.Closed(topic, reason)`
 - `socket.Info(msg)`
@@ -106,7 +106,7 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
   let room_pattern = topic.parse_pattern("room:*")
 
   case input {
-    socket.Join(topic_name, _payload, ref) ->
+    socket.Join(topic_name, _payload, reference) ->
       case topic.extract_id(room_pattern, topic_name) {
         Ok(room_id) ->
           socket.Next(
@@ -116,7 +116,7 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
             ),
             [
               socket.AcceptJoin(
-                ref,
+                reference,
                 Some(json.object([
                   #("room_id", json.string(room_id)),
                 ])),
@@ -134,7 +134,7 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
             model,
             [
               socket.RejectJoin(
-                ref,
+                reference,
                 json.object([
                   #("reason", json.string("unknown topic")),
                 ]),
@@ -143,24 +143,24 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
           )
       }
 
-    socket.Message(_topic_name, "ping", _payload, Some(ref)) ->
+    socket.Message(_topic_name, "ping", _payload, Some(reference)) ->
       socket.Next(
         model,
         [
           socket.ReplyOk(
-            ref,
+            reference,
             json.object([#("status", json.string("ok"))]),
           ),
         ],
       )
 
-    socket.Message(topic_name, "typing", _payload, ref) ->
+    socket.Message(topic_name, "typing", _payload, reference) ->
       socket.Next(
         model,
         [
           socket.BroadcastFrom(topic_name, "typing", json.object([])),
-          ..case ref {
-            Some(ref) -> [socket.DiscardReply(ref)]
+          ..case reference {
+            Some(reference) -> [socket.DiscardReply(reference)]
             None -> []
           }
         ],
@@ -192,8 +192,8 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
     socket.Binary(_topic_name, _data) ->
       socket.Next(model, [])
 
-    socket.Message(_, _, _, Some(ref)) ->
-      socket.Next(model, [socket.DiscardReply(ref)])
+    socket.Message(_, _, _, Some(reference)) ->
+      socket.Next(model, [socket.DiscardReply(reference)])
     socket.Message(_, _, _, None) ->
       socket.Next(model, [])
   }
@@ -202,9 +202,9 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
 
 A few important details:
 
-- Joins are explicit: return `socket.AcceptJoin(ref, reply)` or `socket.RejectJoin(ref, reason)`.
-- Message replies are explicit too: use `socket.ReplyOk` / `socket.ReplyError` when a client ref is present.
-- Return `socket.DiscardReply(ref)` for messages you will not answer. Pending refs consume socket capacity until you reply, discard them, or close the topic.
+- Joins are explicit: return `socket.AcceptJoin(reference, reply)` or `socket.RejectJoin(reference, reason)`.
+- Message replies are explicit too: use `socket.ReplyOk` / `socket.ReplyError` when a reply reference is present.
+- Return `socket.DiscardReply(reference)` for messages you will not answer. Pending references consume socket capacity until you reply, discard them, or close the topic.
 - `socket.Closed(topic, reason)` replaces per-topic cleanup hooks. Prune topic-local state there.
 - `socket.Info(msg)` is a typed message from your own server code.
 
@@ -271,7 +271,7 @@ The runtime applies effects in list order during one actor turn. Therefore:
 
 ```gleam
 socket.Next(model, [
-  socket.AcceptJoin(ref, None),
+  socket.AcceptJoin(reference, None),
   socket.Push(topic_name, "ready", json.object([])),
 ])
 ```

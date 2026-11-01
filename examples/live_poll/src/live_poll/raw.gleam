@@ -39,7 +39,7 @@ pub fn update(
 ) -> fn(Model, socket.Input(Message)) -> socket.Next(Model) {
   fn(model: Model, input: socket.Input(Message)) {
     case input {
-      socket.Join(topic, _payload, ref) -> {
+      socket.Join(topic, _payload, reference) -> {
         case room_name(topic) {
           Ok(room) -> {
             store.join(polls, room)
@@ -59,13 +59,13 @@ pub fn update(
             }
             socket.Next(
               Model(..model, topics: set.insert(model.topics, topic)),
-              [socket.AcceptJoin(ref, None)],
+              [socket.AcceptJoin(reference, None)],
             )
           }
           Error(_) ->
             socket.Next(model, [
               socket.RejectJoin(
-                ref,
+                reference,
                 json.object([#("reason", json.string("unknown_topic"))]),
               ),
             ])
@@ -120,7 +120,7 @@ fn handle_command(
   room: String,
   event: String,
   payload: Dynamic,
-  reply: Option(socket.ReplyRef),
+  reply: Option(socket.ReplyReference),
 ) -> socket.Next(Model) {
   case poll.command(event, payload) {
     poll.GetState ->
@@ -179,18 +179,18 @@ fn room_name(topic: String) -> Result(String, Nil) {
 }
 
 fn reply_error(
-  reply: Option(socket.ReplyRef),
+  reply: Option(socket.ReplyReference),
   payload: json.Json,
 ) -> List(socket.Effect) {
   case reply {
-    Some(ref) -> [socket.ReplyError(ref, payload)]
+    Some(reference) -> [socket.ReplyError(reference, payload)]
     None -> []
   }
 }
 
-fn discard_reply(reply: Option(socket.ReplyRef)) -> List(socket.Effect) {
+fn discard_reply(reply: Option(socket.ReplyReference)) -> List(socket.Effect) {
   case reply {
-    Some(ref) -> [socket.DiscardReply(ref)]
+    Some(reference) -> [socket.DiscardReply(reference)]
     None -> []
   }
 }

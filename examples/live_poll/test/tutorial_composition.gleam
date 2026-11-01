@@ -50,7 +50,7 @@ pub fn update(
   input: socket.Input(Message),
 ) -> socket.Next(Model) {
   case input {
-    socket.Join("guide", _, ref) -> {
+    socket.Join("guide", _, reference) -> {
       let generation = model.guide_generation + 1
       let assert Ok(Nil) =
         socket.notify(model.sender, GuideReady(generation, initial_tip))
@@ -61,20 +61,20 @@ pub fn update(
           guide_deliveries: 0,
           guide_generation: generation,
         ),
-        [socket.AcceptJoin(ref, None)],
+        [socket.AcceptJoin(reference, None)],
       )
     }
-    socket.Join(topic, _, ref) ->
+    socket.Join(topic, _, reference) ->
       case room_name(topic) {
         Ok(room) -> {
           store.join(polls, room)
           socket.Next(Model(..model, topics: set.insert(model.topics, topic)), [
-            socket.AcceptJoin(ref, None),
+            socket.AcceptJoin(reference, None),
           ])
         }
         Error(_) ->
           socket.Next(model, [
-            socket.RejectJoin(ref, json.string("unknown topic")),
+            socket.RejectJoin(reference, json.string("unknown topic")),
           ])
       }
     socket.Message(topic, event, payload, reply) ->
@@ -138,7 +138,7 @@ fn raw_command(
   topic: String,
   event: String,
   payload: Dynamic,
-  reply: Option(socket.ReplyRef),
+  reply: Option(socket.ReplyReference),
 ) -> List(socket.Effect) {
   case poll.command(event, payload) {
     poll.GetState ->
@@ -152,7 +152,9 @@ fn raw_command(
           ])
         Error(error) ->
           case reply {
-            Some(ref) -> [socket.ReplyError(ref, poll.error_to_json(error))]
+            Some(reference) -> [
+              socket.ReplyError(reference, poll.error_to_json(error)),
+            ]
             None -> []
           }
       }
@@ -241,9 +243,9 @@ fn tip(text: String, count: Int) -> json.Json {
   ])
 }
 
-fn discard_reply(reply: Option(socket.ReplyRef)) -> List(socket.Effect) {
+fn discard_reply(reply: Option(socket.ReplyReference)) -> List(socket.Effect) {
   case reply {
-    Some(ref) -> [socket.DiscardReply(ref)]
+    Some(reference) -> [socket.DiscardReply(reference)]
     None -> []
   }
 }

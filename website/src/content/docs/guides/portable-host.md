@@ -46,7 +46,7 @@ connection. They do not derive identity from client-supplied references.
 Reply handles are single use. Completion, discard, and final topic cleanup
 release their capacity.
 
-The BEAM adapter preserves the existing opaque `JoinRef` and `ReplyRef` API.
+The BEAM adapter preserves the existing opaque `JoinReference` and `ReplyReference` API.
 Applications return the exact handle they received. A stale completion must
 not consume a newer request, even if the client reuses its wire references.
 

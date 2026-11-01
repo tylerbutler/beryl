@@ -111,10 +111,10 @@ pub type Model {
 
 fn update(model: Model, input: socket.Input(Nil)) -> socket.Next(Model) {
   case input {
-    socket.Join("room:" <> room_id, _payload, ref) ->
-      socket.Next(Model(..model, room_id: room_id), [socket.AcceptJoin(ref, None)])
+    socket.Join("room:" <> room_id, _payload, reference) ->
+      socket.Next(Model(..model, room_id: room_id), [socket.AcceptJoin(reference, None)])
 
-    socket.Message(topic, "typing", _payload, ref) ->
+    socket.Message(topic, "typing", _payload, reference) ->
       socket.Next(
         model,
         [
@@ -123,15 +123,15 @@ fn update(model: Model, input: socket.Input(Nil)) -> socket.Next(Model) {
             "typing",
             json.object([#("user_id", json.string(model.user_id))]),
           ),
-          ..case ref {
-            Some(ref) -> [socket.DiscardReply(ref)]
+          ..case reference {
+            Some(reference) -> [socket.DiscardReply(reference)]
             None -> []
           }
         ],
       )
 
-    socket.Message(_, _, _, Some(ref)) ->
-      socket.Next(model, [socket.DiscardReply(ref)])
+    socket.Message(_, _, _, Some(reference)) ->
+      socket.Next(model, [socket.DiscardReply(reference)])
 
     socket.Join(_, _, _)
     | socket.Message(_, _, _, None)

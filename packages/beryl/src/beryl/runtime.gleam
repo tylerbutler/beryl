@@ -26,9 +26,9 @@ import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
 import beryl/rate_limit.{type RateLimitConfig}
 import beryl/socket.{
-  type ConnectInfo, type ConnectSeed, type Effect, type Input, type JoinRef,
-  type Mail, type Next, type ReplyRef, type StopReason, type Worker,
-  type WorkerContext, type WorkerOutcome,
+  type ConnectInfo, type ConnectSeed, type Effect, type Input,
+  type JoinReference, type Mail, type Next, type ReplyReference, type StopReason,
+  type Worker, type WorkerContext, type WorkerOutcome,
 }
 import beryl/telemetry
 import beryl/topic.{type TopicPattern}
@@ -604,8 +604,8 @@ type SocketState(model, message) {
     model: model,
     subscribed_topics: Set(String),
     protocol: protocol.State,
-    join_operations: Dict(JoinRef, protocol.Operation),
-    reply_operations: Dict(ReplyRef, protocol.Operation),
+    join_operations: Dict(JoinReference, protocol.Operation),
+    reply_operations: Dict(ReplyReference, protocol.Operation),
     join_started_at: Dict(String, Int),
     closing_topics: Set(String),
     teardown_reason: Option(StopReason),
@@ -614,7 +614,7 @@ type SocketState(model, message) {
     presence_refs: Dict(String, Dict(String, #(String, Json))),
     /// Unique reply capabilities and their reservations. Answering or closing
     /// the receiving topic removes the capability permanently.
-    reply_reservations: Dict(ReplyRef, work_queue.Reservation),
+    reply_reservations: Dict(ReplyReference, work_queue.Reservation),
     /// The worker for each joined topic when the layer uses one process per
     /// topic. The runtime removes it when the topic starts to close.
     workers: Dict(String, WorkerRef),
@@ -629,7 +629,7 @@ type Pending {
     topic: String,
     join_ref: Option(String),
     message_ref: Option(String),
-    ref: JoinRef,
+    reference: JoinReference,
   )
 }
 
@@ -640,7 +640,7 @@ pub type Source {
     topic: String,
     join_ref: Option(String),
     message_ref: Option(String),
-    ref: JoinRef,
+    reference: JoinReference,
     started_at: Int,
   )
   MessageSource(topic: String, kind: telemetry.MessageKind, started_at: Int)
@@ -3597,7 +3597,7 @@ fn deliver_client_message(
 ) -> Execution(model, message) {
   let registered = case operation {
     Some(operation) ->
-      register_reply_ref(state, socket_id, topic_name, operation)
+      register_reply_reference(state, socket_id, topic_name, operation)
     None -> Ok(#(state, None))
   }
   case registered {
@@ -3609,14 +3609,14 @@ fn deliver_client_message(
       ])
       Continue(state, [StepTeardown(socket.AdmissionRejected(error))])
     }
-    Ok(#(state, message_ref)) ->
+    Ok(#(state, reply_reference)) ->
       Continue(state, [
         StepInput(
           socket.Message(
             topic: topic_name,
             event: event_name,
             payload: payload,
-            ref: message_ref,
+            reference: reply_reference,
           ),
           MessageSource(topic_name, kind, started_at),
           ContinueDriving,
@@ -4146,7 +4146,7 @@ fn execute_input(
     // here, because `execute_close_topic` routes the close to the worker.
     Ok(socket), SocketActorRole(workers: Some(workers), ..) ->
       case input {
-        socket.Join(topic: topic_name, payload:, ref:) ->
+        socket.Join(topic: topic_name, payload:, reference:) ->
           execute_worker_join(
             state,
             socket_id,
@@ -4154,16 +4154,16 @@ fn execute_input(
             workers,
             topic_name,
             payload,
-            ref,
+            reference,
             source,
             continuation,
           )
-        socket.Message(topic: topic_name, event:, payload:, ref:) -> {
+        socket.Message(topic: topic_name, event:, payload:, reference:) -> {
           let admission = case dict.get(socket.workers, topic_name) {
             Ok(worker) ->
               work_queue.send(
                 worker.queue,
-                WorkerDeliver(event, payload, ref, source),
+                WorkerDeliver(event, payload, reference, source),
               )
             Error(Nil) -> Error(overload.Closed)
           }
@@ -4274,8 +4274,8 @@ fn execute_update_result_with_credit(
         _, _ -> False
       }
       let pending = case source {
-        JoinSource(topic_name, join_ref, message_ref, ref, _) ->
-          Some(Pending(topic_name, join_ref, message_ref, ref))
+        JoinSource(topic_name, join_ref, message_ref, reference, _) ->
+          Some(Pending(topic_name, join_ref, message_ref, reference))
         MessageSource(..) | InfoSource(..) | ClosedSource -> None
       }
       case admit_effects(state, effects, generated_join, credit) {
@@ -4352,12 +4352,12 @@ fn execute_admission_failure(
     #("reason", overload.describe(error)),
   ])
   case source {
-    JoinSource(_, _, _, ref, started_at) -> {
+    JoinSource(_, _, _, reference, started_at) -> {
       let state =
         reject_join_callback(
           state,
           socket_id,
-          ref,
+          reference,
           error_reason(overload.describe(error)),
         )
       emit_join_stop(state, started_at, telemetry.JoinAdmissionRejected)
@@ -4413,7 +4413,7 @@ fn execute_update_crash(
   crash: String,
 ) -> Execution(model, message) {
   case source {
-    JoinSource(topic_name, _, _, ref, started_at) -> {
+    JoinSource(topic_name, _, _, reference, started_at) -> {
       state.logger
       |> log.error("Update crashed handling join", [
         #("socket_id", socket_id),
@@ -4424,7 +4424,7 @@ fn execute_update_crash(
         reject_join_callback(
           state,
           socket_id,
-          ref,
+          reference,
           error_reason("join crashed"),
         )
       emit_join_stop(state, started_at, telemetry.JoinCallbackFailed)
@@ -4484,11 +4484,11 @@ fn reject_stopped_join(
   source: Source,
 ) -> State(model, message) {
   case source {
-    JoinSource(topic_name, join_ref, message_ref, ref, _) ->
+    JoinSource(topic_name, join_ref, message_ref, reference, _) ->
       reject_unanswered_join(
         state,
         socket_id,
-        Pending(topic_name, join_ref, message_ref, ref),
+        Pending(topic_name, join_ref, message_ref, reference),
       )
     MessageSource(..) | InfoSource(..) | ClosedSource -> state
   }
@@ -4500,13 +4500,13 @@ fn reject_unanswered_join(
   socket_id: String,
   pending: Pending,
 ) -> State(model, message) {
-  case join_operation(state, socket_id, pending.ref) {
+  case join_operation(state, socket_id, pending.reference) {
     Error(Nil) -> state
     Ok(operation) ->
       answer_protocol_join(
         state,
         socket_id,
-        pending.ref,
+        pending.reference,
         protocol.CallbackFinished(operation),
       )
   }
@@ -4515,16 +4515,16 @@ fn reject_unanswered_join(
 fn reject_join_callback(
   state: State(model, message),
   socket_id: String,
-  ref: JoinRef,
+  reference: JoinReference,
   reason: Json,
 ) -> State(model, message) {
-  case join_operation(state, socket_id, ref) {
+  case join_operation(state, socket_id, reference) {
     Error(Nil) -> state
     Ok(operation) ->
       answer_protocol_join(
         state,
         socket_id,
-        ref,
+        reference,
         protocol.RejectJoin(operation, reason),
       )
   }
@@ -4556,8 +4556,8 @@ fn execute_deliver_join(
     #("ref", option_to_log_string(ref)),
     #("join_ref", option_to_log_string(join_ref)),
   ])
-  let pending_ref =
-    socket.make_join_ref(
+  let pending_reference =
+    socket.make_join_reference(
       topic: topic_name,
       join_ref: join_ref,
       message_ref: ref,
@@ -4574,7 +4574,7 @@ fn execute_deliver_join(
               ..socket,
               join_operations: dict.insert(
                 socket.join_operations,
-                pending_ref,
+                pending_reference,
                 operation,
               ),
             ),
@@ -4583,8 +4583,12 @@ fn execute_deliver_join(
   }
   Continue(state, [
     StepInput(
-      socket.Join(topic: topic_name, payload: payload, ref: pending_ref),
-      JoinSource(topic_name, join_ref, ref, pending_ref, started_at),
+      socket.Join(
+        topic: topic_name,
+        payload: payload,
+        reference: pending_reference,
+      ),
+      JoinSource(topic_name, join_ref, ref, pending_reference, started_at),
       ContinueDriving,
     ),
   ])
@@ -5071,11 +5075,11 @@ fn run_effects(
       start_presence_untrack(state, socket_id, topic_name, key, [
         StepEffects(rest, pending, kicks, continuation),
       ])
-    [socket.AcceptJoin(ref, reply), ..rest] ->
+    [socket.AcceptJoin(reference, reply), ..rest] ->
       execute_accept_join(
         state,
         socket_id,
-        ref,
+        reference,
         reply,
         rest,
         pending,
@@ -5101,18 +5105,20 @@ fn apply_effect(
   kicks: List(String),
 ) -> #(State(model, message), Option(Pending), List(String)) {
   case effect {
-    socket.RejectJoin(ref, reason) ->
-      apply_reject_join(state, socket_id, ref, reason, pending, kicks)
-    socket.ReplyOk(ref, payload) -> {
-      let state = apply_reply(state, socket_id, ref, codec.StatusOk, payload)
+    socket.RejectJoin(reference, reason) ->
+      apply_reject_join(state, socket_id, reference, reason, pending, kicks)
+    socket.ReplyOk(reference, payload) -> {
+      let state =
+        apply_reply(state, socket_id, reference, codec.StatusOk, payload)
       #(state, pending, kicks)
     }
-    socket.ReplyError(ref, payload) -> {
-      let state = apply_reply(state, socket_id, ref, codec.StatusError, payload)
+    socket.ReplyError(reference, payload) -> {
+      let state =
+        apply_reply(state, socket_id, reference, codec.StatusError, payload)
       #(state, pending, kicks)
     }
-    socket.DiscardReply(ref) -> {
-      let state = apply_discard_reply(state, socket_id, ref)
+    socket.DiscardReply(reference) -> {
+      let state = apply_discard_reply(state, socket_id, reference)
       #(state, pending, kicks)
     }
     socket.Push(topic_name, event_name, payload) -> {
@@ -5184,14 +5190,14 @@ fn apply_kick_topic(
 fn execute_accept_join(
   state: State(model, message),
   socket_id: String,
-  ref: JoinRef,
+  reference: JoinReference,
   reply: Option(Json),
   rest: List(Effect),
   pending: Option(Pending),
   kicks: List(String),
   continuation: Continuation,
 ) -> Execution(model, message) {
-  case join_operation(state, socket_id, ref) {
+  case join_operation(state, socket_id, reference) {
     Ok(operation) -> {
       let mode = case state.role {
         SocketActorRole(workers: Some(_), ..) -> protocol.DrainBeforeCleanup
@@ -5202,7 +5208,7 @@ fn execute_accept_join(
         prepare_join_decision(
           state,
           socket_id,
-          ref,
+          reference,
           protocol.AcceptJoin(
             operation,
             option.unwrap(reply, json.object([])),
@@ -5212,7 +5218,7 @@ fn execute_accept_join(
       state.logger
       |> log.debug("Join accepted", [
         #("socket_id", socket_id),
-        #("topic", socket.join_ref_topic(ref)),
+        #("topic", socket.join_reference_topic(reference)),
       ])
       Continue(
         state,
@@ -5222,7 +5228,7 @@ fn execute_accept_join(
       )
     }
     Error(Nil) -> {
-      warn_unmatched_join_answer(state, socket_id, ref, "AcceptJoin")
+      warn_unmatched_join_answer(state, socket_id, reference, "AcceptJoin")
       run_effects(state, socket_id, rest, pending, kicks, continuation)
     }
   }
@@ -5231,29 +5237,29 @@ fn execute_accept_join(
 fn apply_reject_join(
   state: State(model, message),
   socket_id: String,
-  ref: JoinRef,
+  reference: JoinReference,
   reason: Json,
   pending: Option(Pending),
   kicks: List(String),
 ) -> #(State(model, message), Option(Pending), List(String)) {
-  case join_operation(state, socket_id, ref) {
+  case join_operation(state, socket_id, reference) {
     Ok(operation) -> {
       state.logger
       |> log.debug("Join rejected", [
         #("socket_id", socket_id),
-        #("topic", socket.join_ref_topic(ref)),
+        #("topic", socket.join_reference_topic(reference)),
       ])
       let state =
         answer_protocol_join(
           state,
           socket_id,
-          ref,
+          reference,
           protocol.RejectJoin(operation, reason),
         )
       #(state, None, kicks)
     }
     Error(Nil) -> {
-      warn_unmatched_join_answer(state, socket_id, ref, "RejectJoin")
+      warn_unmatched_join_answer(state, socket_id, reference, "RejectJoin")
       #(state, pending, kicks)
     }
   }
@@ -5262,26 +5268,27 @@ fn apply_reject_join(
 fn join_operation(
   state: State(model, message),
   socket_id: String,
-  ref: JoinRef,
+  reference: JoinReference,
 ) -> Result(protocol.Operation, Nil) {
   use socket <- result.try(dict.get(state.sockets, socket_id))
-  dict.get(socket.join_operations, ref)
+  dict.get(socket.join_operations, reference)
 }
 
 fn answer_protocol_join(
   state: State(model, message),
   socket_id: String,
-  ref: JoinRef,
+  reference: JoinReference,
   decision: protocol.Input,
 ) -> State(model, message) {
-  let #(state, actions) = prepare_join_decision(state, socket_id, ref, decision)
+  let #(state, actions) =
+    prepare_join_decision(state, socket_id, reference, decision)
   apply_protocol_actions(state, socket_id, actions)
 }
 
 fn prepare_join_decision(
   state: State(model, message),
   socket_id: String,
-  ref: JoinRef,
+  reference: JoinReference,
   decision: protocol.Input,
 ) -> #(State(model, message), List(protocol.Action)) {
   let state = case dict.get(state.sockets, socket_id) {
@@ -5291,10 +5298,10 @@ fn prepare_join_decision(
         state,
         SocketState(
           ..socket,
-          join_operations: dict.delete(socket.join_operations, ref),
+          join_operations: dict.delete(socket.join_operations, reference),
           join_started_at: dict.delete(
             socket.join_started_at,
-            socket.join_ref_topic(ref),
+            socket.join_reference_topic(reference),
           ),
         ),
       )
@@ -5305,13 +5312,13 @@ fn prepare_join_decision(
 fn warn_unmatched_join_answer(
   state: State(model, message),
   socket_id: String,
-  ref: JoinRef,
+  reference: JoinReference,
   effect_name: String,
 ) -> Nil {
   state.logger
   |> log.warn(effect_name <> " ignored: no matching pending join", [
     #("socket_id", socket_id),
-    #("topic", socket.join_ref_topic(ref)),
+    #("topic", socket.join_reference_topic(reference)),
   ])
 }
 
@@ -5337,16 +5344,16 @@ fn subscribe_socket(
   }
 }
 
-/// Send a reply for a stored `ReplyRef`.
+/// Send a reply for a stored `ReplyReference`.
 ///
-/// Reply refs are single-use and only valid while their topic is open: a ref
-/// that was already answered, or whose topic has since closed (including
+/// Reply references are single-use and only valid while their topic is open.
+/// A reference that was already answered, or whose topic has since closed (including
 /// across a leave/rejoin), is dropped rather than sent as a stale/duplicate
 /// reply.
 fn apply_reply(
   state: State(model, message),
   socket_id: String,
-  ref: ReplyRef,
+  reference: ReplyReference,
   status: codec.ReplyStatus,
   payload: Json,
 ) -> State(model, message) {
@@ -5354,30 +5361,30 @@ fn apply_reply(
     codec.StatusOk -> protocol.StatusOk
     codec.StatusError -> protocol.StatusError
   }
-  complete_reply(state, socket_id, ref, fn(operation) {
+  complete_reply(state, socket_id, reference, fn(operation) {
     protocol.Reply(operation, status, payload)
   })
 }
 
-/// Consume a stored `ReplyRef` without sending a wire reply.
+/// Consume a stored `ReplyReference` without sending a wire reply.
 fn apply_discard_reply(
   state: State(model, message),
   socket_id: String,
-  ref: ReplyRef,
+  reference: ReplyReference,
 ) -> State(model, message) {
-  complete_reply(state, socket_id, ref, protocol.Discard)
+  complete_reply(state, socket_id, reference, protocol.Discard)
 }
 
 fn complete_reply(
   state: State(model, message),
   socket_id: String,
-  ref: ReplyRef,
+  reference: ReplyReference,
   input: fn(protocol.Operation) -> protocol.Input,
 ) -> State(model, message) {
   let pending = {
     use socket <- result.try(dict.get(state.sockets, socket_id))
-    use operation <- result.try(dict.get(socket.reply_operations, ref))
-    use reservation <- result.map(dict.get(socket.reply_reservations, ref))
+    use operation <- result.try(dict.get(socket.reply_operations, reference))
+    use reservation <- result.map(dict.get(socket.reply_reservations, reference))
     #(operation, reservation)
   }
   case pending {
@@ -5385,7 +5392,7 @@ fn complete_reply(
       state.logger
       |> log.warn("Reply ignored: unknown or already-answered ref", [
         #("socket_id", socket_id),
-        #("topic", socket.reply_ref_topic(ref)),
+        #("topic", socket.reply_reference_topic(reference)),
       ])
       state
     }
@@ -5393,7 +5400,13 @@ fn complete_reply(
       let #(state, actions) =
         advance_protocol(state, socket_id, input(operation))
       let state =
-        release_completed_reply(state, socket_id, ref, operation, reservation)
+        release_completed_reply(
+          state,
+          socket_id,
+          reference,
+          operation,
+          reservation,
+        )
       apply_protocol_actions(state, socket_id, actions)
     }
   }
@@ -5402,7 +5415,7 @@ fn complete_reply(
 fn release_completed_reply(
   state: State(model, message),
   socket_id: String,
-  ref: ReplyRef,
+  reference: ReplyReference,
   operation: protocol.Operation,
   reservation: work_queue.Reservation,
 ) -> State(model, message) {
@@ -5418,16 +5431,16 @@ fn release_completed_reply(
         state,
         SocketState(
           ..socket,
-          reply_operations: dict.delete(socket.reply_operations, ref),
-          reply_reservations: dict.delete(socket.reply_reservations, ref),
+          reply_operations: dict.delete(socket.reply_operations, reference),
+          reply_reservations: dict.delete(socket.reply_reservations, reference),
         ),
       )
     }
   }
 }
 
-/// Take a topic out of the joined set and drop its outstanding reply refs:
-/// pushes to it drop from here on, and a ref stored across a leave/rejoin
+/// Take a topic out of the joined set and drop its outstanding reply references:
+/// pushes to it drop from here on, and a reference stored across a leave/rejoin
 /// is not replied to.
 fn unsubscribe_topic(
   state: State(model, message),
@@ -5455,9 +5468,9 @@ fn unsubscribe_topic(
     Error(Nil) -> state
     Ok(socket) -> {
       let kept =
-        dict.filter(socket.reply_reservations, fn(ref, reservation) {
+        dict.filter(socket.reply_reservations, fn(reference, reservation) {
           use <- bool.guard(
-            when: socket.reply_ref_topic(ref) != topic_name,
+            when: socket.reply_reference_topic(reference) != topic_name,
             return: True,
           )
           work_queue.release(state.inbox, reservation)
@@ -5468,9 +5481,12 @@ fn unsubscribe_topic(
         SocketState(
           ..socket,
           subscribed_topics: set.delete(socket.subscribed_topics, topic_name),
-          reply_operations: dict.filter(socket.reply_operations, fn(ref, _) {
-            socket.reply_ref_topic(ref) != topic_name
-          }),
+          reply_operations: dict.filter(
+            socket.reply_operations,
+            fn(reference, _) {
+              socket.reply_reference_topic(reference) != topic_name
+            },
+          ),
           reply_reservations: kept,
         ),
       )
@@ -5478,13 +5494,16 @@ fn unsubscribe_topic(
   }
 }
 
-/// Record a message reply ref as outstanding for a socket.
-fn register_reply_ref(
+/// Record a message reply reference as outstanding for a socket.
+fn register_reply_reference(
   state: State(model, message),
   socket_id: String,
   topic_name: String,
   operation: protocol.Operation,
-) -> Result(#(State(model, message), Option(ReplyRef)), overload.AdmissionError) {
+) -> Result(
+  #(State(model, message), Option(ReplyReference)),
+  overload.AdmissionError,
+) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> Error(overload.Closed)
     Ok(socket) -> {
@@ -5492,13 +5511,13 @@ fn register_reply_ref(
         protocol.reply_wire_key(socket.protocol, operation)
         |> result.replace_error(overload.Closed),
       )
-      let ref =
-        socket.make_message_ref(
+      let reference =
+        socket.make_reply_reference(
           topic: topic_name,
           join_ref: join_ref,
           message_ref: message_ref,
         )
-      use reservation <- result.map(work_queue.retain(state.inbox, ref))
+      use reservation <- result.map(work_queue.retain(state.inbox, reference))
       let state =
         store_socket(
           state,
@@ -5506,17 +5525,17 @@ fn register_reply_ref(
             ..socket,
             reply_operations: dict.insert(
               socket.reply_operations,
-              ref,
+              reference,
               operation,
             ),
             reply_reservations: dict.insert(
               socket.reply_reservations,
-              ref,
+              reference,
               reservation,
             ),
           ),
         )
-      #(state, Some(ref))
+      #(state, Some(reference))
     }
   }
 }
@@ -7129,7 +7148,7 @@ type WorkerMessage {
   WorkerDeliver(
     event: String,
     payload: Dynamic,
-    ref: Option(ReplyRef),
+    reference: Option(ReplyReference),
     source: Source,
   )
   /// One sealed server-side message for `on_info`.
@@ -7439,10 +7458,10 @@ fn serve(
             }
             _ -> Ok(state)
           }
-        WorkerDeliver(event, payload, ref, source) ->
+        WorkerDeliver(event, payload, reference, source) ->
           Ok(
             worker_step(worker, link, source, None, fn() {
-              worker.on_message(event, payload, ref)
+              worker.on_message(event, payload, reference)
             }),
           )
         WorkerInfo(mail) -> {
@@ -7867,7 +7886,7 @@ fn execute_worker_join(
   workers: TopicWorkers,
   topic_name: String,
   payload: Dynamic,
-  ref: JoinRef,
+  reference: JoinReference,
   source: Source,
   continuation: Continuation,
 ) -> Execution(model, message) {
@@ -7878,7 +7897,7 @@ fn execute_worker_join(
         socket_id,
         source,
         continuation,
-        Ok(socket.Next(socket.model, [socket.RejectJoin(ref, reason)])),
+        Ok(socket.Next(socket.model, [socket.RejectJoin(reference, reason)])),
       )
     Ok(Nil) ->
       execute_accepted_worker_join(
@@ -7888,7 +7907,7 @@ fn execute_worker_join(
         workers.factory,
         topic_name,
         payload,
-        ref,
+        reference,
         source,
         continuation,
       )
@@ -7902,7 +7921,7 @@ fn execute_accepted_worker_join(
   factory: factory_supervisor.Supervisor(WorkerSpawn, WorkerStarted),
   topic_name: String,
   payload: Dynamic,
-  ref: JoinRef,
+  reference: JoinReference,
   source: Source,
   continuation: Continuation,
 ) -> Execution(model, message) {
@@ -7945,7 +7964,7 @@ fn execute_accepted_worker_join(
             state,
             Ok(
               socket.Next(socket.model, [
-                socket.AcceptJoin(ref, reply),
+                socket.AcceptJoin(reference, reply),
                 ..effects
               ]),
             ),
@@ -7953,7 +7972,7 @@ fn execute_accepted_worker_join(
         }
         Ok(actor.Started(data: #(_, _, Error(reason)), ..)) -> #(
           state,
-          Ok(socket.Next(socket.model, [socket.RejectJoin(ref, reason)])),
+          Ok(socket.Next(socket.model, [socket.RejectJoin(reference, reason)])),
         )
         // A panicking `join` failed the start with the crash boundary's
         // bounded description; the other failures are described here.

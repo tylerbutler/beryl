@@ -93,9 +93,9 @@ runtime stores each socket's typed model and delivers `Join`, `Message`,
 `Binary`, `Closed`, and typed `Info` events without socket-dispatch casts or
 `Dynamic` round-trips. `Dynamic` is limited to decoded wire payloads.
 
-`JoinRef` values are single-pending-join capabilities with unique runtime
-identity. Never reconstruct or compare their wire fields; return the exact ref
-in `AcceptJoin` or `RejectJoin`.
+`JoinReference` values are single-pending-join capabilities with unique runtime
+identity. Never reconstruct or compare their wire fields; return the exact
+reference in `AcceptJoin` or `RejectJoin`.
 
 ### Transport SPI Contract
 

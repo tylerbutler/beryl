@@ -327,7 +327,7 @@ observe them:
 | `broadcast(event, payload)` | To every subscriber of this topic, including this socket |
 | `broadcast_from(event, payload)` | To every subscriber except this socket |
 | `reply_ok(reply, payload)` | Success reply when `Message.reply` is `Some`; no effect for `None` |
-| `reply_error(reply, payload)` | Error reply with the same optional-ref behavior |
+| `reply_error(reply, payload)` | Error reply with the same optional-reference behavior |
 | `discard_reply(reply)` | Release an intentionally unanswered reply handle without a wire reply |
 | `presence_track(key, meta)` | Track this socket under `key` and emit the `presence_diff` join |
 | `presence_untrack(key)` | Untrack and emit the `presence_diff` leave |
@@ -422,12 +422,12 @@ acknowledgment.
 | `on_terminate` | This channel ending, for any reason | `fn(state, socket.StopReason) -> List(Action(Closing))` |
 
 `channel.accept(state)` stays joined until you add callbacks with the `on_*`
-builders. The default message callback discards reply refs without a wire
+builders. The default message callback discards reply references without a wire
 reply. Unhandled server-side notifications have no effect.
 For raw binary frames, use [Raw Dispatch](/guides/dispatch/).
 
 A `channel.Message` has `event`, the raw `payload` as `Dynamic`, and
-`reply: Option(socket.ReplyRef)`, which is present only when the client asked for a
+`reply: Option(socket.ReplyReference)`, which is present only when the client asked for a
 reply. Store `context.topic` in channel state when a callback needs it:
 
 ```gleam
@@ -458,10 +458,10 @@ Every callback answers with a `channel.Next(state)`:
 | `stay(state)` | Stay joined with no actions |
 | `close(actions)` | Apply active-phase actions, then leave this channel |
 
-A pending reply ref consumes socket capacity until you reply, discard it, or
+A pending reply reference consumes socket capacity until you reply, discard it, or
 close the topic. `stay` and `next` do not release it on their own. If a custom
 handler will not answer a message, return `discard_reply(message.reply)`.
-For a deferred reply, keep the ref in your state and reply from a later callback,
+For a deferred reply, keep the reference in your state and reply from a later callback,
 such as `on_info`.
 
 `close` applies its actions first and then closes the topic, so a

@@ -59,18 +59,18 @@ beryl: type-safe real-time communication
        init: fn(_info) { #(Nil, []) },
        update: fn(model, event) {
          case event {
-           Join("room:" <> _, _payload, ref) ->
-             Next(model, [AcceptJoin(ref, option.None)])
-           Message(topic, "new_msg", payload, ref) ->
+           Join("room:" <> _, _payload, reference) ->
+             Next(model, [AcceptJoin(reference, option.None)])
+           Message(topic, "new_msg", payload, reference) ->
              Next(model, [
                Broadcast(topic, "new_msg", payload),
-               ..case ref {
-                 option.Some(ref) -> [socket.DiscardReply(ref)]
+               ..case reference {
+                 option.Some(reference) -> [socket.DiscardReply(reference)]
                  option.None -> []
                }
              ])
-           Message(_, _, _, option.Some(ref)) ->
-             Next(model, [socket.DiscardReply(ref)])
+           Message(_, _, _, option.Some(reference)) ->
+             Next(model, [socket.DiscardReply(reference)])
            Message(_, _, _, option.None)
            | Join(..) | Binary(..) | Closed(..) | Info(..) ->
              Next(model, [])
