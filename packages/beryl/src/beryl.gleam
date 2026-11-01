@@ -312,8 +312,12 @@ pub fn with_effect_limits(config: Config, limits: overload.Limits) -> Config {
 /// use the global `with_channel_rate` limit. The limiter applies
 /// only after a socket has joined the topic. A non-positive `per_second`
 /// explicitly disables limiting for matching topics, including any global
-/// channel limit, and allocates no bucket. Buckets remain until socket teardown;
-/// leaving or rejoining a topic does not reset its allowance.
+/// channel limit, and allocates no bucket. When enabled, a `burst` of 0 uses
+/// `per_second`; a negative burst is rejected by `validate_config` with
+/// `InvalidRateLimitBurst`. Disabled limits ignore `burst`.
+///
+/// Buckets remain until socket teardown. Leaving or rejoining a topic does not
+/// reset its allowance.
 pub fn with_topic_rate(
   config: Config,
   pattern pattern: String,
@@ -408,7 +412,9 @@ pub fn with_max_connections_per_ip(
 /// Each WebSocket upgrade attempt that passes the concurrent connection
 /// ceilings consumes one token before authentication and handshake setup. A
 /// non-positive `per_second` disables the limit. A `burst` of 0 uses
-/// `per_second` as the burst capacity.
+/// `per_second` as the burst capacity. When enabled, a negative burst is
+/// rejected by `validate_config` with `InvalidRateLimitBurst`.
+/// Disabled limits ignore `burst`.
 ///
 /// Unlike per-connection frame and message buckets, this allowance is keyed by
 /// the real socket peer IP and lives in beryl's supervised connection limiter.
@@ -494,6 +500,10 @@ pub fn with_payload_preview_bytes(
 /// combine edge shedding with a runtime cap on decoded non-join traffic.
 /// An over-rate heartbeat is shed before it can refresh the socket's heartbeat
 /// deadline, so a sustained flood is eventually closed by heartbeat eviction.
+///
+/// A non-positive `per_second` disables the limit and ignores `burst`.
+/// When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+/// by `validate_config` with `InvalidRateLimitBurst`.
 pub fn with_frame_rate(
   config: Config,
   per_second rate: Int,
@@ -509,6 +519,10 @@ pub fn with_frame_rate(
 /// `with_frame_rate`. An over-rate heartbeat does not refresh the socket's
 /// heartbeat deadline, so a sustained flood is eventually closed by heartbeat
 /// eviction. Leave enough rate and burst headroom for legitimate heartbeats.
+///
+/// A non-positive `per_second` disables the limit and ignores `burst`.
+/// When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+/// by `validate_config` with `InvalidRateLimitBurst`.
 pub fn with_message_rate(
   config: Config,
   per_second rate: Int,
@@ -518,6 +532,10 @@ pub fn with_message_rate(
 }
 
 /// Configure per-socket join rate limiting.
+///
+/// A non-positive `per_second` disables the limit and ignores `burst`.
+/// When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+/// by `validate_config` with `InvalidRateLimitBurst`.
 pub fn with_join_rate(
   config: Config,
   per_second rate: Int,
@@ -532,6 +550,10 @@ pub fn with_join_rate(
 /// until socket teardown; leaving or rejoining does not reset their allowance.
 /// Per-socket channel buckets are capped by default; use
 /// `with_channel_rate_max_keys_per_socket` to adjust the cap.
+///
+/// A non-positive `per_second` disables the limit and ignores `burst`.
+/// When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+/// by `validate_config` with `InvalidRateLimitBurst`.
 pub fn with_channel_rate(
   config: Config,
   per_second rate: Int,
@@ -761,6 +783,10 @@ pub type ConfigError {
   /// consume at least one token. The wrapped `Int` is the maximum accepted
   /// rate.
   RateLimitTooHigh(maximum: Int)
+  /// An enabled rate limit had a negative burst capacity. Use 0 to default
+  /// to its per-second rate, or a positive capacity. `burst` is the rejected
+  /// value. Disabled limits ignore their burst capacity.
+  InvalidRateLimitBurst(burst: Int)
   /// A per-topic-pattern rate limit used a pattern string that is not a valid
   /// topic pattern. `pattern` is the offending pattern and `reason` is the
   /// [`beryl/topic`](https://beryl.tylerbutler.com/reference/api/beryl-topic/)
@@ -788,25 +814,40 @@ pub type StopError {
 /// Validate a [`Config`](#config) without starting any process.
 ///
 /// This checks that `heartbeat_timeout_ms` is at least 2, that every
-/// configured rate limit is representable, and that every per-topic
-/// rate-limit pattern is valid.
+/// enabled rate limit is representable and has a non-negative burst, and
+/// that every per-topic rate-limit pattern is valid. A burst of 0 defaults
+/// to the per-second rate. Non-positive rates disable limiting and ignore
+/// their bursts.
 pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
   use <- bool.guard(
     when: config.heartbeat_timeout_ms < 2,
     return: internal.result_error(HeartbeatTimeoutTooLow(2)),
   )
-  use _ <- result.try(validate_rate_limit(config.connection_rate_per_ip))
-  use _ <- result.try(validate_rate_limit(config.frame_rate))
-  use _ <- result.try(validate_rate_limit(config.message_rate))
-  use _ <- result.try(validate_rate_limit(config.join_rate))
-  use _ <- result.try(validate_rate_limit(config.channel_rate))
+  use _ <- result.try(validate_rate_limit(
+    config.connection_rate_per_ip,
+    config.connection_burst_per_ip,
+  ))
+  use _ <- result.try(validate_rate_limit(config.frame_rate, config.frame_burst))
+  use _ <- result.try(validate_rate_limit(
+    config.message_rate,
+    config.message_burst,
+  ))
+  use _ <- result.try(validate_rate_limit(config.join_rate, config.join_burst))
+  use _ <- result.try(validate_rate_limit(
+    config.channel_rate,
+    config.channel_burst,
+  ))
   list.try_each(config.topic_rates, validate_topic_rate)
 }
 
-fn validate_rate_limit(rate: Int) -> Result(Nil, ConfigError) {
+fn validate_rate_limit(rate: Int, burst: Int) -> Result(Nil, ConfigError) {
   use <- bool.guard(
     when: rate > 1_000_000_000,
     return: internal.result_error(RateLimitTooHigh(1_000_000_000)),
+  )
+  use <- bool.guard(
+    when: rate > 0 && burst < 0,
+    return: internal.result_error(InvalidRateLimitBurst(burst)),
   )
   Ok(Nil)
 }
@@ -817,7 +858,7 @@ fn validate_topic_rate(
   let #(pattern, limits) = entry
   use _ <- result.try(case limits {
     None -> Ok(Nil)
-    Some(limit) -> validate_rate_limit(limit.per_second)
+    Some(limit) -> validate_rate_limit(limit.per_second, limit.burst)
   })
   topic.validate_pattern(pattern)
   |> result.map_error(fn(error) { InvalidTopicPattern(pattern, error) })
