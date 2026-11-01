@@ -1,9 +1,11 @@
 import beryl
+import beryl/error
 import beryl/group
 import example_helper/session_presence
 import example_helper/static
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
+import gleam/io
 import gleam/json
 import gleam/list
 import gleam/set
@@ -38,24 +40,22 @@ pub fn handle_request(
 }
 
 fn rooms_api(context: Context) -> Response(ResponseData) {
-  let rooms = case group.topics(context.groups, "public") {
-    Ok(topics) ->
-      topics
-      |> set.to_list
-      |> list.map(fn(topic) {
-        let room_name = case string.split(topic, ":") {
-          [_, name] -> name
-          _ -> topic
-        }
-        let user_count = session_presence.count(context.presence, topic)
-        json.object([
-          #("topic", json.string(topic)),
-          #("name", json.string(room_name)),
-          #("users", json.int(user_count)),
-        ])
-      })
-    Error(_) -> []
-  }
+  use topics <- with_public_topics(context)
+  let rooms =
+    topics
+    |> set.to_list
+    |> list.map(fn(topic) {
+      let room_name = case string.split(topic, ":") {
+        [_, name] -> name
+        _ -> topic
+      }
+      let user_count = session_presence.count(context.presence, topic)
+      json.object([
+        #("topic", json.string(topic)),
+        #("name", json.string(room_name)),
+        #("users", json.int(user_count)),
+      ])
+    })
 
   let body = json.to_string(json.array(rooms, fn(r) { r }))
   static.json_response(body)
@@ -63,19 +63,17 @@ fn rooms_api(context: Context) -> Response(ResponseData) {
 
 fn index_page(context: Context) -> Response(ResponseData) {
   // Build room list for initial render
-  let rooms = case group.topics(context.groups, "public") {
-    Ok(topics) ->
-      topics
-      |> set.to_list
-      |> list.sort(string.compare)
-      |> list.map(fn(topic) {
-        case string.split(topic, ":") {
-          [_, name] -> name
-          _ -> topic
-        }
-      })
-    Error(_) -> []
-  }
+  use topics <- with_public_topics(context)
+  let rooms =
+    topics
+    |> set.to_list
+    |> list.sort(string.compare)
+    |> list.map(fn(topic) {
+      case string.split(topic, ":") {
+        [_, name] -> name
+        _ -> topic
+      }
+    })
   let room_options =
     rooms
     |> list.map(fn(name) {
@@ -132,4 +130,23 @@ fn index_page(context: Context) -> Response(ResponseData) {
 </html>"
 
   static.html_response(html)
+}
+
+fn with_public_topics(
+  context: Context,
+  render: fn(set.Set(String)) -> Response(ResponseData),
+) -> Response(ResponseData) {
+  case group.topics(context.groups, "public") {
+    Ok(topics) -> render(topics)
+    Error(group.GroupAlreadyExists(_)) | Error(group.GroupNotFound(_)) ->
+      render(set.new())
+    Error(group.GroupCallFailed(reason)) -> {
+      io.println_error(
+        "[chatroom] room lookup failed: " <> error.describe_call_error(reason),
+      )
+      let unavailable =
+        static.json_response("{\"error\":\"Room lookup unavailable\"}")
+      response.Response(..unavailable, status: 503)
+    }
+  }
 }

@@ -72,6 +72,95 @@ test("retries Hex rate limits and fails fast for other errors", () => {
 	);
 });
 
+function fakeGleamProject(t, script) {
+	const directory = mkdtempSync(path.join(tmpdir(), "beryl-deps-recovery-"));
+	const bin = path.join(directory, "bin");
+	mkdirSync(bin);
+	writeFileSync(
+		path.join(bin, "gleam"),
+		`#!${process.execPath}
+const fs = require("node:fs");
+const assert = require("node:assert/strict");
+assert.deepEqual(process.argv.slice(2), ["deps", "download"]);
+const manifest = fs.existsSync("manifest.toml")
+	? fs.readFileSync("manifest.toml", "utf8") : null;
+fs.appendFileSync("calls.jsonl", JSON.stringify(manifest) + "\\n");
+${script}
+`,
+		{ mode: 0o755 },
+	);
+	writeFileSync(path.join(directory, "manifest.toml"), "cached lock");
+	const previousPath = process.env.PATH;
+	process.env.PATH = `${bin}${path.delimiter}${previousPath}`;
+	t.after(() => {
+		process.env.PATH = previousPath;
+		rmSync(directory, { recursive: true, force: true });
+	});
+	return directory;
+}
+
+for (const diagnostic of [
+	"error: incompatible locked version",
+	`error: Dependency resolution failed
+There's no compatible version of \`ewe\`:
+  - You require beryl_ewe 0.2.3
+    - beryl_ewe requires ewe >= 9.0.0 and < 10.0.0
+  - You require ewe 4.0.1`,
+]) {
+	test(`recovers cached lock: ${diagnostic.split("\n")[0]}`, (t) => {
+		const directory = fakeGleamProject(t, `
+if (manifest === "cached lock") {
+	console.error(${JSON.stringify(diagnostic)});
+	process.exit(1);
+}
+fs.writeFileSync("manifest.toml", "resolved lock");
+`);
+		prepareDependencies(directory, 0);
+		assert.equal(
+			readFileSync(path.join(directory, "manifest.toml"), "utf8"),
+			"resolved lock",
+		);
+		assert.deepEqual(
+			readFileSync(path.join(directory, "calls.jsonl"), "utf8")
+				.trim().split("\n").map(JSON.parse),
+			["cached lock", null, "resolved lock"],
+		);
+	});
+}
+
+test("restores the lock when unlocked dependencies still cannot resolve", (t) => {
+	const directory = fakeGleamProject(t, `
+console.error("There's no compatible version of \`ewe\`");
+process.exit(1);
+`);
+	assert.throws(() => prepareDependencies(directory, 0), /Command failed/);
+	assert.equal(
+		readFileSync(path.join(directory, "manifest.toml"), "utf8"),
+		"cached lock",
+	);
+	assert.deepEqual(
+		readFileSync(path.join(directory, "calls.jsonl"), "utf8")
+			.trim().split("\n").map(JSON.parse),
+		["cached lock", null],
+	);
+});
+
+test("preserves the lock and does not retry unrelated download failures", (t) => {
+	const directory = fakeGleamProject(t, `
+console.error("Package not found");
+process.exit(1);
+`);
+	assert.throws(() => prepareDependencies(directory, 0), /Command failed/);
+	assert.equal(
+		readFileSync(path.join(directory, "manifest.toml"), "utf8"),
+		"cached lock",
+	);
+	assert.equal(
+		readFileSync(path.join(directory, "calls.jsonl"), "utf8"),
+		'"cached lock"\n',
+	);
+});
+
 test("cold, changed, and restored path dependencies need no further resolution", (t) => {
 	const directory = mkdtempSync(path.join(tmpdir(), "beryl-deps-"));
 	t.after(() => rmSync(directory, { recursive: true, force: true }));

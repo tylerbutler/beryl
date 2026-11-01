@@ -30,7 +30,7 @@ let #(presence_handle, presence_specification) =
   presence.child_spec(presence.default_config("node1"))
 
 // With PubSub for cross-node replication
-let pubsub_handle = pubsub.start(pubsub.default_config())
+let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 let config =
   presence.default_config("node1")
   |> presence.with_pubsub(pubsub_handle)
@@ -319,6 +319,10 @@ requests repair missed delivery and late joins without a new `track`. The
 interval is a repair cadence, not a maximum convergence time; membership and
 delivery must recover, and actors must finish processing their work.
 
+During local PubSub scope recovery, presence hides remote replicas and retains
+their causal history under the normal retention policy. It retries membership
+checks on scheduled repair and retirement ticks. Local entries remain available.
+
 A non-positive interval disables periodic requests, not the initial exchange
 or replies. Keep a positive interval for quiet recovery. Presence sync
 version 2 does not interoperate with version 1; upgrade all replicas in one
@@ -503,17 +507,21 @@ Start and supervise the standalone presence actor, then attach its handle with
 calling the synchronous public mutation functions:
 
 ```gleam
-socket.Join(topic, _payload, ref) ->
+socket.Join(topic, _payload, reference) ->
   socket.Next(model, [
-    socket.AcceptJoin(ref, option.None),
+    socket.AcceptJoin(reference, option.None),
     socket.PresenceTrack(topic, model.user_id, meta),
     socket.BroadcastPresence(topic, "presence_list", encode_presence),
   ])
 
-socket.Message(topic, "offline", _payload, _ref) ->
+socket.Message(topic, "offline", _payload, reference) ->
   socket.Next(model, [
     socket.PresenceUntrack(topic, model.user_id),
     socket.BroadcastPresence(topic, "presence_list", encode_presence),
+    ..case reference {
+      option.Some(reference) -> [socket.DiscardReply(reference)]
+      option.None -> []
+    }
   ])
 ```
 

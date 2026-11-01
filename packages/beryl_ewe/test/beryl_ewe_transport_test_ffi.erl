@@ -3,12 +3,23 @@
          websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
          send_text/2, send_binary/2, receive_text/2, receive_binary/2,
          close/1, http_get/2, stop_supervisor/1,
-         suspend_server_peer/1, resume_process/1, outbound_queue_usage/1,
+         suspend_server_peer/1, outbound_queue_usage/1,
          attach_transport_events/0, detach_transport_events/1,
          receive_upgrade_event/1, receive_frame_event/1,
          receive_message_event/1, coalesced_upgrade_frames/0,
          split_upgrade_frames/0, empty_text_control_frames/0,
-         empty_binary_frames/0]).
+         empty_binary_frames/0, connect_tcp/1]).
+
+%% The calling Gleam test owns this passive socket and closes it via glisten.
+%% gen_tcp's {ok, Socket}/{error, inet:posix()} matches Glisten's types.
+connect_tcp(Port) ->
+    gen_tcp:connect(
+        {127, 0, 0, 1},
+        Port,
+        [binary, {active, false}, {packet, raw}, {nodelay, true},
+         {send_timeout, 1000}],
+        1000
+    ).
 
 attach_transport_events() ->
     HandlerId = {beryl_ewe_transport_test, make_ref()},
@@ -262,9 +273,32 @@ receive_binary(Socket, Timeout) ->
     end.
 
 close(Socket) ->
-    _ = gen_tcp:send(Socket, <<16#88, 16#80, 0, 0, 0, 0>>),
-    gen_tcp:close(Socket),
-    nil.
+    Deadline = erlang:monotonic_time(millisecond) + 1000,
+    try
+        case inet:setopts(Socket, [{send_timeout, 1000}]) of
+            ok ->
+                case gen_tcp:send(Socket, <<16#88, 16#80, 0, 0, 0, 0>>) of
+                    ok -> drain_until_closed(Socket, Deadline);
+                    {error, _Reason} -> nil
+                end;
+            {error, _Reason} -> nil
+        end
+    after
+        gen_tcp:close(Socket)
+    end.
+
+%% Let the server finish the close handshake and close TCP itself. Final data
+%% is irrelevant here, but must not reset the overall close deadline.
+drain_until_closed(Socket, Deadline) ->
+    Remaining = Deadline - erlang:monotonic_time(millisecond),
+    case Remaining > 0 of
+        true ->
+            case gen_tcp:recv(Socket, 0, Remaining) of
+                {ok, _Data} -> drain_until_closed(Socket, Deadline);
+                {error, _Reason} -> nil
+            end;
+        false -> nil
+    end.
 
 suspend_server_peer(Socket) ->
     {ok, Peer} = inet:sockname(Socket),
@@ -288,10 +322,6 @@ find_server_peer([Port | Rest], Peer) ->
         _ ->
             find_server_peer(Rest, Peer)
     end.
-
-resume_process(Pid) ->
-    true = erlang:resume_process(Pid),
-    nil.
 
 outbound_queue_usage(Pid) ->
     {messages, Messages} = erlang:process_info(Pid, messages),

@@ -30,7 +30,7 @@
 ////
 //// pub fn main() -> Nil {
 ////   // Optional: start PubSub for distributed messaging
-////   let pubsub_handle = pubsub.start(pubsub.default_config())
+////   let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 ////
 ////   // Build the supervised system. The app supplies `init` (the per-socket
 ////   // model) and `update` (which routes every event by topic).
@@ -43,11 +43,20 @@
 ////       init: fn(_info) { #(Nil, []) },
 ////       update: fn(model, event) {
 ////         case event {
-////           Join("room:" <> _, _payload, ref) ->
-////             Next(model, [AcceptJoin(ref, option.None)])
-////           Message(topic, "new_msg", payload, _ref) ->
-////             Next(model, [Broadcast(topic, "new_msg", payload)])
-////           Join(..) | Message(..) | Binary(..) | Closed(..) | Info(..) ->
+////           Join("room:" <> _, _payload, reference) ->
+////             Next(model, [AcceptJoin(reference, option.None)])
+////           Message(topic, "new_msg", payload, reference) ->
+////             Next(model, [
+////               Broadcast(topic, "new_msg", payload),
+////               ..case reference {
+////                 option.Some(reference) -> [socket.DiscardReply(reference)]
+////                 option.None -> []
+////               }
+////             ])
+////           Message(_, _, _, option.Some(reference)) ->
+////             Next(model, [socket.DiscardReply(reference)])
+////           Message(_, _, _, option.None)
+////           | Join(..) | Binary(..) | Closed(..) | Info(..) ->
 ////             Next(model, [])
 ////         }
 ////       },

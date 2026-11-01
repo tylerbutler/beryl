@@ -47,6 +47,7 @@ jobs:
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
               - 'scripts/check-ffi-*.sh'
+              - 'scripts/check-portable-deps*.mjs'
             docs:
               - '.github/workflows/ci.yml'
               - 'packages/**'
@@ -65,6 +66,7 @@ jobs:
               - '.mise.toml'
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
+              - 'scripts/check-portable-deps*.mjs'
             load:
               - 'load/**'
               - 'examples/load_test/**'
@@ -121,6 +123,16 @@ jobs:
           key: gleam-deps-v2-${{ runner.os }}-${{ hashFiles('.mise.toml', '**/gleam.toml', '**/manifest.toml', 'scripts/prepare-gleam-deps.mjs', 'website/scripts/check-snippets.mjs', '!**/build/**', '!**/node_modules/**') }}
           restore-keys: |
             gleam-deps-v2-${{ runner.os }}-
+
+      - name: Clean stale Gleam dependency state
+        if: >-
+          ${{
+            needs.changes.outputs.relevant == 'true' &&
+            steps.cache.outputs.cache-hit != 'true'
+          }}
+        run: |
+          trellis run clean
+          rm -rf build/snippet-check
 
       - name: Install Gleam dependencies
         if: needs.changes.outputs.relevant == 'true'
@@ -217,6 +229,12 @@ jobs:
         if: needs.changes.outputs.source == 'true'
         run: just format-check
 
+      - name: Setup Node.js for portable protocol tests
+        if: needs.changes.outputs.source == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # ratchet:actions/setup-node@v7
+        with:
+          node-version: 22
+
       - name: Build and analyze BEAM FFI
         if: needs.changes.outputs.source == 'true'
         run: just beam-check
@@ -224,6 +242,10 @@ jobs:
       - name: Run tests
         if: needs.changes.outputs.source == 'true'
         run: just test
+
+      - name: Test protocol on Erlang and JavaScript
+        if: needs.changes.outputs.source == 'true'
+        run: just protocol-test
 
       - name: Skip source checks
         if: needs.changes.outputs.source != 'true'
@@ -372,6 +394,10 @@ jobs:
         if: needs.changes.outputs.examples == 'true'
         timeout-minutes: 3
         run: just examples-test
+
+      - name: Test portable Durable Object host
+        if: needs.changes.outputs.examples == 'true'
+        run: just portable-host-test
 
       - name: Skip example checks
         if: needs.changes.outputs.examples != 'true'
