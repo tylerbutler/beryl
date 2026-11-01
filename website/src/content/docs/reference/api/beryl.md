@@ -479,6 +479,11 @@ Build a logging configuration.
  exposure. Use `with_payload_preview_bytes` to adjust the bounded preview
  size when payload previews are enabled.
 
+ With `include_payloads: True`, debug text-frame decode failures include a
+ `frame_preview` in both Mist and Ewe. Successful frames and binary frames
+ do not include previews. Authentication headers and connect metadata are
+ never added. Both this system and the host must permit debug logs.
+
 <div class="api-entry-anchor" id="api-function-stop" aria-hidden="true"></div>
 
 ### `stop`
@@ -847,7 +852,11 @@ pub fn with_payload_preview_bytes(
 
 Configure the maximum payload and frame preview length for logs.
 
- The `bytes` argument is measured in grapheme clusters.
+ Despite its name, `bytes` is measured in grapheme clusters, not UTF-8 bytes.
+ Zero (or a negative value) produces an empty preview. Truncation preserves
+ whole grapheme clusters and does not append a marker. This existing preview
+ contract is separate from the 256-byte diagnostic-field limit: a preview
+ can exceed 256 bytes. Only opted-in debug text-frame decode failures use it.
 
 <div class="api-entry-anchor" id="api-function-with_presence_handle" aria-hidden="true"></div>
 

@@ -54,13 +54,22 @@ pub fn logger(name: String) -> Logger {
   log.new(name)
 }
 
+@external(erlang, "binary", "copy")
+fn copy_preview(text: String) -> String
+
 /// Safely truncate a text value for log metadata.
 fn safe_preview(text: String, max_length: Int) -> String {
   let safe_length = int.max(max_length, 0)
   string.slice(text, 0, safe_length)
+  // Copy the final slice so a raw OTP Logger report cannot retain the frame.
+  // String concatenation and string.repeat do not guarantee a fresh copy.
+  |> copy_preview
 }
 
-/// Return bounded preview metadata only when payload logging is enabled.
+/// Return a grapheme-limited preview only when payload logging is enabled.
+///
+/// Keep the existing grapheme contract: no diagnostic byte cap or truncation
+/// marker is applied. Call only inside an enabled debug diagnostic.
 pub fn preview_metadata(
   key: String,
   text: String,

@@ -3272,13 +3272,19 @@ fn handle_join_inner(
           protocol.Receive(protocol.Join(topic_name, payload, join_ref, ref)),
         )
       let state = discard_finished_join_timing(state, socket_id, topic_name)
+      let rejection_metadata = fn() {
+        [
+          #("socket_id", socket_id),
+          #("topic", topic_name),
+        ]
+      }
       case limited {
         True -> {
           state.logger
-          |> log.debug("Join rejected: topic cap exceeded", [
-            #("socket_id", socket_id),
-            #("topic", topic_name),
-          ])
+          |> log.rejection(
+            "Join rejected: topic cap exceeded",
+            rejection_metadata,
+          )
           emit_join_stop(state, started_at, telemetry.JoinTopicLimit)
         }
         False -> Nil

@@ -220,6 +220,11 @@ pub opaque type Config {
 /// Payloads are excluded by default to avoid accidental sensitive-data
 /// exposure. Use `with_payload_preview_bytes` to adjust the bounded preview
 /// size when payload previews are enabled.
+///
+/// With `include_payloads: True`, debug text-frame decode failures include a
+/// `frame_preview` in both Mist and Ewe. Successful frames and binary frames
+/// do not include previews. Authentication headers and connect metadata are
+/// never added. Both this system and the host must permit debug logs.
 pub fn logging_config(
   level level: LogLevel,
   include_payloads include_payloads: Bool,
@@ -467,10 +472,13 @@ pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
   Config(..config, logging: logging)
 }
 
-// nolint: unused_exports -- public logging builder intended for downstream users
 /// Configure the maximum payload and frame preview length for logs.
 ///
-/// The `bytes` argument is measured in grapheme clusters.
+/// Despite its name, `bytes` is measured in grapheme clusters, not UTF-8 bytes.
+/// Zero (or a negative value) produces an empty preview. Truncation preserves
+/// whole grapheme clusters and does not append a marker. This existing preview
+/// contract is separate from the 256-byte diagnostic-field limit: a preview
+/// can exceed 256 bytes. Only opted-in debug text-frame decode failures use it.
 pub fn with_payload_preview_bytes(
   logging: LoggingConfig,
   bytes bytes: Int,
@@ -1388,10 +1396,13 @@ fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
 /// Create a diagnostic logger for this socket system.
 @internal
 pub fn configured_logger(sockets: Sockets, name: String) -> log.Logger {
-  internal.configured_logger(
-    name,
-    internal_logging_config(sockets.config.logging),
-  )
+  internal.configured_logger(name, configured_logging(sockets))
+}
+
+/// Read this socket system's diagnostic configuration.
+@internal
+pub fn configured_logging(sockets: Sockets) -> internal.LoggingConfig {
+  internal_logging_config(sockets.config.logging)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
