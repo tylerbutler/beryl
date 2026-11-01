@@ -30,7 +30,7 @@ let #(presence_handle, presence_specification) =
   presence.child_spec(presence.default_config("node1"))
 
 // With PubSub for cross-node replication
-let pubsub_handle = pubsub.start(pubsub.default_config())
+let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 let config =
   presence.default_config("node1")
   |> presence.with_pubsub(pubsub_handle)
@@ -318,6 +318,10 @@ Requests exclude the actor itself and carry a unique reply ref. Periodic
 requests repair missed delivery and late joins without a new `track`. The
 interval is a repair cadence, not a maximum convergence time; membership and
 delivery must recover, and actors must finish processing their work.
+
+During local PubSub scope recovery, presence hides remote replicas and retains
+their causal history under the normal retention policy. It retries membership
+checks on scheduled repair and retirement ticks. Local entries remain available.
 
 A non-positive interval disables periodic requests, not the initial exchange
 or replies. Keep a positive interval for quiet recovery. Presence sync

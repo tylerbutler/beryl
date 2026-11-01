@@ -113,8 +113,9 @@ before sending its own copy.
 
 `group.broadcast` returns `GroupLookupFailed(error)` for a missing group, or
 `BroadcastRejected(admitted_topics, reason)` after partial admission. Earlier
-topics stay admitted. Group actor lookup retains its existing call timeout
-and panic behavior if that actor is unavailable.
+topics stay admitted. If the group actor is unavailable, exits during lookup,
+or exceeds its call timeout, the lookup returns
+`GroupLookupFailed(GroupCallFailed(reason))`.
 
 ## Client and callback overload
 
