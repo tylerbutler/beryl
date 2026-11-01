@@ -15,7 +15,6 @@
 //// server exposes `gleam/http` requests.
 
 import beryl.{type Sockets}
-import beryl/internal
 import beryl/log
 import beryl/outbound_budget
 import beryl/overload
@@ -587,7 +586,7 @@ pub fn init_connection(
   let send_subject = process.new_subject()
   let selector = process.select(base_selector, send_subject)
   let budget = outbound_budget.new()
-  let logger = internal.logger(logger_name)
+  let logger = beryl.configured_logger(sockets, logger_name)
   let force_close = fn() {
     transport.release_connection_slot(connection_permit)
     transport.socket_disconnected(sockets, socket_id)

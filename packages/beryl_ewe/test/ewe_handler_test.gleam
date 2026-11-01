@@ -33,6 +33,7 @@ import gleam/string
 import gleeunit/should
 import glisten/socket as tcp_socket
 import glisten/tcp
+import unitest
 
 type WebsocketClient
 
@@ -119,11 +120,11 @@ type CapturedLog {
   CapturedLog(message: String, metadata: dict.Dict(String, String))
 }
 
-@external(erlang, "beryl_log_capture", "start")
-fn start_capture(pid: process.Pid) -> Nil
-
 @external(erlang, "beryl_log_capture", "stop")
 fn stop_capture() -> Nil
+
+@external(erlang, "beryl_log_capture", "with_capture")
+fn with_capture(action: fn() -> a) -> a
 
 fn captured_decoder() -> decode.Decoder(CapturedLog) {
   use message <- decode.field(1, decode.string)
@@ -148,13 +149,6 @@ fn drain_captured(selector: process.Selector(CapturedLog)) -> Nil {
     Ok(_) -> drain_captured(selector)
     Error(Nil) -> Nil
   }
-}
-
-fn begin_capture() -> process.Selector(CapturedLog) {
-  start_capture(process.self())
-  let selector = captured_selector()
-  drain_captured(selector)
-  selector
 }
 
 fn receive_log(
@@ -740,6 +734,7 @@ pub fn handler_sheds_frame_flood_at_the_edge_test() -> Nil {
 }
 
 pub fn handler_message_rate_alone_does_not_shed_frames_at_the_edge_test() -> Nil {
+  use <- unitest.tag("serial")
   // Regression: `with_message_rate` governs the runtime bucket only. A
   // heartbeat flood still gets shed (the runtime's message limiter catches
   // it after decode), but the two settings are independent — this proves
@@ -755,7 +750,9 @@ pub fn handler_message_rate_alone_does_not_shed_frames_at_the_edge_test() -> Nil
     )
   let #(port, server_pid) = start_server(channels)
   let assert Ok(client) = connect_websocket(port, "/socket")
-  let selector = begin_capture()
+  use <- with_capture()
+  let selector = captured_selector()
+  drain_captured(selector)
 
   send_heartbeats(client, 10)
   let replies = count_replies(client, 0)

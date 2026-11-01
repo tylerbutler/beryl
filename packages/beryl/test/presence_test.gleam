@@ -697,7 +697,7 @@ pub fn on_diff_callback_receives_all_rapid_diffs_test() -> Nil {
 
 pub fn on_diff_panic_is_reported_without_blocking_ack_or_owner_test() -> Nil {
   use <- unitest.tag("serial")
-  let selector = test_helper.begin_capture()
+  use selector <- test_helper.with_capture()
   let assert Ok(tracker) =
     presence.start(
       presence.default_config("callback-panic")

@@ -283,7 +283,7 @@ pub fn captures_global_telemetry_test() {
 ```
 
 This includes tests that attach `:telemetry` handlers, install the Palabres
-capture handler, change Palabres's global logging level, or deliberately
+capture handler, change node-wide OTP Logger configuration, or deliberately
 exercise VM-sensitive restart exhaustion, PubSub scope recovery, or tightly
 controlled actor restart and delayed-ack scheduling. Do not tag tests that can
 use unique subjects, scopes, socket IDs, or exact mailbox selectors for
