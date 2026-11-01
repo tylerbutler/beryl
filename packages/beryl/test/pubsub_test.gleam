@@ -248,13 +248,14 @@ pub fn pubsub_scope_recovery_restores_live_memberships_test() -> Nil {
   list.each(list.repeat(Nil, 2), fn(_) {
     let old_pid = kill_scope(scope)
     test_helper.wait_until(
-      fn() { recovered(scope, old_pid, topic, 1) },
+      fn() {
+        recovered(scope, old_pid, topic, 1)
+        && pubsub.subscribers(other_handle, topic) == Ok([process.self()])
+        && pubsub.subscriber_count(instance, "room:other") == Ok(1)
+      },
       5000,
       10,
     )
-    pubsub.subscribers(other_handle, topic)
-    |> should.equal(Ok([process.self()]))
-    pubsub.subscriber_count(instance, "room:other") |> should.equal(Ok(1))
     pubsub.join(second, topic) |> should.be_ok
     pubsub.broadcast(other_handle, topic, "recovered", "payload")
     |> should.be_ok
@@ -294,11 +295,14 @@ pub fn pubsub_scope_recovery_restores_live_memberships_test() -> Nil {
   pubsub.leave(first, topic) |> should.be_ok
   let old_pid = kill_scope(scope)
   test_helper.wait_until(
-    fn() { recovered(scope, old_pid, "room:other", 1) },
+    fn() {
+      recovered(scope, old_pid, "room:other", 1)
+      && pubsub.subscriber_count(instance, "room:other") == Ok(1)
+      && pubsub.subscriber_count(instance, topic) == Ok(0)
+    },
     5000,
     10,
   )
-  pubsub.subscriber_count(instance, topic) |> should.equal(Ok(0))
   pubsub.leave(first, "room:other") |> should.be_ok
   pubsub.leave(isolated_subscriber, topic) |> should.be_ok
 }
@@ -333,12 +337,15 @@ pub fn pubsub_scope_recovery_serialises_outage_joins_and_leaves_test() -> Nil {
       |> should.equal(0)
     })
   test_helper.wait_until(
-    fn() { recovered(scope, old_pid, "room:new", 1) },
+    fn() {
+      recovered(scope, old_pid, "room:new", 1)
+      && pubsub.subscriber_count(instance, "room:new") == Ok(1)
+      && pubsub.subscriber_count(instance, "room:keep") == Ok(1)
+      && pubsub.subscriber_count(instance, "room:leave") == Ok(0)
+    },
     5000,
     10,
   )
-  pubsub.subscriber_count(instance, "room:keep") |> should.equal(Ok(1))
-  pubsub.subscriber_count(instance, "room:leave") |> should.equal(Ok(0))
   pubsub.broadcast(instance, "room:new", "after_outage", "payload")
   |> should.be_ok
   drain_messages(scope, "room:new", "after_outage", "payload", pubsub.System)

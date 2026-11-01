@@ -297,7 +297,10 @@ pub fn pubsub_scope_recovery_preserves_runtime_broadcasts_test() -> Nil {
   )
   let old_pid = kill_scope(atom.create(scope))
   test_helper.wait_until(
-    fn() { recovered(atom.create(scope), old_pid, "room:lobby", 2) },
+    fn() {
+      recovered(atom.create(scope), old_pid, "room:lobby", 2)
+      && pubsub.subscriber_count(instance, "room:lobby") == Ok(2)
+    },
     5000,
     10,
   )
