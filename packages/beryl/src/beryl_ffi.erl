@@ -1,5 +1,6 @@
 -module(beryl_ffi).
 -export([identity/1,
+         logging_debug_enabled/0,
          string_starts_with/2, stop_supervisor/1, rescue/1,
          actor_call/3, connection_limit_call/3, connection_limit_send/2,
          connection_limit_checkpoint_supervisor/0,
@@ -11,6 +12,14 @@
 
 %% Used only after a selector validates the frozen raw PubSub record shape.
 identity(X) -> X.
+
+logging_debug_enabled() ->
+    %% Palabres uses metadata-free logger:log/2, not a module-level macro.
+    case logger:get_primary_config() of
+        #{level := all} -> true;
+        #{level := debug} -> true;
+        _ -> false
+    end.
 
 %% Resolve once and retain the existing subject tag. Sending to this captured
 %% pid after an exit is safe and cannot reach a replacement registered name.

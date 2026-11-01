@@ -559,7 +559,7 @@ pub fn connect_seed(
 /// select on it and act on each request. If the request owner died before the
 /// transfer, the reservation bind fails, runtime admission is skipped, and
 /// the selector immediately delivers `Close`. Call `close_connection` when
-/// the connection closes. `logger_name` names the transport in decode warnings
+/// the connection closes. `logger_name` names the transport in decode diagnostics
 /// (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this socket;
 /// `None` inherits the app-wide codec.
 ///
@@ -775,10 +775,16 @@ pub fn handle_text_frame(
           )
         }
         Error(error) -> {
-          log.warn(state.logger, "Failed to decode wire protocol message", [
-            #("socket_id", state.socket_id),
-            #("error", codec.format_decode_error(error)),
-          ])
+          log.rejection(
+            state.logger,
+            "Failed to decode wire protocol message",
+            fn() {
+              [
+                #("socket_id", state.socket_id),
+                #("error", codec.format_decode_error(error)),
+              ]
+            },
+          )
           emit_frame_stop(
             state,
             started_at,
@@ -829,14 +835,7 @@ pub fn handle_binary_frame(
           }
 
           Error(error) -> {
-            log.warn(
-              state.logger,
-              "Failed to decode binary wire protocol message",
-              [
-                #("socket_id", state.socket_id),
-                #("error", codec.format_decode_error(error)),
-              ],
-            )
+            log_binary_decode_failure(state, error)
             emit_frame_stop(
               state,
               started_at,
@@ -849,6 +848,22 @@ pub fn handle_binary_frame(
         }
     }
   })
+}
+
+fn log_binary_decode_failure(
+  state: ConnectionState,
+  error: codec.DecodeError,
+) -> Nil {
+  log.rejection(
+    state.logger,
+    "Failed to decode binary wire protocol message",
+    fn() {
+      [
+        #("socket_id", state.socket_id),
+        #("error", codec.format_decode_error(error)),
+      ]
+    },
+  )
 }
 
 fn finish_route(
