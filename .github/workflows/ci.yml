@@ -124,6 +124,16 @@ jobs:
           restore-keys: |
             gleam-deps-v2-${{ runner.os }}-
 
+      - name: Clean stale Gleam dependency state
+        if: >-
+          ${{
+            needs.changes.outputs.relevant == 'true' &&
+            steps.cache.outputs.cache-hit != 'true'
+          }}
+        run: |
+          trellis run clean
+          rm -rf build/snippet-check
+
       - name: Install Gleam dependencies
         if: needs.changes.outputs.relevant == 'true'
         run: just deps-gleam
