@@ -44,8 +44,14 @@ pub fn result_error(error: e) -> Result(a, e) {
 /// Faults outside the supplied callback still terminate the actor and follow
 /// its supervision policy.
 ///
-/// The FFI limits diagnostic depth and length to keep each crash description
-/// bounded.
+/// Descriptions retain the exception class and a depth-10 reason, plus at most
+/// three call sites (module, function, arity, and available file/line). Stack
+/// arguments and other stack metadata are not formatted. Reason values are
+/// still included: do not put secrets in exception reasons.
+///
+/// The copied UTF-8 description is at most 512 Unicode code points (2048
+/// bytes). Half the text budget is reserved for call sites. Each frame is
+/// limited to 80 code points; long names and source locations can be truncated.
 @external(erlang, "beryl_ffi", "rescue")
 pub fn rescue(callback: fn() -> value) -> Result(value, String)
 
@@ -54,13 +60,22 @@ pub fn logger(name: String) -> Logger {
   log.new(name)
 }
 
+@external(erlang, "binary", "copy")
+fn copy_preview(text: String) -> String
+
 /// Safely truncate a text value for log metadata.
 fn safe_preview(text: String, max_length: Int) -> String {
   let safe_length = int.max(max_length, 0)
   string.slice(text, 0, safe_length)
+  // Copy the final slice so a raw OTP Logger report cannot retain the frame.
+  // String concatenation and string.repeat do not guarantee a fresh copy.
+  |> copy_preview
 }
 
-/// Return bounded preview metadata only when payload logging is enabled.
+/// Return a grapheme-limited preview only when payload logging is enabled.
+///
+/// Keep the existing grapheme contract: no diagnostic byte cap or truncation
+/// marker is applied. Call only inside an enabled debug diagnostic.
 pub fn preview_metadata(
   key: String,
   text: String,

@@ -149,7 +149,17 @@ runtime actor. The result depends on where the panic occurs:
 | `update` on `Info` | The socket is torn down |
 | `update` on `Closed` | Logged; the close completes anyway |
 
-Crash descriptions are depth-limited and truncated before logging so client-triggered crashes cannot bloat log metadata.
+Crash descriptions preserve the exception class (`error`, `exit`, or `throw`)
+and a depth-limited reason. They also include up to three stack call sites with
+module, function, arity, and available file/line information. Stack argument
+values and other stack metadata are omitted. The reason can still contain
+application data, so do not include secrets in exception reasons.
+
+Each description is copied into a UTF-8 binary of at most 512 Unicode code
+points (2048 bytes). Half of the text budget is reserved for call sites, so a
+large reason cannot hide them. Each frame is limited to 80 code points; long
+names and source locations can be truncated. These limits also bound retained
+binary memory. beryl does not re-raise the caught exception.
 
 This behavior applies only to the listed callbacks. A callback panic in the
 socket actor would close every topic on that socket. beryl discards the failed

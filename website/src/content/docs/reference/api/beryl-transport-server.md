@@ -347,7 +347,9 @@ Size-check, rate-check, and decode an inbound text frame in the
 
  Oversized frames return `Stop` and close the connection. The function
  silently drops over-rate frames. It logs and drops frames that it cannot
- decode.
+ decode at debug level. With explicit payload logging opt-in, only this
+ text decode diagnostic includes a grapheme-bounded `frame_preview`.
+ Binary frames, successful frames, and connect metadata have no preview.
 
 <div class="api-entry-anchor" id="api-function-handler" aria-hidden="true"></div>
 
