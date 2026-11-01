@@ -8,21 +8,37 @@
 %% file output flush timing.
 -module(beryl_log_capture).
 
--export([start/1, stop/0, log/2]).
+-export([start/1, stop/0, with_capture/1, log/2]).
 
 -define(HANDLER_ID, beryl_log_capture).
 
 %% Install (or reinstall) the capture handler bound to Pid. Idempotent across
 %% tests: any previous handler is removed first so each test owns the sink.
 start(Pid) ->
-    _ = logger:remove_handler(?HANDLER_ID),
+    stop(),
+    put({?MODULE, primary}, logger:get_primary_config()),
+    ok = logger:set_primary_config(level, debug),
     ok = logger:add_handler(?HANDLER_ID, ?MODULE, #{config => #{pid => Pid}}),
     nil.
 
-%% Remove the capture handler.
+%% Remove the capture handler and restore the host's original primary config.
 stop() ->
     _ = logger:remove_handler(?HANDLER_ID),
+    case erase({?MODULE, primary}) of
+        undefined -> ok;
+        Primary -> ok = logger:set_primary_config(Primary)
+    end,
     nil.
+
+%% Tests own host verbosity, never the runtime under test. The callback runs
+%% in the caller so existing selectors and CapturedLog tuples stay compatible.
+with_capture(Action) ->
+    try
+        start(self()),
+        Action()
+    after
+        stop()
+    end.
 
 %% Logger handler callback. Only palabres reports are forwarded; everything else
 %% is ignored. The forwarded tuple matches the Gleam `CapturedLog` record shape

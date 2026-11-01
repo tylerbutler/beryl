@@ -11,18 +11,22 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
-| [trellis](https://trellis.tylerbutler.com) | 0.10.3+ | Gleam workspace manager (tasks, versions, publishing) |
+| [trellis](https://trellis.tylerbutler.com) | 1.1.0+ | Gleam workspace manager (tasks, versions, publishing) |
 
 **Recommended:** Use [mise](https://mise.jdx.dev/) with the provided
 `.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
 licence_audit. CI matrix-tests Erlang 27 and 28.
 
-This repository is a trellis-managed workspace: three packages live under
-`packages/` — `beryl`, `beryl_mist`, and `beryl_ewe` — with
+This repository is a trellis-managed workspace: four packages live under
+`packages/`: `beryl_protocol`, `beryl`, `beryl_mist`, and `beryl_ewe`, with
 runnable examples in `examples/` and a root `gleam.toml` holding only the
-`[tools.trellis]` configuration. `beryl_ewe` is built, tested, and linted but
-excluded from release via the `@release` key, so the other two packages are
-publishable. `just` recipes fan out across the workspace through `trellis run`.
+`[tools.trellis]` configuration. `beryl_protocol` uses the `workspace`
+lifecycle and ships inside beryl through `publish.bundle`, without separate
+releases. `beryl` uses the `hex` lifecycle; the transport packages use
+`git_only`. CI keeps Hex uploads disabled. Write protocol changelog fragments
+for `beryl`. `just` recipes fan out across the workspace through `trellis run`.
+Use `just protocol-test` for the shared Erlang/JavaScript suite and
+`just portable-host-test` for the Roost/Durable Object host.
 
 ```bash
 mise install
@@ -110,7 +114,7 @@ just audit-check             # Enforce licences and the vulnerability threshold
 just audit-check beryl_mist  # Limit the task to one package
 ```
 
-These tasks default to `beryl`, `beryl_mist`, and `beryl_ewe`. Each command runs
+These tasks default to `beryl_protocol`, `beryl`, `beryl_mist`, and `beryl_ewe`. Each command runs
 in the package directory and reads its locked manifest. Licence reports and
 enforcement use its existing `[tools.licence_audit]` policy.
 Examples are not included by default. To report on an example, pass its
@@ -279,7 +283,7 @@ pub fn captures_global_telemetry_test() {
 ```
 
 This includes tests that attach `:telemetry` handlers, install the Palabres
-capture handler, change Palabres's global logging level, or deliberately
+capture handler, change node-wide OTP Logger configuration, or deliberately
 exercise VM-sensitive restart exhaustion, PubSub scope recovery, or tightly
 controlled actor restart and delayed-ack scheduling. Do not tag tests that can
 use unique subjects, scopes, socket IDs, or exact mailbox selectors for

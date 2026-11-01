@@ -441,8 +441,8 @@ pub fn decode_binary_message(data: BitArray) -> Result(Inbound, DecodeError) {
       event:bytes-size(event_size),
       payload:bytes,
     >> -> {
-      use join_ref <- result.try(optional_utf8(join_ref))
-      use ref <- result.try(optional_utf8(ref))
+      use join_ref <- result.try(optional_utf8(join_ref, "join_ref"))
+      use ref <- result.try(optional_utf8(ref, "ref"))
       use topic <- result.try(required_utf8(topic, "topic"))
       use event <- result.try(required_utf8(event, "event"))
       Ok(codec.inbound(
@@ -457,11 +457,14 @@ pub fn decode_binary_message(data: BitArray) -> Result(Inbound, DecodeError) {
   }
 }
 
-fn optional_utf8(bytes: BitArray) -> Result(Option(String), DecodeError) {
+fn optional_utf8(
+  bytes: BitArray,
+  name: String,
+) -> Result(Option(String), DecodeError) {
   case bit_array.byte_size(bytes) {
     0 -> Ok(None)
     _ ->
-      required_utf8(bytes, "ref")
+      required_utf8(bytes, name)
       |> result.map(Some)
   }
 }
@@ -475,12 +478,15 @@ fn required_utf8(bytes: BitArray, name: String) -> Result(String, DecodeError) {
 pub type BinaryEncodeError {
   /// A metadata component is too large for the protocol's one-byte length.
   MetadataTooLong(component: String, byte_size: Int)
+  /// The payload contains a partial byte.
+  PayloadNotByteAligned
 }
 
 /// Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
 ///
 /// Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
-/// component exceeds the framing's 255-byte limit.
+/// component exceeds the framing's 255-byte limit, or
+/// `Error(PayloadNotByteAligned)` when the payload contains a partial byte.
 pub fn binary_push(
   join_ref join_ref: Option(String),
   topic topic: String,
@@ -493,6 +499,7 @@ pub fn binary_push(
   ))
   use #(topic_size, topic) <- result.try(u8_component(topic, "topic"))
   use #(event_size, event) <- result.try(u8_component(event, "event"))
+  use _ <- result.try(validate_binary_payload(payload))
   Ok(
     codec.BinaryFrame(<<
       binary_push_kind,
@@ -510,7 +517,8 @@ pub fn binary_push(
 /// Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
 ///
 /// Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
-/// component exceeds the framing's 255-byte limit.
+/// component exceeds the framing's 255-byte limit, or
+/// `Error(PayloadNotByteAligned)` when the payload contains a partial byte.
 pub fn binary_reply(
   join_ref join_ref: Option(String),
   ref ref: Option(String),
@@ -529,6 +537,7 @@ pub fn binary_reply(
   use #(ref_size, ref) <- result.try(u8_component(option.unwrap(ref, ""), "ref"))
   use #(topic_size, topic) <- result.try(u8_component(topic, "topic"))
   use #(status_size, status) <- result.try(u8_component(status_string, "status"))
+  use _ <- result.try(validate_binary_payload(payload))
   Ok(
     codec.BinaryFrame(<<
       binary_reply_kind,
@@ -548,7 +557,8 @@ pub fn binary_reply(
 /// Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
 ///
 /// Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
-/// component exceeds the framing's 255-byte limit.
+/// component exceeds the framing's 255-byte limit, or
+/// `Error(PayloadNotByteAligned)` when the payload contains a partial byte.
 pub fn binary_broadcast(
   topic topic: String,
   event event: String,
@@ -556,6 +566,7 @@ pub fn binary_broadcast(
 ) -> Result(Frame, BinaryEncodeError) {
   use #(topic_size, topic) <- result.try(u8_component(topic, "topic"))
   use #(event_size, event) <- result.try(u8_component(event, "event"))
+  use _ <- result.try(validate_binary_payload(payload))
   Ok(
     codec.BinaryFrame(<<
       binary_broadcast_kind,
@@ -566,6 +577,15 @@ pub fn binary_broadcast(
       payload:bits,
     >>),
   )
+}
+
+fn validate_binary_payload(
+  payload: BitArray,
+) -> Result(Nil, BinaryEncodeError) {
+  case payload {
+    <<_:bytes>> -> Ok(Nil)
+    _ -> Error(PayloadNotByteAligned)
+  }
 }
 
 fn u8_component(

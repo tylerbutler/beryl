@@ -419,7 +419,7 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
 pub fn remote_callback_panic_is_reported_and_merge_is_published_test() -> Nil {
   use <- unitest.tag("serial")
   let pubsub_instance = test_pubsub("processing_crash")
-  let selector = test_helper.begin_capture()
+  use selector <- test_helper.with_capture()
 
   let config1 =
     presence.default_config("node1")

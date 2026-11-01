@@ -49,6 +49,17 @@ test *PACKAGES:
 test-distributed:
     cd packages/beryl && gleam build && erl +S 4:4 -noshell -pa build/dev/erlang/*/ebin -eval 'case eunit:test(beryl_presence_distributed_test, [verbose]) of ok -> halt(0); _ -> halt(1) end.'
 
+# Build and run the same portable protocol cases on both targets
+protocol-test:
+    trellis run build --strict --target all beryl_protocol
+    trellis run test --target all beryl_protocol
+
+# Test Phoenix framing and the Durable Object host in the Cloudflare runtime
+portable-host-test:
+    pnpm -C examples/portable_channels test
+    node --test scripts/check-portable-deps.test.mjs
+    node scripts/check-portable-deps.mjs
+
 # === CODE QUALITY ===
 
 # Format source code in every package
@@ -82,16 +93,16 @@ beam-check: dialyzer xref
 doctor:
     trellis doctor
 
-# Report locked dependency licences (defaults to the three library packages)
-audit-licences *PACKAGES="beryl beryl_mist beryl_ewe":
+# Report locked dependency licences (defaults to the four library packages)
+audit-licences *PACKAGES="beryl_protocol beryl beryl_mist beryl_ewe":
     mise exec -- trellis run audit-licences --serial {{ PACKAGES }}
 
 # Report known vulnerabilities; findings do not fail this task
-audit-vulns *PACKAGES="beryl beryl_mist beryl_ewe":
+audit-vulns *PACKAGES="beryl_protocol beryl beryl_mist beryl_ewe":
     mise exec -- trellis run audit-vulns --serial {{ PACKAGES }}
 
 # Enforce each package's licence policy and vulnerability threshold
-audit-check *PACKAGES="beryl beryl_mist beryl_ewe":
+audit-check *PACKAGES="beryl_protocol beryl beryl_mist beryl_ewe":
     mise exec -- trellis run audit-check --serial --keep-going {{ PACKAGES }}
 
 # === DOCUMENTATION ===
@@ -213,7 +224,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: format-check docs site-snippets beam-check test examples-test site-demos-test
+ci: format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
 
 # Alias for PR checks
 alias pr := ci

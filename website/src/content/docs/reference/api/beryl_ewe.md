@@ -49,17 +49,18 @@ Ewe WebSocket transport for beryl
 ```gleam
 pub fn handler(
   beryl.Sockets,
-  server.TransportConfig(http1.Connection),
-  fn(request.Request(http1.Connection)) -> response.Response(ewe.ResponseBody)
-) -> fn(request.Request(http1.Connection)) -> response.Response(ewe.ResponseBody)
+  server.TransportConfig(connection.Connection),
+  fn(request.Request(connection.Connection)) -> response.Response(ewe.Body)
+) -> fn(request.Request(connection.Connection)) -> response.Response(ewe.Body)
 ```
 
 Build a combined request handler that serves both WebSocket upgrades and
  regular HTTP from a single Ewe listener.
 
  The returned function inspects and routes each request:
- - It passes WebSocket upgrade requests for the configured socket path to
+ - It passes WebSocket upgrade and CONNECT requests for the socket path to
    [`upgrade`](#upgrade), which also runs any `on_connect` callback.
+   Ewe validates the HTTP/1 handshake or HTTP/2 extended CONNECT protocol.
  - It passes all other requests to `http_fallback`. This includes non-upgrade
    requests and upgrades for a different path.
 
@@ -68,7 +69,7 @@ Build a combined request handler that serves both WebSocket upgrades and
  ```gleam
  ewe_transport.handler(sockets, server.default_config("/socket"), http_handler)
  |> ewe.new
- |> ewe.listening(port: 8000)
+ |> ewe.listening(on: 8000)
  |> ewe.start
  ```
 
@@ -78,18 +79,18 @@ Build a combined request handler that serves both WebSocket upgrades and
 
 ```gleam
 pub fn upgrade(
-  request.Request(http1.Connection),
+  request.Request(connection.Connection),
   beryl.Sockets,
-  server.TransportConfig(http1.Connection),
-  fn() -> response.Response(ewe.ResponseBody)
-) -> response.Response(ewe.ResponseBody)
+  server.TransportConfig(connection.Connection),
+  fn() -> response.Response(ewe.Body)
+) -> response.Response(ewe.Body)
 ```
 
 Upgrade a request to WebSocket if it matches the configured path.
 
  Usage in your Ewe handler:
  ```gleam
- fn handle_request(http_request: Request(Connection), sockets: Sockets) -> Response(ResponseBody) {
+ fn handle_request(http_request: Request(Connection), sockets: Sockets) -> Response(Body) {
    use <- ewe_transport.upgrade(http_request, sockets, server.default_config("/socket"))
    // Fall through to regular HTTP routing
    case request.path_segments(http_request) {
@@ -106,3 +107,6 @@ Upgrade a request to WebSocket if it matches the configured path.
  `beryl/transport/server.upgrade` for the full contract. Enforcement
  uses the real socket peer IP from the TCP connection; forwarded headers
  such as `X-Forwarded-For` are not trusted.
+
+ HTTP/2 extended CONNECT uses Ewe's parsed `:authority` for origin checks
+ when there is no `Host` header.

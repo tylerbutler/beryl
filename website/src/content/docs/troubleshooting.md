@@ -48,8 +48,8 @@ state. It does not receive `phx_reply`.
    that a match branch covers the client topic:
    ```gleam
    // "room:" <> _ matches "room:lobby", "room:42", etc.
-   socket.Join("room:" <> _, payload, ref) ->
-     socket.Next(model, [socket.AcceptJoin(ref, option.None)])
+   socket.Join("room:" <> _, payload, reference) ->
+     socket.Next(model, [socket.AcceptJoin(reference, option.None)])
    ```
    With `beryl/channel`, confirm a handler pattern matches the topic. The
    layer rejects an unclaimed topic with `{"reason": "unmatched topic"}`.
@@ -132,8 +132,8 @@ worker process. See
 
 ## Turn on debug logs
 
-beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*`
-namespaces. Enable debug logs when you diagnose integration problems:
+beryl emits [palabres](https://hexdocs.pm/palabres/) reports through OTP Logger.
+Enable debug diagnostics for the socket system you need to inspect:
 
 ```gleam
 let config =
@@ -143,6 +143,12 @@ let config =
     include_payloads: False,
   ))
 ```
+
+The application must also allow debug events through OTP Logger's primary
+level and handler filters. This builder does not change the host's logging
+setup or another beryl system's threshold. See
+[configure logging](/guides/observability/#configure-logging) for host setup
+and migration from beryl's former implicit Palabres configuration.
 
 Debug logs cover frame decode, join delivery, effect outcomes, reply/push send outcomes, disconnects, heartbeat decisions, broadcasts, and rate limiting. Payload and frame previews are omitted by default to reduce accidental sensitive-data exposure. If you need bounded previews locally, enable them explicitly:
 

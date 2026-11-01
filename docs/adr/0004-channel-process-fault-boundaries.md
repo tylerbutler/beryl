@@ -96,7 +96,7 @@ The answer must cover both public programming models:
 It must also preserve beryl's existing protocol and type-safety contracts:
 
 - Phoenix-compatible text and binary framing;
-- exact `JoinRef` and `ReplyRef` capability identity;
+- exact `JoinReference` and `ReplyReference` capability identity;
 - observable action and effect ordering;
 - generation-safe typed senders;
 - no unchecked coercions in socket or channel dispatch;
@@ -331,7 +331,7 @@ focused tests for:
 - a stale typed sender targeting an earlier join generation;
 - a socket disconnect while topic workers are busy;
 - ordered replies, pushes, broadcasts, and presence operations;
-- `JoinRef` and `ReplyRef` use after worker failure;
+- `JoinReference` and `ReplyReference` use after worker failure;
 - runtime, session, and worker shutdown order;
 - PubSub delivery during socket or channel teardown;
 - connection-limit release after abnormal process exit;

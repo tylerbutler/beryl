@@ -15,7 +15,6 @@
 //// server exposes `gleam/http` requests.
 
 import beryl.{type Sockets}
-import beryl/internal
 import beryl/log
 import beryl/outbound_budget
 import beryl/overload
@@ -567,7 +566,9 @@ pub fn connect_seed(
 /// `force_close` must immediately close the underlying socket. beryl calls
 /// it if binding fails or the outbound budget is full, so a blocked writer
 /// cannot retain an unbounded mailbox. Return an error when the close fails
-/// unexpectedly; beryl logs that failure.
+/// unexpectedly; beryl logs that failure. beryl releases the connection slot
+/// and reports the disconnect before calling it, since a forced stop can
+/// bypass the transport's normal close callback.
 pub fn init_connection(
   sockets sockets: Sockets,
   seed seed: ConnectSeed,
@@ -585,7 +586,12 @@ pub fn init_connection(
   let send_subject = process.new_subject()
   let selector = process.select(base_selector, send_subject)
   let budget = outbound_budget.new()
-  let logger = internal.logger(logger_name)
+  let logger = beryl.configured_logger(sockets, logger_name)
+  let force_close = fn() {
+    transport.release_connection_slot(connection_permit)
+    transport.socket_disconnected(sockets, socket_id)
+    force_close()
+  }
 
   // `Ok` means that the frame was admitted to the connection process mailbox.
   // It does not mean that the frame was written or received by the peer.

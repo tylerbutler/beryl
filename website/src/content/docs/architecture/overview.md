@@ -52,7 +52,7 @@ flowchart TB
 |---|---|---|
 | `beryl` | Public entry-point: `config/1`, `child_spec/3`, `broadcast/4`, `broadcast_from/5`, `stop/1` | — |
 | `beryl/channel` | Recommended channel layer: supervised startup, handler validation, typed per-topic state, join and close callbacks, senders, and ordered actions | [Channels](/guides/channels/) |
-| `beryl/socket` | The app-facing dispatch types: `Input`, `Next`, `Effect`, `JoinRef`/`ReplyRef`, `ConnectInfo`/`ConnectSeed`, typed `Sender`/`notify` | [Runtime](/architecture/runtime) |
+| `beryl/socket` | The app-facing dispatch types: `Input`, `Next`, `Effect`, `JoinReference`/`ReplyReference`, `ConnectInfo`/`ConnectSeed`, typed `Sender`/`notify` | [Runtime](/architecture/runtime) |
 | `beryl/runtime` | Router, socket actors, and topic workers: subscriber index, per-socket models, per-topic channel processes, event delivery, returned effects, and heartbeat enforcement | [Runtime](/architecture/runtime) |
 | `beryl/pubsub` | Distributed publish and subscribe through Erlang `pg` | [Broadcasts Across Nodes](/architecture/pubsub-and-distribution) |
 | `beryl/presence` | OTP actor wrapping an add-wins OR-set CRDT; track/untrack, replication, scoped `on_diff` callbacks | [Presence](/architecture/presence) |
@@ -65,7 +65,7 @@ flowchart TB
 | `beryl/topic` | Topic pattern matching: exact strings, `"ns:*"` prefix wildcards, and segment wildcards (`"document:*:ops"`) | (none) |
 | `beryl/error` | Opaque `StartFailure` type that hides OTP's `actor.StartError` from public APIs | (none) |
 | `beryl/rate_limit` | Token-bucket rate limiter; keyed per socket, per socket+topic, or per topic pattern | (none) |
-| `beryl/log` | Internal named loggers built on `palabres`; not public API | (none) |
+| `beryl/log` | Internal named loggers with local thresholds over `palabres`; the application owns OTP Logger setup | (none) |
 | `beryl/internal` | Shared internal utilities (logging config, crash rescue); not public API | (none) |
 
 ## Process ownership and restart behavior

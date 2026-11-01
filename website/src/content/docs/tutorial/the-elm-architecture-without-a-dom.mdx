@@ -259,7 +259,7 @@ render the model. Instead, your application returns an ordered list of
 ```gleam
 socket.Next(
   Model(..model, topics: set.insert(model.topics, topic)),
-  [socket.AcceptJoin(ref, None)],
+  [socket.AcceptJoin(reference, None)],
 )
 ```
 

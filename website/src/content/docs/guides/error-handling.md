@@ -13,18 +13,18 @@ Return a `RejectJoin` effect to reject a client. The error payload is sent back 
 ```gleam
 fn update(model: Model, input: Input(Message)) -> Next(Model) {
   case input {
-    socket.Join(topic, payload, ref) ->
+    socket.Join(topic, payload, reference) ->
       case authenticate(payload) {
         Error(_) ->
           socket.Next(model, [
             socket.RejectJoin(
-              ref,
+              reference,
               json.object([#("reason", json.string("unauthorized"))]),
             ),
           ])
         Ok(user) ->
           socket.Next(store_user(model, topic, user), [
-            socket.AcceptJoin(ref, option.None),
+            socket.AcceptJoin(reference, option.None),
           ])
       }
     // ...
@@ -81,17 +81,17 @@ To report payload decode errors to a client, decode the `Dynamic` payload with
 `gleam/dynamic/decode` and return an explicit `ReplyOk` or `ReplyError`:
 
 ```gleam
-socket.Message(_topic, "create_item", payload, option.Some(ref)) ->
+socket.Message(_topic, "create_item", payload, option.Some(reference)) ->
   case decode.run(payload, item_decoder()) {
     Ok(item) ->
       // process item
       socket.Next(model, [
-        socket.ReplyOk(ref, json.object([#("id", json.string(item.id))])),
+        socket.ReplyOk(reference, json.object([#("id", json.string(item.id))])),
       ])
     Error(_) ->
       socket.Next(model, [
         socket.ReplyError(
-          ref,
+          reference,
           json.object([#("reason", json.string("invalid_payload"))]),
         ),
       ])
@@ -99,7 +99,7 @@ socket.Message(_topic, "create_item", payload, option.Some(ref)) ->
 ```
 
 :::note[Messages without a reply reference cannot be answered]
-`ReplyOk` and `ReplyError` need the message `ReplyRef`. It is `Some` only when
+`ReplyOk` and `ReplyError` need the message `ReplyReference`. It is `Some` only when
 the client expects a reply. A `Message` with `None` has no request reference.
 Use `Push` for a server message with its own event name.
 :::

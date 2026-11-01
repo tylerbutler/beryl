@@ -6,6 +6,9 @@
 //// tenant-token gate — through the transport SPI, i.e. exactly the frames
 //// the Playwright suite drives over a real socket.
 
+import beryl
+import beryl/overload
+import beryl/wire
 import gleam/int
 import gleam/list
 import gleam/string
@@ -79,6 +82,56 @@ pub fn a_cursor_move_reaches_the_other_socket_only_test() -> Nil {
   ])
   |> should.be_true
   // `broadcast_from` excludes the sender.
+  showcase_harness.expect_silence(ada)
+  showcase_harness.stop(system)
+}
+
+pub fn sustained_cursor_moves_with_refs_do_not_exhaust_the_socket_test() -> Nil {
+  let assert Ok(limits) = overload.limits(items: 16, bytes: 65_536)
+  let system =
+    showcase_harness.start_with_config(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_socket_queue_limits(limits),
+    )
+  let ada = showcase_harness.connect(system, "s1")
+  let bob = showcase_harness.connect(system, "s2")
+  showcase_harness.join(
+    system,
+    "s1",
+    "cursor:main",
+    "1",
+    "{\"username\":\"ada\"}",
+  )
+  showcase_harness.join(
+    system,
+    "s2",
+    "cursor:main",
+    "1",
+    "{\"username\":\"bob\"}",
+  )
+  settle_roster(ada, "bob")
+  settle_roster(bob, "bob")
+  int.range(1, 65, Nil, fn(_, index) {
+    showcase_harness.push(
+      system,
+      "s1",
+      "cursor:main",
+      "cursor_move",
+      int.to_string(index),
+      "{\"x\":10,\"y\":20}",
+    )
+    showcase_harness.recv(bob)
+    |> showcase_harness.contains(["cursor_move", "\"socket_id\":\"s1\""])
+    |> should.be_true
+  })
+  showcase_harness.route(
+    system,
+    "s1",
+    "[null,\"h\",\"phoenix\",\"heartbeat\",{}]",
+  )
+  showcase_harness.recv(ada)
+  |> showcase_harness.contains(["\"phoenix\"", "\"h\"", "\"status\":\"ok\""])
+  |> should.be_true
   showcase_harness.expect_silence(ada)
   showcase_harness.stop(system)
 }
