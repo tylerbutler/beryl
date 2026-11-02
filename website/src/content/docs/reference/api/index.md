@@ -11,7 +11,7 @@ description: API reference generated from Gleam docs metadata.
 
 <div class="api-reference-marker" aria-hidden="true"></div>
 
-This reference uses Gleam docs metadata for `beryl`, `beryl_ewe`, and `beryl_mist`.
+This reference uses Gleam docs metadata for `beryl`, `beryl_ewe`, `beryl_mist`, and `beryl_protocol`.
 
 :::note[Generated content]
 The generator creates pages under `/reference/api/` from Gleam docs metadata. The pages include each public type, function, and constant. This is beryl's canonical API reference. Install beryl packages from GitHub. They are not on Hex.
@@ -105,5 +105,14 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
 <li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl_mist/"><code>beryl_mist</code></a>
   <p>Mist WebSocket transport for beryl</p>
+</li>
+</ul>
+
+## `beryl_protocol` `0.1.0`
+
+<ul class="api-module-list">
+<li class="api-module-list__item">
+  <a class="api-module-list__name" href="/reference/api/beryl_protocol/"><code>beryl_protocol</code></a>
+  <p>A deterministic channel protocol. Hosts supply time, decoded messages and application decisions, then execute returned actions in list order.</p>
 </li>
 </ul>

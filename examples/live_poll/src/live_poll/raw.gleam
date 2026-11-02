@@ -39,7 +39,7 @@ pub fn update(
 ) -> fn(Model, socket.Input(Message)) -> socket.Next(Model) {
   fn(model: Model, input: socket.Input(Message)) {
     case input {
-      socket.Join(topic, _payload, ref) -> {
+      socket.Join(topic, _payload, reference) -> {
         case room_name(topic) {
           Ok(room) -> {
             store.join(polls, room)
@@ -59,13 +59,13 @@ pub fn update(
             }
             socket.Next(
               Model(..model, topics: set.insert(model.topics, topic)),
-              [socket.AcceptJoin(ref, None)],
+              [socket.AcceptJoin(reference, None)],
             )
           }
           Error(_) ->
             socket.Next(model, [
               socket.RejectJoin(
-                ref,
+                reference,
                 json.object([#("reason", json.string("unknown_topic"))]),
               ),
             ])
@@ -85,7 +85,7 @@ pub fn update(
               reply,
             )
           False, Ok(_) | False, Error(_) | True, Error(_) ->
-            socket.Next(model, [])
+            socket.Next(model, discard_reply(reply))
         }
       socket.Info(ClosePoll(topic)) ->
         case room_name(topic) {
@@ -120,7 +120,7 @@ fn handle_command(
   room: String,
   event: String,
   payload: Dynamic,
-  reply: Option(socket.ReplyRef),
+  reply: Option(socket.ReplyReference),
 ) -> socket.Next(Model) {
   case poll.command(event, payload) {
     poll.GetState ->
@@ -130,7 +130,7 @@ fn handle_command(
       )
     poll.Vote(choice) ->
       case stage {
-        ReadOnly -> socket.Next(model, [])
+        ReadOnly -> socket.Next(model, discard_reply(reply))
         Voting | Timed ->
           case store.vote(polls, room, choice) {
             Ok(state) ->
@@ -162,12 +162,12 @@ fn handle_command(
               )
             store.AlreadyClosed(state) ->
               socket.Next(model, socket.reply_ok(reply, poll.to_json(state)))
-            store.RoomNotFound -> socket.Next(model, [])
+            store.RoomNotFound -> socket.Next(model, discard_reply(reply))
           }
         }
-        ReadOnly | Voting -> socket.Next(model, [])
+        ReadOnly | Voting -> socket.Next(model, discard_reply(reply))
       }
-    poll.Unsupported -> socket.Next(model, [])
+    poll.Unsupported -> socket.Next(model, discard_reply(reply))
   }
 }
 
@@ -179,11 +179,18 @@ fn room_name(topic: String) -> Result(String, Nil) {
 }
 
 fn reply_error(
-  reply: Option(socket.ReplyRef),
+  reply: Option(socket.ReplyReference),
   payload: json.Json,
 ) -> List(socket.Effect) {
   case reply {
-    Some(ref) -> [socket.ReplyError(ref, payload)]
+    Some(reference) -> [socket.ReplyError(reference, payload)]
+    None -> []
+  }
+}
+
+fn discard_reply(reply: Option(socket.ReplyReference)) -> List(socket.Effect) {
+  case reply {
+    Some(reference) -> [socket.DiscardReply(reference)]
     None -> []
   }
 }

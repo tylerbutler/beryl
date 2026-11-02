@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Discard reply refs in the default channel message handler and document explicit disposal for handlers that do not reply."

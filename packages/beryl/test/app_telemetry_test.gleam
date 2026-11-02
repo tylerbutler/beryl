@@ -471,7 +471,7 @@ fn raw_binary_codec() -> codec.Codec {
 pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
   use <- unitest.tag("serial")
   let handler = attach()
-  let pubsub_instance = pubsub.start(pubsub.default_config())
+  let assert Ok(pubsub_instance) = pubsub.start(pubsub.default_config())
   let senders = process.new_subject()
   let assert Ok(sockets) =
     app_test_helper.start_app(
@@ -502,11 +502,12 @@ pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
   expect_broadcast(handler, "local", 1) |> should.be_true
 
   test_helper.wait_until(
-    fn() { pubsub.subscriber_count(pubsub_instance, "room:lobby") == 1 },
+    fn() { pubsub.subscriber_count(pubsub_instance, "room:lobby") == Ok(1) },
     1000,
     5,
   )
   pubsub.broadcast(pubsub_instance, "room:lobby", "remote", json.object([]))
+  |> should.equal(Ok(Nil))
   let _remote = app_test_helper.recv(frames)
   expect_broadcast(handler, "remote", 1) |> should.be_true
 
@@ -597,7 +598,7 @@ pub fn socket_broadcast_counts_actual_inline_recipients_once_test() -> Nil {
 pub fn socket_broadcast_pubsub_counts_each_runtime_fanout_once_test() -> Nil {
   use <- unitest.tag("serial")
   let handler = attach()
-  let instance =
+  let assert Ok(instance) =
     pubsub.start(pubsub.config_with_scope("telemetry-inline-count"))
   let config = telemetry_config() |> beryl.with_pubsub(instance)
   let local = start(config)
@@ -611,7 +612,7 @@ pub fn socket_broadcast_pubsub_counts_each_runtime_fanout_once_test() -> Nil {
   expect_join(handler, "accepted") |> should.be_true
   expect_join(handler, "accepted") |> should.be_true
   test_helper.wait_until(
-    fn() { pubsub.subscriber_count(instance, "room:lobby") == 2 },
+    fn() { pubsub.subscriber_count(instance, "room:lobby") == Ok(2) },
     1000,
     5,
   )
@@ -691,7 +692,7 @@ fn assert_faulty_sender_fanout(
   send: fn(String) -> Result(Nil, Nil),
 ) -> Nil {
   let handler = attach()
-  let instance = pubsub.start(pubsub.config_with_scope(scope))
+  let assert Ok(instance) = pubsub.start(pubsub.config_with_scope(scope))
   let config = telemetry_config() |> beryl.with_pubsub(instance)
   let local = start(config)
   let remote = start(config)
@@ -745,7 +746,7 @@ fn assert_faulty_sender_fanout(
   expect_join(handler, "accepted") |> should.be_true
   expect_join(handler, "accepted") |> should.be_true
   test_helper.wait_until(
-    fn() { pubsub.subscriber_count(instance, "room:lobby") == 2 },
+    fn() { pubsub.subscriber_count(instance, "room:lobby") == Ok(2) },
     1000,
     5,
   )

@@ -71,7 +71,7 @@ reliability, throughput, or memory. Do not perform a generic style review.
 
 ## Repository constraints
 
-- Preserve transport SPI boundaries, typed app dispatch, exact `JoinRef`
+- Preserve transport SPI boundaries, typed app dispatch, exact `JoinReference`
   capabilities, and the frozen PubSub wire tuple described in `AGENTS.md`.
 - Prefer existing Gleam and OTP library APIs. Keep Erlang FFI small and clear
   for maintainers without deep Erlang knowledge; do not move code to Erlang

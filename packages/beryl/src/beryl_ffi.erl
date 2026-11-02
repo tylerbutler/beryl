@@ -141,9 +141,28 @@ connection_limit_call(Subject, Timeout, Request) ->
     end.
 
 actor_call(Subject, Timeout, Request) ->
-    case connection_limit_call(Subject, Timeout, Request) of
-        {ok, Reply} -> Reply;
-        {error, Reason} -> erlang:error(Reason)
+    case connection_limit_subject_owner(Subject) of
+        undefined ->
+            {error, call_unavailable};
+        Owner ->
+            Alias = erlang:alias([reply]),
+            Tag = make_ref(),
+            Reply = {subject, Alias, Tag},
+            Monitor = erlang:monitor(process, Owner),
+            try
+                Owner ! connection_limit_subject_message(Subject, Request(Reply)),
+                receive
+                    {Tag, Value} -> {ok, Value};
+                    {'DOWN', Monitor, process, Owner, Reason} ->
+                        {error, {call_down, gleam_erlang_ffi:cast_exit_reason(Reason)}}
+                after max(0, Timeout) ->
+                    {error, call_timed_out}
+                end
+            after
+                erlang:demonitor(Monitor, [flush]),
+                erlang:unalias(Alias),
+                receive {Tag, _} -> ok after 0 -> ok end
+            end
     end.
 
 connection_limit_send(Subject, Message) ->

@@ -12,6 +12,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{None}
 import gleam/otp/static_supervisor
+import gleam/result
 import gleam/string
 import gleeunit/should
 import test_helper
@@ -594,13 +595,10 @@ pub fn source_restart_requires_rejoin_even_with_a_stable_handle_test() -> Nil {
   let _error = frame(frames, "phx_error")
   test_helper.wait_until(
     fn() {
+      // Registration precedes publication of the replacement's admission queue.
       case process.subject_owner(presence.subject(presence)) {
         Ok(pid) ->
-          pid != original
-          && case presence.queue_snapshot(presence) {
-            Ok(_) -> True
-            Error(_) -> False
-          }
+          pid != original && result.is_ok(presence.queue_snapshot(presence))
         Error(Nil) -> False
       }
     },
