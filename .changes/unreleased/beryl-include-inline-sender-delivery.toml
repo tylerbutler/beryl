@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Include inline sender delivery in the local recipient count for socket broadcasts without emitting a second telemetry event."
