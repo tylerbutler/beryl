@@ -3,7 +3,7 @@
 //// flooded messages and protocol frames without ever consuming a token for
 //// joins, the per-socket topic cap rejects extra joins, and the
 //// channel-rate bucket cap bounds the number of distinct topic buckets a
-//// socket may allocate (recovering when a topic closes, isolated per socket).
+//// socket may allocate (retained until socket teardown, isolated per socket).
 //// These tests drive the runtime directly through `transport.route_decoded`
 //// (via the `app_test_helper` wrappers), the same path any transport uses
 //// after decoding a frame; frame-rate edge admission is covered separately
@@ -17,8 +17,10 @@ import beryl/wire
 import beryl/wire/codec
 import gleam/erlang/process
 import gleam/int
+import gleam/list
 import gleam/string
 import gleeunit/should
+import test_helper
 
 fn join_ok(
   channels: beryl.Sockets,
@@ -232,7 +234,8 @@ pub fn channel_bucket_cap_bounds_distinct_topics_test() -> Nil {
   process.receive(events, 200) |> should.be_error
 }
 
-pub fn channel_bucket_cap_recovers_after_leave_test() -> Nil {
+pub fn channel_bucket_cap_retains_left_topics_and_reuses_existing_buckets_test() -> Nil {
+  let mailbox_before = test_helper.mailbox_length(process.self())
   let events = process.new_subject()
   let channels = app_test_helper.start_observed(capped_config(), events)
   let frames = app_test_helper.connect(channels, "s1")
@@ -244,7 +247,7 @@ pub fn channel_bucket_cap_recovers_after_leave_test() -> Nil {
   app_test_helper.push(channels, "s1", "room:b", "m", "r-b")
   let assert Ok(Message("room:b", _, _, _)) = process.receive(events, 500)
 
-  // Leaving room:a frees its bucket, so room:c can now allocate one.
+  // Leaving room:a retains its bucket, so room:c still cannot allocate one.
   app_test_helper.route(
     channels,
     "s1",
@@ -255,8 +258,41 @@ pub fn channel_bucket_cap_recovers_after_leave_test() -> Nil {
   let _close_frame = app_test_helper.recv(frames)
 
   app_test_helper.push(channels, "s1", "room:c", "m", "r-c")
-  let assert Ok(Message("room:c", _, _, _)) = process.receive(events, 500)
-  Nil
+  app_test_helper.push(
+    channels,
+    "s1",
+    "room:b",
+    "existing_bucket",
+    "r-existing",
+  )
+  let assert Ok(Message("room:b", "existing_bucket", _, _)) =
+    process.receive(events, 500)
+
+  // Rejoining reuses room:a's bucket without freeing a slot for room:c.
+  join_ok(channels, events, frames, "s1", "room:a", "jr-a2")
+  app_test_helper.push(channels, "s1", "room:c", "m", "r-c2")
+  app_test_helper.push(channels, "s1", "room:a", "reused_bucket", "r-reused")
+  let assert Ok(Message("room:a", "reused_bucket", _, _)) =
+    process.receive(events, 500)
+  process.receive(events, 0) |> should.be_error
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+  list.repeat(Nil, 3)
+  |> list.map(fn(_) {
+    let assert Ok(socket.Closed(topic, socket.Shutdown)) =
+      process.receive(events, 500)
+    topic
+  })
+  |> list.sort(string.compare)
+  |> should.equal(["room:a", "room:b", "room:c"])
+  list.repeat(Nil, 3)
+  |> list.map(fn(_) { app_test_helper.recv(frames) })
+  |> list.sort(string.compare)
+  |> should.equal([
+    "[\"jr-a2\",\"jr-a2\",\"room:a\",\"phx_close\",{}]",
+    "[\"jr-b\",\"jr-b\",\"room:b\",\"phx_close\",{}]",
+    "[\"jr-c\",\"jr-c\",\"room:c\",\"phx_close\",{}]",
+  ])
+  test_helper.mailbox_length(process.self()) |> should.equal(mailbox_before)
 }
 
 pub fn channel_bucket_cap_is_isolated_per_socket_test() -> Nil {
