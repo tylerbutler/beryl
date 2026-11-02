@@ -10,7 +10,7 @@ import {
   finalizeClient,
   isForbiddenReply,
   participantId,
-  presenceDiffContains,
+  presenceSnapshotMatches,
   replyContainsMarker,
 } from "../lib/workload.js";
 
@@ -277,7 +277,7 @@ export async function presenceChurn(config) {
           (frame) =>
             frame.topic === config.topic &&
             frame.event === config.presenceDeliveryEvent &&
-            presenceDiffContains(frame.payload, kind, key),
+            presenceSnapshotMatches(frame.payload, kind, key),
           config.deliveryTimeoutMs,
         );
         await client.push(config.topic, event, { key, meta: { vu: __VU } });

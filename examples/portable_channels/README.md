@@ -1,5 +1,7 @@
 # Portable channels
 
+## Overview
+
 A Cloudflare Durable Object hosts one match. Each WebSocket uses
 `beryl_protocol` for channel lifecycle decisions and Roost for Phoenix text
 and binary framing. The official Phoenix JavaScript client handles client
@@ -81,3 +83,45 @@ local runtime, actual hibernatable WebSockets, and the official Phoenix
 client. It forces Durable Object eviction to test restoration, lost work,
 heartbeats, and command retries. Shared Phoenix fixtures check Roost framing.
 No test needs a Cloudflare account.
+
+## Subdirectories and boundaries
+
+- [Protocol bridge](./src/README.md): bounded Gleam transitions, host actions,
+  JSON FFI, and the Roost framing adapter.
+
+## Interface
+
+`worker.mjs:fetch` routes
+`/matches/{code}/socket/websocket` to the `Match` Durable Object.
+The Phoenix `Socket` constructor above takes `/matches/demo/socket` as its
+base endpoint and appends `/websocket` before connecting. Direct WebSocket
+clients must use the full suffixed path; `worker.mjs:matchCode` rejects the
+unsuffixed path.
+`wrangler.jsonc:durable_objects` binds `MATCHES` to that class and configures
+its migration. The `gleam.toml` dependencies supply `beryl_protocol` and Roost;
+the worker owns storage, authorization, and application commands.
+
+## Invariants
+
+- `worker.mjs:matchCode` allows 1–32 alphanumeric, underscore, or hyphen
+  characters; the request handler rejects query keys other than `vsn`.
+- `worker.mjs:authorize` requires the matching topic and `JOIN_TOKEN`,
+  assigning the fixed demo principal.
+- `worker.mjs:heartbeatTimeout`, `maximumFrameBytes`, and `maximumCommands`
+  set limits of 60 seconds, 16,384 bytes, and 256 command records.
+- `worker.mjs:checkpoint` bounds serialized attachments to 16,000 bytes;
+  `increment` commits counter changes with command IDs in a transaction.
+
+## Side effects
+
+`worker.mjs:apply` checkpoints before executing protocol actions.
+The worker sends/closes WebSockets, stores match/game/roster/command state,
+and schedules alarms. The Gleam bridge emits actions rather than performing
+host I/O.
+
+## Verification
+
+From the repository root: `pnpm -C examples/portable_channels build`.
+`pnpm -C examples/portable_channels test` runs the strict JavaScript build,
+JavaScript-target Gleam tests, and local Cloudflare Vitest integration tests.
+No account or production deployment is needed for those local tests.
