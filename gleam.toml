@@ -33,8 +33,12 @@ repository_tag_package = "beryl"
 repository_tag_format = "v{series}"
 repository_tags = ["minor"]
 
+[tools.trellis.publish.bundle]
+beryl = ["beryl_protocol"]
+
 [tools.trellis.publish.lifecycle]
 default = "git_only"
+packages = { "packages/beryl" = "hex", "packages/beryl_protocol" = "workspace" }
 
 [tools.trellis.tasks.lint]
 command = "gleam run -m glinter"

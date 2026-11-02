@@ -29,7 +29,7 @@ pub fn start_client(scope: String) -> Client {
   let ready = process.new_subject()
   let _owner =
     process.spawn_unlinked(fn() {
-      let pubsub = pubsub.start(pubsub.config_with_scope(scope))
+      let assert Ok(pubsub) = pubsub.start(pubsub.config_with_scope(scope))
       let assert Ok(channels) =
         app_test_helper.start_app(
           beryl.config(wire.phoenix_codec()) |> beryl.with_pubsub(pubsub),
@@ -73,7 +73,7 @@ pub fn start_presence(
   scope: String,
   replica: String,
 ) -> #(presence.Presence, process.Pid) {
-  let pubsub = pubsub.start(pubsub.config_with_scope(scope))
+  let assert Ok(pubsub) = pubsub.start(pubsub.config_with_scope(scope))
   let config =
     presence.default_config(replica)
     |> presence.with_pubsub(pubsub)

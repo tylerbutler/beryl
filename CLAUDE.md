@@ -4,8 +4,10 @@
 
 Type-safe real-time channels and presence for Gleam, targeting the Erlang
 (BEAM) runtime. The repository is a [trellis](https://trellis.tylerbutler.com)-managed
-monorepo with three releasable packages:
+monorepo with four releasable packages:
 
+- **`packages/beryl_protocol`**: Pure channel protocol transitions for Erlang
+  and JavaScript. Hosts own I/O, authorization, scheduling, and application work.
 - **`packages/beryl`** — raw app dispatch plus `beryl/channel` (runtime,
   typed events/effects, presence, PubSub, wire protocol, abuse controls,
   transport SPI)
@@ -38,6 +40,8 @@ just deps         # Download dependencies (gleam + pnpm workspaces)
 just build        # trellis run build
 just build-strict # trellis run build --strict
 just test         # trellis run test (scope: `just test beryl_mist`)
+just protocol-test # strict build and pure tests on both targets
+just portable-host-test # Roost fixtures and Durable Object integration tests
 just format       # trellis run format
 just format-check # trellis run format --check
 just check        # trellis run check
@@ -68,6 +72,7 @@ measurement limits.
 ```
 gleam.toml                         # Workspace config only ([tools.trellis])
 packages/
+├── beryl_protocol/                # Portable protocol core (Erlang and JavaScript)
 ├── beryl/                         # Core library package
 │   ├── gleam.toml
 │   ├── src/

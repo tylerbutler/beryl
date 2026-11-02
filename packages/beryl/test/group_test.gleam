@@ -1,5 +1,5 @@
+import beryl/error
 import beryl/group
-import beryl/internal
 import gleam/erlang/process
 import gleam/list
 import gleam/otp/static_supervisor
@@ -11,19 +11,31 @@ import unitest
 @external(erlang, "beryl_test_process_ffi", "with_suspended")
 fn with_suspended(pid: process.Pid, action: fn() -> value) -> value
 
-fn assert_crashes_within(operation: fn() -> Nil, timeout_ms: Int) -> Nil {
-  let pid = process.spawn_unlinked(operation)
-  let monitor = process.monitor(pid)
-  let selector =
-    process.new_selector()
-    |> process.select_specific_monitor(monitor, fn(down) { down })
+@external(erlang, "beryl_pubsub_test_ffi", "call_target")
+fn call_target(mode: String) -> process.Subject(process.Subject(Nil))
 
-  case process.selector_receive(selector, timeout_ms) {
-    Ok(process.ProcessDown(reason: process.Normal, ..)) -> should.fail()
-    Ok(process.ProcessDown(..)) -> Nil
-    Ok(process.PortDown(..)) -> should.fail()
-    Error(Nil) -> should.fail()
-  }
+@external(erlang, "beryl_ffi", "actor_call")
+fn actor_call(
+  subject: process.Subject(process.Subject(Nil)),
+  timeout: Int,
+  request: fn(process.Subject(Nil)) -> process.Subject(Nil),
+) -> Result(Nil, error.CallError)
+
+pub fn actor_call_retains_down_reason_and_cleans_up_test() -> Nil {
+  let monitors = test_helper.monitor_count(process.self())
+  let messages = test_helper.mailbox_length(process.self())
+  let assert Error(error.CallDown(reason)) =
+    actor_call(call_target("down"), 1000, fn(reply) { reply })
+  error.describe_call_error(error.CallDown(reason))
+  |> should.equal(
+    "actor exited: abnormal: {test_call_failure,42,<<\"original\">>}",
+  )
+  test_helper.monitor_count(process.self()) |> should.equal(monitors)
+  test_helper.mailbox_length(process.self()) |> should.equal(messages)
+  actor_call(call_target("success"), 1000, fn(reply) { reply })
+  |> should.equal(Ok(Nil))
+  test_helper.monitor_count(process.self()) |> should.equal(monitors)
+  test_helper.mailbox_length(process.self()) |> should.equal(messages)
 }
 
 pub fn group_start_test() -> Nil {
@@ -32,7 +44,7 @@ pub fn group_start_test() -> Nil {
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(spec)
     |> static_supervisor.start()
-  group.list_groups(groups) |> should.equal([])
+  group.list_groups(groups) |> should.equal(Ok([]))
 }
 
 pub fn group_handle_survives_supervised_restart_test() -> Nil {
@@ -56,7 +68,7 @@ pub fn group_handle_survives_supervised_restart_test() -> Nil {
     10,
   )
 
-  group.list_groups(groups) |> should.equal([])
+  group.list_groups(groups) |> should.equal(Ok([]))
   group.create(groups, "after:restart") |> should.equal(Ok(Nil))
 }
 
@@ -72,17 +84,12 @@ pub fn configured_call_timeout_is_used_test() -> Nil {
   let assert Ok(owner) = process.subject_owner(group.subject(groups))
 
   with_suspended(owner, fn() {
-    assert_crashes_within(
-      fn() {
-        let _ = group.list_groups(groups)
-        Nil
-      },
-      1000,
-    )
+    group.list_groups(groups)
+    |> should.equal(Error(group.GroupCallFailed(error.CallTimedOut)))
   })
 }
 
-pub fn caught_group_timeouts_drop_monitors_and_late_replies_test() -> Nil {
+pub fn group_timeouts_drop_monitors_and_late_replies_test() -> Nil {
   use <- unitest.tag("serial")
   let config = group.default_config() |> group.with_call_timeout(10)
   let #(groups, spec) = group.child_spec_with_config(config)
@@ -96,11 +103,12 @@ pub fn caught_group_timeouts_drop_monitors_and_late_replies_test() -> Nil {
 
   with_suspended(owner, fn() {
     list.each(list.repeat(Nil, 10), fn(_) {
-      internal.rescue(fn() { group.list_groups(groups) }) |> should.be_error
+      group.list_groups(groups)
+      |> should.equal(Error(group.GroupCallFailed(error.CallTimedOut)))
       test_helper.monitor_count(process.self()) |> should.equal(monitors)
     })
   })
-  group.list_groups(groups) |> should.equal([])
+  group.list_groups(groups) |> should.equal(Ok([]))
   test_helper.monitor_count(process.self()) |> should.equal(monitors)
   test_helper.mailbox_length(process.self()) |> should.equal(messages)
 }
@@ -111,7 +119,7 @@ pub fn group_create_and_list_test() -> Nil {
   let assert Ok(Nil) = group.create(groups, "team:eng")
   let assert Ok(Nil) = group.create(groups, "team:design")
 
-  let names = group.list_groups(groups)
+  let assert Ok(names) = group.list_groups(groups)
   list.length(names) |> should.equal(2)
   list.contains(names, "team:eng") |> should.be_true()
   list.contains(names, "team:design") |> should.be_true()
@@ -184,7 +192,7 @@ pub fn group_delete_test() -> Nil {
   let assert Ok(Nil) = group.delete(groups, "team:eng")
 
   // Group gone
-  group.list_groups(groups) |> should.equal([])
+  group.list_groups(groups) |> should.equal(Ok([]))
 
   // Operations on deleted group fail
   let result = group.topics(groups, "team:eng")
@@ -201,7 +209,18 @@ pub fn group_delete_nonexistent_test() -> Nil {
 
 pub fn group_empty_on_start_test() -> Nil {
   let assert Ok(groups) = group.start()
-  group.list_groups(groups) |> should.equal([])
+  group.list_groups(groups) |> should.equal(Ok([]))
+}
+
+pub fn unavailable_group_operations_return_call_errors_test() -> Nil {
+  let #(groups, _spec) = group.child_spec()
+  let unavailable = group.GroupCallFailed(error.CallUnavailable)
+  group.list_groups(groups) |> should.equal(Error(unavailable))
+  group.create(groups, "missing") |> should.equal(Error(unavailable))
+  group.delete(groups, "missing") |> should.equal(Error(unavailable))
+  group.add(groups, "missing", "topic") |> should.equal(Error(unavailable))
+  group.remove(groups, "missing", "topic") |> should.equal(Error(unavailable))
+  group.topics(groups, "missing") |> should.equal(Error(unavailable))
 }
 
 pub fn group_new_group_has_no_topics_test() -> Nil {

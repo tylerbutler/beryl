@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Use the portable protocol core for channel lifecycle decisions while preserving the existing BEAM APIs, codecs, and cleanup behavior."

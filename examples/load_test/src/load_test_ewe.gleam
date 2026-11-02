@@ -14,8 +14,8 @@ pub fn main() -> Nil {
       http.handle(request, channels)
     })
     |> ewe.new
-    |> ewe.listening(port: app.port())
-    |> ewe.bind(interface:)
+    |> ewe.listening(on: app.port())
+    |> ewe.bind(to: interface)
     |> ewe.start
   io.println("load_test (Ewe) listening on " <> interface)
   process.sleep_forever()

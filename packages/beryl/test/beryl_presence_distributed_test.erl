@@ -28,7 +28,7 @@ pubsub_wire_scope_and_sender_exclusion_test_() ->
                 PubSub = presence_pubsub(A, Scope),
                 await({pubsub_members, element(2, A), Scope}, fun() ->
                     call(A, 'beryl@pubsub', subscriber_count, [PubSub, ?TOPIC])
-                        =:= Count
+                        =:= {ok, Count}
                 end)
             end, [{?PUBSUB_SCOPE, 3}, {?ISOLATED_SCOPE, 2}]),
             %% The broadcast worker sends barriers over the same distribution
@@ -129,9 +129,9 @@ presence_scope_outage_diffs_stay_on_observing_node_test_() ->
             lists:foreach(fun({Peer, Client}) -> await_client(Peer, Client) end, Clients),
             lists:foreach(fun(Peer) ->
                 Config = call(Peer, 'beryl@pubsub', config_with_scope, [?SOCKET_SCOPE]),
-                PubSub = call(Peer, 'beryl@pubsub', start, [Config]),
+                {ok, PubSub} = call(Peer, 'beryl@pubsub', start, [Config]),
                 await({socket_members, element(2, Peer)}, fun() ->
-                    call(Peer, 'beryl@pubsub', subscriber_count, [PubSub, ?TOPIC]) =:= 3
+                    call(Peer, 'beryl@pubsub', subscriber_count, [PubSub, ?TOPIC]) =:= {ok, 3}
                 end)
             end, [A, B]),
             Ref = track_socket_presence(A, Source, <<"healthy-a">>),
@@ -436,6 +436,10 @@ retirement_revokes_old_replies_and_requires_fresh_rejoin_test_() ->
             Elapsed = call(B, erlang, monotonic_time, [millisecond]) - Started,
             ?assert(Elapsed >= 60000),
             ?assertNot(call(B, ?MODULE, pending_request, [Receiver, OldPid])),
+            %% PendingOnly retires requests on its own independent tick.
+            await({pending_request_retirement, element(2, B)}, fun() ->
+                not call(B, ?MODULE, pending_request, [PendingOnly, UnconfirmedPid])
+            end),
             ?assertNot(call(B, ?MODULE, pending_request,
                 [PendingOnly, UnconfirmedPid])),
             nil = call(B, ?MODULE, release_replies, [PendingGate]),
@@ -517,6 +521,8 @@ with_peer(Name, Run) ->
     Paths = [filename:absname(Path) || Path <- code:get_path()],
     {ok, Controller, Node} = peer:start_link(#{
         name => Name,
+        %% Keep local peer discovery independent of machine-hostname routing.
+        host => "localhost",
         connection => standard_io,
         peer_down => continue,
         args => ["+S", "2:2", "+A", "1", "-connect_all", "false",
@@ -544,7 +550,8 @@ presence_pubsub(Peer) ->
 
 presence_pubsub(Peer, Scope) ->
     Config = call(Peer, 'beryl@pubsub', config_with_scope, [Scope]),
-    call(Peer, 'beryl@pubsub', start, [Config]).
+    {ok, PubSub} = call(Peer, 'beryl@pubsub', start, [Config]),
+    PubSub.
 
 connect(A, {_Controller, Node} = B) ->
     true = call(A, net_kernel, connect_node, [Node]),
@@ -609,7 +616,7 @@ await_frame_barrier(Peer, Client, Replica, Side, Key, Ref, Count) ->
     end).
 
 start_replica(Scope, Replica, Interval) ->
-    PubSub = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(Scope)),
+    {ok, PubSub} = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(Scope)),
     Collector = spawn(fun() -> collect_diffs([]) end),
     Config0 = 'beryl@presence':default_config(Replica),
     Config1 = 'beryl@presence':with_pubsub(Config0, PubSub),
@@ -635,9 +642,9 @@ start_subscriber(Scopes) ->
     Ref = make_ref(),
     Pid = spawn(fun() ->
         lists:foreach(fun(Scope) ->
-            PubSub = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(Scope)),
+            {ok, PubSub} = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(Scope)),
             Subscriber = 'beryl@pubsub':subscriber(PubSub),
-            nil = 'beryl@pubsub':join(Subscriber, ?TOPIC)
+            {ok, nil} = 'beryl@pubsub':join(Subscriber, ?TOPIC)
         end, Scopes),
         Parent ! {Ref, ready},
         collect_broadcasts([])
@@ -658,15 +665,15 @@ collect_broadcasts(Messages) ->
     end.
 
 broadcast_matrix([Local, Remote, _Both, _Isolated] = Subscribers) ->
-    PubSub = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(?PUBSUB_SCOPE)),
-    Isolated = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(?ISOLATED_SCOPE)),
+    {ok, PubSub} = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(?PUBSUB_SCOPE)),
+    {ok, Isolated} = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(?ISOLATED_SCOPE)),
     Payload = #{<<"body">> => <<"across-nodes">>, <<"version">> => 1},
-    nil = 'beryl@pubsub':broadcast(PubSub, ?TOPIC, <<"system">>, Payload),
-    nil = 'beryl@pubsub':broadcast_from(
+    {ok, nil} = 'beryl@pubsub':broadcast(PubSub, ?TOPIC, <<"system">>, Payload),
+    {ok, nil} = 'beryl@pubsub':broadcast_from(
         PubSub, Remote, ?TOPIC, <<"remote-excluded">>, Payload),
-    nil = 'beryl@pubsub':broadcast_from(
+    {ok, nil} = 'beryl@pubsub':broadcast_from(
         PubSub, Local, ?TOPIC, <<"local-excluded">>, Payload),
-    nil = 'beryl@pubsub':broadcast(
+    {ok, nil} = 'beryl@pubsub':broadcast(
         Isolated, ?TOPIC, <<"isolated">>, {different, payload}),
     Ref = make_ref(),
     lists:foreach(fun(Pid) -> Pid ! {broadcast_barrier, self(), Ref} end, Subscribers),
@@ -791,9 +798,9 @@ start_snapshot_replica(Scope, State, Delivery) ->
     Parent = self(),
     Ref = make_ref(),
     Pid = spawn(fun() ->
-        PubSub = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(Scope)),
+        {ok, PubSub} = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(Scope)),
         Subscriber = 'beryl@pubsub':subscriber(PubSub),
-        nil = 'beryl@pubsub':join(Subscriber, ?SYNC_TOPIC),
+        {ok, nil} = 'beryl@pubsub':join(Subscriber, ?SYNC_TOPIC),
         Parent ! {Ref, ready},
         snapshot_replica(binary_to_existing_atom(Scope, utf8), State, Delivery)
     end),
@@ -836,7 +843,7 @@ await_members(Peer, Count) ->
     PubSub = presence_pubsub(Peer),
     await({pg_members, element(2, Peer), Count}, fun() ->
         call(Peer, 'beryl@pubsub', subscriber_count, [PubSub, ?SYNC_TOPIC])
-            =:= Count
+            =:= {ok, Count}
     end).
 
 await_member(Peer, Pid) ->
@@ -845,8 +852,10 @@ await_member(Peer, Pid) ->
 await_member(Peer, Scope, Pid) ->
     PubSub = presence_pubsub(Peer, Scope),
     await({pg_member, element(2, Peer), Pid}, fun() ->
-        lists:member(Pid,
-            call(Peer, 'beryl@pubsub', subscribers, [PubSub, ?SYNC_TOPIC]))
+        case call(Peer, 'beryl@pubsub', subscribers, [PubSub, ?SYNC_TOPIC]) of
+            {ok, Members} -> lists:member(Pid, Members);
+            {error, _Reason} -> false
+        end
     end).
 
 await_view(Peer, Instance, Keys) ->

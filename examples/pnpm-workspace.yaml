@@ -4,6 +4,7 @@ packages:
   - collab_docs
   - lustre_presence
   - showcase
-onlyBuiltDependencies:
-  - esbuild
-  - esbuild@0.27.7
+  - portable_channels
+allowBuilds:
+  esbuild: true
+  workerd: true

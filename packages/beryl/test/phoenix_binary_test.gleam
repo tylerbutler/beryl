@@ -5,6 +5,7 @@
 import beryl/wire
 import beryl/wire/codec
 import gleam/dynamic/decode
+import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
@@ -82,6 +83,20 @@ pub fn decode_binary_rejects_truncated_frame_test() -> Nil {
   Nil
 }
 
+pub fn decode_binary_names_invalid_join_ref_utf8_test() -> Nil {
+  let frame = <<0, 1, 2, 3, 3, 255, "r1":utf8, "t:1":utf8, "evt":utf8>>
+
+  wire.decode_binary_message(frame)
+  |> should.equal(Error(codec.InvalidFormat("join_ref is not valid UTF-8")))
+}
+
+pub fn decode_binary_names_invalid_ref_utf8_test() -> Nil {
+  let frame = <<0, 2, 1, 3, 3, "j1":utf8, 255, "t:1":utf8, "evt":utf8>>
+
+  wire.decode_binary_message(frame)
+  |> should.equal(Error(codec.InvalidFormat("ref is not valid UTF-8")))
+}
+
 // === Encoder spec vectors ===
 
 pub fn binary_push_encodes_spec_shape_test() -> Nil {
@@ -139,8 +154,39 @@ pub fn binary_broadcast_encodes_spec_shape_test() -> Nil {
 
 pub fn binary_encoders_reject_oversized_components_test() -> Nil {
   let long = string.repeat("a", 256)
-  wire.binary_push(join_ref: None, topic: long, event: "e", payload: <<>>)
-  |> should.equal(Error(wire.MetadataTooLong("topic", 256)))
-  wire.binary_broadcast(topic: "t", event: long, payload: <<>>)
-  |> should.equal(Error(wire.MetadataTooLong("event", 256)))
+  list.each([<<>>, <<1:size(1)>>], fn(payload) {
+    wire.binary_push(join_ref: None, topic: long, event: "e", payload: payload)
+    |> should.equal(Error(wire.MetadataTooLong("topic", 256)))
+    wire.binary_reply(
+      join_ref: None,
+      ref: Some(long),
+      topic: "t",
+      status: codec.StatusOk,
+      payload: payload,
+    )
+    |> should.equal(Error(wire.MetadataTooLong("ref", 256)))
+    wire.binary_broadcast(topic: "t", event: long, payload: payload)
+    |> should.equal(Error(wire.MetadataTooLong("event", 256)))
+  })
+}
+
+pub fn binary_encoders_reject_partial_byte_payloads_test() -> Nil {
+  list.each([1, 7, 9, 15], fn(size) {
+    let payload = <<1:size(size)>>
+    wire.binary_push(None, "t", "e", payload)
+    |> should.equal(Error(wire.PayloadNotByteAligned))
+    wire.binary_reply(None, None, "t", codec.StatusOk, payload)
+    |> should.equal(Error(wire.PayloadNotByteAligned))
+    wire.binary_broadcast("t", "e", payload)
+    |> should.equal(Error(wire.PayloadNotByteAligned))
+  })
+}
+
+pub fn binary_encoders_preserve_empty_payloads_test() -> Nil {
+  wire.binary_push(None, "t", "e", <<>>)
+  |> should.equal(Ok(codec.BinaryFrame(<<0, 0, 1, 1, "te":utf8>>)))
+  wire.binary_reply(None, None, "t", codec.StatusOk, <<>>)
+  |> should.equal(Ok(codec.BinaryFrame(<<1, 0, 0, 1, 2, "tok":utf8>>)))
+  wire.binary_broadcast("t", "e", <<>>)
+  |> should.equal(Ok(codec.BinaryFrame(<<2, 1, 1, "te":utf8>>)))
 }

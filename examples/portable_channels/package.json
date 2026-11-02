@@ -1,0 +1,17 @@
+{
+  "name": "portable_channels",
+  "private": true,
+  "type": "module",
+  "description": "Portable beryl channels hosted by a Cloudflare Durable Object.",
+  "scripts": {
+    "build": "gleam build --target javascript --warnings-as-errors",
+    "dev": "pnpm build && wrangler dev",
+    "test": "pnpm build && gleam test --target javascript && vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.9",
+    "phoenix": "^1.8.16",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.154.0"
+  }
+}
