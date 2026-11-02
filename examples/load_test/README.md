@@ -1,13 +1,15 @@
 # beryl benchmark server
 
+## Overview
+
 This headless application is the target for the repository's Phoenix V2
 [k6 load suite](../../load/README.md). It exposes the same channel contract
 through Mist and Ewe so transport runs are comparable.
 
 ## Prerequisites
 
-For a source run, install the repository versions (Erlang 27.2.1, Gleam
-1.16.0, and just 1.50.0), plus `rebar3`, `trellis`, and `pnpm`, then run
+For a source run, install the toolchain selected by the root `.mise.toml`,
+plus `pnpm`, then run
 `just deps` from the repository root. Docker is required for the image and
 for the pinned k6 commands in the load guide.
 
@@ -42,8 +44,9 @@ The handlers route by path and do not inspect the HTTP method.
 The WebSocket route accepts `bench:*`. `echo` replies with the unchanged
 payload; `broadcast` and `broadcast_ack` broadcast and reply with the unchanged
 payload; `presence_track` and `presence_untrack` update the example's
-nonblocking session tracker and reply with the key. Changes are broadcast as
-`presence_list` snapshots.
+session tracker through synchronous calls with a 1,000 ms timeout, then
+reply with the key. The tracker broadcasts changes as `presence_list`
+snapshots; publication does not wait for client delivery.
 `guardrail:forbidden` always rejects a join with `{"reason":"forbidden"}`.
 Unknown inbound events return `{"reason":"unknown_event"}`.
 
@@ -112,8 +115,7 @@ A successful `/stats` response is:
   "beryl": {
     "connected_sockets": 0,
     "joined_socket_topic_pairs": 0,
-    "active_topics": 0,
-    "runtime_mailbox_length": 0
+    "active_topics": 0
   },
   "beam": {
     "process_count": 0,
@@ -133,6 +135,7 @@ The numbers above illustrate the JSON shape, not expected values.
 |---:|---|---|
 | `200` | Object shown above | Both snapshots succeeded |
 | `503` | `{"error":"runtime_unavailable"}` | beryl socket runtime unavailable |
+| `503` | `{"error":"runtime_admission_rejected"}` | Socket runtime rejected admission of the snapshot request |
 | `503` | `{"error":"runtime_stats_unavailable"}` | BEAM snapshot FFI failed |
 | `504` | `{"error":"runtime_timeout"}` | Socket runtime snapshot request timed out |
 
@@ -191,3 +194,35 @@ from the orchestrator. Server logs go to container stdout/stderr. k6 results
 and summaries are produced by the separate load-generator container and are
 not written by this server image; mount or retain `load/results` on the
 generator as described in the [load guide](../../load/README.md).
+
+## Subdirectories and boundaries
+
+- [Source](./src/README.md): transport entry points, shared channel app,
+  HTTP endpoints, and benchmark/statistics FFI.
+
+## Interface
+
+`src/load_test_mist.gleam:main` and `load_test_ewe.gleam:main` start the two
+transports. `src/load_test/channel.gleam:update` and `handlers` expose raw
+and composed benchmark behavior. `gleam.toml` declares both transport packages,
+beryl, and the shared example helpers as path dependencies.
+
+## Invariants
+
+- `src/load_test/channel.gleam:update` and `handlers` accept `bench:*`
+  and reject `guardrail:forbidden`.
+- `src/load_test/bench.gleam:use_channel_layer` selects composed handlers for
+  `BERYL_API=channel`; other values use raw dispatch.
+- `src/load_test_bench_ffi.erl:wait_elapsed` models elapsed callback delay
+  using a monotonic deadline, not fixed CPU work.
+
+## Side effects
+
+The entry points start listeners and supervision and block indefinitely.
+`src/load_test/app.gleam:start` starts presence; the channel changes presence
+and broadcasts messages. The snapshot FFI reads BEAM counters.
+
+## Verification
+
+From the repository root: `cd examples/load_test && gleam build`.
+The load guide describes runtime benchmarking.
