@@ -329,7 +329,8 @@ pub fn handler_http2_connect_other_path_uses_fallback_test() -> Nil {
   check_http2_connect("127.0.0.1", "127.0.0.1", 0, "/not-socket", "418")
 }
 
-const heartbeat_reply = "[null,\"hb\",\"phoenix\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]"
+const heartbeat_reply =
+  "[null,\"hb\",\"phoenix\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]"
 
 fn check_http2_connect(
   host: String,

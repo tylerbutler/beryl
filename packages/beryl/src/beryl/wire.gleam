@@ -27,7 +27,8 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 
-const expected_array_message = "array of 5 elements [join_ref, ref, topic, event, payload]"
+const expected_array_message =
+  "array of 5 elements [join_ref, ref, topic, event, payload]"
 
 const max_json_nesting_depth = 64
 
