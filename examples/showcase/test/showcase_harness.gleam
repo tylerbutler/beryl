@@ -12,6 +12,7 @@ import beryl/group
 import beryl/presence
 import beryl/socket
 import beryl/transport
+import beryl/wire
 import beryl/wire/codec
 import beryl_demo/config as demo_config
 import beryl_demo/expiry
@@ -50,6 +51,14 @@ pub type Frames =
 /// throttle a public demo, and a test that tripped them would be asserting
 /// the limiter rather than the channels.
 pub fn start(_replica: String) -> System {
+  start_with_config(
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_joined_topics_per_socket(max_topics: 8),
+  )
+}
+
+/// Start the deployed handlers with test-specific runtime limits.
+pub fn start_with_config(config: beryl.Config) -> System {
   let presence_tracker = session_presence.start()
   let #(groups, groups_specification) = group.child_spec()
   let assert Ok(store) = document_store.start()
@@ -62,10 +71,8 @@ pub fn start(_replica: String) -> System {
 
   // Errors only: the runtime's info/warn lines would bury the test output.
   let config =
-    showcase.runtime_config(demo_presence)
-    |> beryl.with_frame_rate(per_second: 0, burst: 0)
-    |> beryl.with_message_rate(per_second: 0, burst: 0)
-    |> beryl.with_join_rate(per_second: 0, burst: 0)
+    config
+    |> beryl.with_presence_handle(presence: demo_presence)
     |> beryl.with_logging(beryl.logging_config(
       level: beryl.ErrorLevel,
       include_payloads: False,

@@ -10,9 +10,10 @@
 //// operation, so concurrent socket actors cannot overshoot the cap.
 
 import beryl/channel
+import beryl/error
 import beryl/group.{type Groups}
 import beryl/overload
-import beryl/socket.{type ReplyRef}
+import beryl/socket.{type ReplyReference}
 import example_helper/broadcast_hub as hub
 import example_helper/color
 import example_helper/payload
@@ -58,9 +59,15 @@ pub fn channel(application_context: Context) -> channel.Handler {
     let room_name = room_name(join_context.topic)
 
     case room_exists(application_context, join_context.topic) {
-      False -> channel.reject(error("Room not found: " <> room_name))
+      Ok(False) -> channel.reject(error("Room not found: " <> room_name))
 
-      True -> accept_room(application_context, join_context, room_name)
+      Ok(True) -> accept_room(application_context, join_context, room_name)
+      Error(reason) -> {
+        io.println_error(
+          "[room] room lookup failed: " <> error.describe_call_error(reason),
+        )
+        channel.reject(error_with_code(503, "Room lookup unavailable"))
+      }
     }
   })
 }
@@ -117,18 +124,18 @@ fn accept_room(
             )
 
           "typing" ->
-            channel.next(
-              state,
-              typing(application_context, state, typing: True),
-            )
+            channel.next(state, [
+              channel.discard_reply(message.reply),
+              ..typing(application_context, state, typing: True)
+            ])
 
           "stop_typing" ->
-            channel.next(
-              state,
-              typing(application_context, state, typing: False),
-            )
+            channel.next(state, [
+              channel.discard_reply(message.reply),
+              ..typing(application_context, state, typing: False)
+            ])
 
-          _ -> channel.stay(state)
+          _ -> channel.next(state, [channel.discard_reply(message.reply)])
         }
       })
       |> channel.on_info(fn(state, note) {
@@ -174,17 +181,20 @@ fn accept_room(
 fn new_message(
   state: State,
   raw: Dynamic,
-  ref: Option(ReplyRef),
+  reference: Option(ReplyReference),
 ) -> List(channel.Action(channel.Active)) {
   case string.trim(payload.string_or(raw, "text", "")) {
     "" -> [
-      channel.reply_ok(ref, error_with_code(422, "Message cannot be empty")),
+      channel.reply_ok(
+        reference,
+        error_with_code(422, "Message cannot be empty"),
+      ),
     ]
 
     trimmed -> [
       channel.broadcast("new_msg", user_message(state, trimmed)),
       channel.reply_ok(
-        ref,
+        reference,
         json.object([
           #("status", json.string("ok")),
           #("timestamp", json.int(timestamp_ms())),
@@ -226,10 +236,15 @@ fn announce_rooms_changed(context: Context, room_name: String) -> Nil {
   hub.publish(context.hub, "lobby", "rooms_changed", room_changed(room_name))
 }
 
-fn room_exists(context: Context, topic: String) -> Bool {
+fn room_exists(
+  context: Context,
+  topic: String,
+) -> Result(Bool, error.CallError) {
   case group.topics(context.groups, "public") {
-    Ok(topics) -> set.contains(topics, topic)
-    Error(_) -> False
+    Ok(topics) -> Ok(set.contains(topics, topic))
+    Error(group.GroupAlreadyExists(_)) | Error(group.GroupNotFound(_)) ->
+      Ok(False)
+    Error(group.GroupCallFailed(reason)) -> Error(reason)
   }
 }
 

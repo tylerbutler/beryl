@@ -480,7 +480,7 @@ pub fn shared_actions_are_valid_in_both_phases_test() -> Nil {
 
 pub fn actions_cover_the_core_effect_capabilities_test() -> Nil {
   let reply =
-    socket.make_message_ref(
+    socket.make_reply_reference(
       topic: "room:lobby",
       join_ref: option.Some("1"),
       message_ref: option.Some("2"),
@@ -524,7 +524,7 @@ pub fn optional_reply_without_a_ref_lowers_to_no_effect_test() -> Nil {
 
 pub fn optional_reply_with_a_ref_lowers_in_order_test() -> Nil {
   let reply =
-    socket.make_message_ref(
+    socket.make_reply_reference(
       topic: "room:lobby",
       join_ref: option.Some("1"),
       message_ref: option.Some("2"),

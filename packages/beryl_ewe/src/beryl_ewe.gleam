@@ -16,20 +16,20 @@
 
 import beryl/transport.{type Sockets}
 import beryl/transport/server.{type ConnectionState, type SendRequest}
-import ewe.{type Connection, type ResponseBody, type WebsocketConnection}
+import ewe.{type Body, type Connection, type WebsocketConnection}
 import gleam/erlang/process.{type Selector}
+import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
-import gleam/option.{None}
+import gleam/int
+import gleam/option.{None, Some}
 import gleam/result
-import glisten/socket as glisten_socket
-import glisten/transport as glisten_transport
 
 /// Upgrade a request to WebSocket if it matches the configured path.
 ///
 /// Usage in your Ewe handler:
 /// ```gleam
-/// fn handle_request(http_request: Request(Connection), sockets: Sockets) -> Response(ResponseBody) {
+/// fn handle_request(http_request: Request(Connection), sockets: Sockets) -> Response(Body) {
 ///   use <- ewe_transport.upgrade(http_request, sockets, server.default_config("/socket"))
 ///   // Fall through to regular HTTP routing
 ///   case request.path_segments(http_request) {
@@ -46,12 +46,29 @@ import glisten/transport as glisten_transport
 /// `beryl/transport/server.upgrade` for the full contract. Enforcement
 /// uses the real socket peer IP from the TCP connection; forwarded headers
 /// such as `X-Forwarded-For` are not trusted.
+///
+/// HTTP/2 extended CONNECT uses Ewe's parsed `:authority` for origin checks
+/// when there is no `Host` header.
 pub fn upgrade(
   request: Request(Connection),
   channels: Sockets,
   config: server.TransportConfig(Connection),
-  next: fn() -> Response(ResponseBody),
-) -> Response(ResponseBody) {
+  next: fn() -> Response(Body),
+) -> Response(Body) {
+  let request = case
+    request.method == http.Connect
+    && result.is_error(request.get_header(request, "host"))
+  {
+    True -> {
+      // Ewe validates :authority and preserves brackets around IPv6 hosts.
+      let authority = case request.port {
+        Some(port) -> request.host <> ":" <> int.to_string(port)
+        None -> request.host
+      }
+      request.set_header(request, "host", authority)
+    }
+    False -> request
+  }
   let telemetry = transport.telemetry(channels, transport.Ewe)
   server.upgrade(
     request: request,
@@ -74,22 +91,26 @@ pub fn upgrade(
   )
 }
 
-fn reject(status: Int) -> Response(ResponseBody) {
+fn reject(status: Int) -> Response(Body) {
   response.new(status)
   |> response.set_body(ewe.Empty)
 }
 
 fn request_ip(request: Request(Connection)) -> Result(String, Nil) {
-  ewe.get_client_info(request.body)
-  |> result.map(fn(info) { ewe.ip_address_to_string(info.ip) })
+  case ewe.get_client_info(request.body) {
+    ewe.TcpSocketAddress(ip_address, _) ->
+      Ok(ewe.ip_address_to_string(ip_address))
+    ewe.UnixSocketAddress(_) -> Error(Nil)
+  }
 }
 
 /// Build a combined request handler that serves both WebSocket upgrades and
 /// regular HTTP from a single Ewe listener.
 ///
 /// The returned function inspects and routes each request:
-/// - It passes WebSocket upgrade requests for the configured socket path to
+/// - It passes WebSocket upgrade and CONNECT requests for the socket path to
 ///   [`upgrade`](#upgrade), which also runs any `on_connect` callback.
+///   Ewe validates the HTTP/1 handshake or HTTP/2 extended CONNECT protocol.
 /// - It passes all other requests to `http_fallback`. This includes non-upgrade
 ///   requests and upgrades for a different path.
 ///
@@ -98,18 +119,23 @@ fn request_ip(request: Request(Connection)) -> Result(String, Nil) {
 /// ```gleam
 /// ewe_transport.handler(sockets, server.default_config("/socket"), http_handler)
 /// |> ewe.new
-/// |> ewe.listening(port: 8000)
+/// |> ewe.listening(on: 8000)
 /// |> ewe.start
 /// ```
 pub fn handler(
   channels: Sockets,
   config: server.TransportConfig(Connection),
-  http_fallback: fn(Request(Connection)) -> Response(ResponseBody),
-) -> fn(Request(Connection)) -> Response(ResponseBody) {
-  server.handler(
-    upgrade: fn(request, next) { upgrade(request, channels, config, next) },
-    http_fallback: http_fallback,
-  )
+  http_fallback: fn(Request(Connection)) -> Response(Body),
+) -> fn(Request(Connection)) -> Response(Body) {
+  fn(request: Request(Connection)) {
+    case
+      request.method == http.Connect || server.is_websocket_request(request)
+    {
+      True ->
+        upgrade(request, channels, config, fn() { http_fallback(request) })
+      False -> http_fallback(request)
+    }
+  }
 }
 
 /// Perform the actual WebSocket upgrade
@@ -120,40 +146,35 @@ fn do_upgrade(
   connect_metadata: List(#(String, String)),
   connection_permit: transport.ConnectionPermit,
   telemetry: transport.Telemetry,
-) -> Response(ResponseBody) {
+) -> Response(Body) {
   let seed = server.connect_seed(request, connect_metadata)
-  ewe.upgrade_websocket(
+  ewe.websocket(
     request,
-    on_init: fn(connection, base_selector: Selector(SendRequest)) {
+    on_init: fn(_connection, base_selector: Selector(SendRequest)) {
       // Extend the selector Ewe provides so the runtime can push outbound
-      // frames to this connection's process as `ewe.User(SendRequest)`
+      // frames to this connection's process as `ewe.UserMessage(SendRequest)`
       // messages.
+      let owner = process.self()
       server.init_connection(
         sockets: channels,
         seed: seed,
         connection_permit: connection_permit,
         base_selector: base_selector,
         config: config,
-        force_close: fn() { force_close(connection) },
+        force_close: fn() { force_close(owner) },
         logger_name: "beryl_ewe",
         telemetry: telemetry,
         codec: None,
       )
     },
     handler: on_message,
-    on_close: fn(_connection, state) { server.close_connection(state) },
+    on_close: server.close_connection,
   )
 }
 
-fn force_close(
-  connection: WebsocketConnection,
-) -> Result(Nil, server.ForceCloseError) {
-  case glisten_transport.close(connection.transport, connection.socket) {
-    Ok(Nil) | Error(glisten_socket.Closed) | Error(glisten_socket.Enotconn) ->
-      Ok(Nil)
-    Error(reason) ->
-      Error(server.ForceCloseFailed(glisten_socket.reason_to_string(reason)))
-  }
+fn force_close(owner: process.Pid) -> Result(Nil, server.ForceCloseError) {
+  process.kill(owner)
+  Ok(Nil)
 }
 
 /// Handle incoming WebSocket messages.
@@ -166,18 +187,18 @@ fn on_message(
   connection: WebsocketConnection,
   state: ConnectionState,
   message: ewe.WebsocketMessage(SendRequest),
-) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
+) -> ewe.Next(ConnectionState, SendRequest) {
   case message {
-    ewe.Text(text) -> resume(server.handle_text_frame(state, text))
-    ewe.Binary(data) -> resume(server.handle_binary_frame(state, data))
-    ewe.User(server.Close) -> ewe.websocket_stop()
-    ewe.User(server.SendText(text, bytes)) ->
+    ewe.TextFrame(text) -> resume(server.handle_text_frame(state, text))
+    ewe.BinaryFrame(data) -> resume(server.handle_binary_frame(state, data))
+    ewe.UserMessage(server.Close) -> ewe.stop()
+    ewe.UserMessage(server.SendText(text, bytes)) ->
       resume(server.finish_outbound_write(
         state,
         bytes,
         ewe.send_text_frame(connection, text) |> result.is_ok,
       ))
-    ewe.User(server.SendBinary(data, bytes)) ->
+    ewe.UserMessage(server.SendBinary(data, bytes)) ->
       resume(server.finish_outbound_write(
         state,
         bytes,
@@ -188,9 +209,9 @@ fn on_message(
 
 fn resume(
   outcome: server.FrameDisposition,
-) -> ewe.WebsocketNext(ConnectionState, SendRequest) {
+) -> ewe.Next(ConnectionState, SendRequest) {
   case outcome {
-    server.Continue(state) -> ewe.websocket_continue(state)
-    server.Stop -> ewe.websocket_stop()
+    server.Continue(state) -> ewe.continue(state)
+    server.Stop -> ewe.stop()
   }
 }
