@@ -15,7 +15,7 @@ import gleam/string
 import gleeunit/should
 
 fn start() -> #(beryl.Sockets, session_presence.Tracker) {
-  let presence = session_presence.start()
+  let assert Ok(presence) = session_presence.start()
   let #(groups, groups_specification) = group.child_spec()
   let assert Ok(hub) = broadcast_hub.start()
   let context = app.Context(presence: presence, groups: groups, hub: hub)
@@ -130,7 +130,7 @@ pub fn missing_room_is_rejected_test() -> Nil {
 
 pub fn unavailable_groups_reject_join_as_service_failure_test() -> Nil {
   let #(groups, _unstarted_specification) = group.child_spec()
-  let presence = session_presence.start()
+  let assert Ok(presence) = session_presence.start()
   let assert Ok(hub) = broadcast_hub.start()
   let context = app.Context(presence: presence, groups: groups, hub: hub)
   let assert Ok(#(sockets, specification)) =

@@ -7,7 +7,8 @@ import gleam/list
 import gleeunit/should
 
 fn context() -> app.Context {
-  app.Context(presence: session_presence.start())
+  let assert Ok(presence) = session_presence.start()
+  app.Context(presence:)
 }
 
 fn model() -> app.Model {
