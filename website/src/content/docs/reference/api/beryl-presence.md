@@ -51,7 +51,7 @@ Distributed presence tracking with a CRDT
  ## Example
 
  ```gleam
- let pubsub_handle = pubsub.start(pubsub.default_config())
+ let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
  let config =
    presence.default_config("node1")
    |> presence.with_pubsub(pubsub_handle)
@@ -674,6 +674,8 @@ Enable PubSub replication for presence.
  A fresh snapshot from the same actor restores its current entries; a
  replacement actor starts a new incarnation. A partition can therefore hide
  sessions that remain connected to their local node.
+ During local PubSub scope recovery, presence hides remote replicas, retains
+ their causal history, and retries membership checks on its scheduled ticks.
 
  Each snapshot contains only its sender's authoritative state. A receiver's
  request order, not a random suffix or message arrival order, determines

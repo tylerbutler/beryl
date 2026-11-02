@@ -35,7 +35,7 @@
 //// ## Example
 ////
 //// ```gleam
-//// let pubsub_handle = pubsub.start(pubsub.default_config())
+//// let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 //// let config =
 ////   presence.default_config("node1")
 ////   |> presence.with_pubsub(pubsub_handle)
@@ -779,6 +779,8 @@ pub fn default_config(replica: String) -> Config {
 /// A fresh snapshot from the same actor restores its current entries; a
 /// replacement actor starts a new incarnation. A partition can therefore hide
 /// sessions that remain connected to their local node.
+/// During local PubSub scope recovery, presence hides remote replicas, retains
+/// their causal history, and retries membership checks on its scheduled ticks.
 ///
 /// Each snapshot contains only its sender's authoritative state. A receiver's
 /// request order, not a random suffix or message arrival order, determines
@@ -976,7 +978,10 @@ fn build_presence(
       Some(pubsub_instance) -> {
         // Subscribe to the well-known sync topic for replication
         let subscriber = pubsub.subscriber(pubsub_instance)
-        pubsub.join(subscriber, sync_topic)
+        use _ <- result.try(
+          pubsub.join(subscriber, sync_topic)
+          |> result.map_error(pubsub.describe_error),
+        )
         let reply = process.new_subject()
         let initial =
           ActorState(
@@ -1031,13 +1036,14 @@ fn build_presence(
 fn request_snapshots(
   actor_state: ActorState,
   pubsub_instance: PubSub(SyncPayload),
-) -> ActorState {
+) -> Result(ActorState, pubsub.PubSubError) {
+  use members <- result.try(pubsub.subscribers(pubsub_instance, sync_topic))
   let members =
-    pubsub.subscribers(pubsub_instance, sync_topic)
+    members
     |> list.filter(fn(member) { member != process.self() })
     |> set.from_list
   let actor_state = reconcile_membership(actor_state, members)
-  case actor_state.sync {
+  Ok(case actor_state.sync {
     None -> actor_state
     Some(sync) -> {
       let sync =
@@ -1054,6 +1060,20 @@ fn request_snapshots(
         })
       ActorState(..actor_state, sync: Some(sync))
     }
+  })
+}
+
+fn defer_snapshot_round(actor_state: ActorState) -> ActorState {
+  let actor_state = reconcile_membership(actor_state, set.new())
+  case actor_state.sync {
+    Some(sync) ->
+      ActorState(
+        ..actor_state,
+        sync: Some(
+          SyncState(..sync, requests: dict.new(), round: sync.round + 1),
+        ),
+      )
+    None -> actor_state
   }
 }
 
@@ -1193,13 +1213,22 @@ fn schedule_retirement_tick(subject: Subject(Message)) -> Nil {
   Nil
 }
 
-fn retire_unavailable(actor_state: ActorState) -> ActorState {
-  let members = case actor_state.config.pubsub {
-    Some(pubsub_instance) ->
-      pubsub.subscribers(pubsub_instance, sync_topic) |> set.from_list
-    None -> set.new()
-  }
+fn retire_unavailable(
+  actor_state: ActorState,
+) -> Result(ActorState, pubsub.PubSubError) {
+  use members <- result.try(case actor_state.config.pubsub {
+    Some(pubsub_instance) -> pubsub.subscribers(pubsub_instance, sync_topic)
+    None -> Ok([])
+  })
+  let members = set.from_list(members)
   let actor_state = reconcile_membership(actor_state, members)
+  Ok(retire_replicas(actor_state, members))
+}
+
+fn retire_replicas(
+  actor_state: ActorState,
+  members: Set(process.Pid),
+) -> ActorState {
   case actor_state.sync {
     None -> actor_state
     Some(sync) -> {
@@ -1777,7 +1806,7 @@ fn handle_message(
             subject,
             actor_state.config.broadcast_interval_ms,
           )
-          actor.continue(new_state)
+          continue_pubsub(new_state, actor_state, defer_snapshot_round)
         }
         Some(_), None | None, Some(_) | None, None ->
           actor.continue(actor_state)
@@ -1808,7 +1837,11 @@ fn handle_message(
         Some(subject) -> schedule_retirement_tick(subject)
         None -> Nil
       }
-      actor.continue(retire_unavailable(actor_state))
+      continue_pubsub(retire_unavailable(actor_state), actor_state, fn(state) {
+        state
+        |> reconcile_membership(set.new())
+        |> retire_replicas(set.new())
+      })
     }
   }
 }
@@ -2224,7 +2257,12 @@ fn handle_sync_payload(
         ),
       )
       case payload.request_back {
-        True -> actor.continue(request_snapshot_back(actor_state, message.from))
+        True ->
+          continue_pubsub(
+            request_snapshot_back(actor_state, message.from),
+            actor_state,
+            fn(state) { state },
+          )
         False -> actor.continue(actor_state)
       }
     }
@@ -2245,24 +2283,50 @@ fn handle_sync_payload(
 fn request_snapshot_back(
   actor_state: ActorState,
   from: pubsub.PubSubFrom,
-) -> ActorState {
+) -> Result(ActorState, pubsub.PubSubError) {
   case actor_state.config.pubsub, actor_state.sync, from {
     Some(pubsub_instance), Some(sync), pubsub.FromPid(owner) -> {
-      let members = pubsub.subscribers(pubsub_instance, sync_topic)
-      case owner != process.self() && list.contains(members, owner) {
+      use members <- result.try(pubsub.subscribers(pubsub_instance, sync_topic))
+      Ok(case owner != process.self() && list.contains(members, owner) {
         True ->
           ActorState(
             ..actor_state,
             sync: Some(request_snapshot(sync, pubsub_instance, owner, False)),
           )
         False -> actor_state
-      }
+      })
     }
     None, _, _
     | _, None, _
     | _, _, pubsub.System
     | _, _, pubsub.FromSocket(_, _)
-    -> actor_state
+    -> Ok(actor_state)
+  }
+}
+
+fn continue_pubsub(
+  outcome: Result(ActorState, pubsub.PubSubError),
+  actor_state: ActorState,
+  on_recovery: fn(ActorState) -> ActorState,
+) -> actor.Next(ActorState, Message) {
+  case outcome {
+    Ok(state) -> actor.continue(state)
+    Error(pubsub.ScopeRecovering) -> {
+      log.warn(
+        internal.logger("beryl.presence"),
+        "Presence PubSub recovery pending",
+        [#("reason", pubsub.describe_error(pubsub.ScopeRecovering))],
+      )
+      actor.continue(on_recovery(actor_state))
+    }
+    Error(error) -> {
+      log.error(
+        internal.logger("beryl.presence"),
+        "Presence PubSub service unavailable",
+        [#("reason", pubsub.describe_error(error))],
+      )
+      actor.stop()
+    }
   }
 }
 

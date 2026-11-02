@@ -559,14 +559,16 @@ pub fn connect_seed(
 /// select on it and act on each request. If the request owner died before the
 /// transfer, the reservation bind fails, runtime admission is skipped, and
 /// the selector immediately delivers `Close`. Call `close_connection` when
-/// the connection closes. `logger_name` names the transport in decode warnings
+/// the connection closes. `logger_name` names the transport in decode diagnostics
 /// (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this socket;
 /// `None` inherits the app-wide codec.
 ///
 /// `force_close` must immediately close the underlying socket. beryl calls
 /// it if binding fails or the outbound budget is full, so a blocked writer
 /// cannot retain an unbounded mailbox. Return an error when the close fails
-/// unexpectedly; beryl logs that failure.
+/// unexpectedly; beryl logs that failure. beryl releases the connection slot
+/// and reports the disconnect before calling it, since a forced stop can
+/// bypass the transport's normal close callback.
 pub fn init_connection(
   sockets sockets: Sockets,
   seed seed: ConnectSeed,
@@ -584,7 +586,12 @@ pub fn init_connection(
   let send_subject = process.new_subject()
   let selector = process.select(base_selector, send_subject)
   let budget = outbound_budget.new()
-  let logger = internal.logger(logger_name)
+  let logger = beryl.configured_logger(sockets, logger_name)
+  let force_close = fn() {
+    transport.release_connection_slot(connection_permit)
+    transport.socket_disconnected(sockets, socket_id)
+    force_close()
+  }
 
   // `Ok` means that the frame was admitted to the connection process mailbox.
   // It does not mean that the frame was written or received by the peer.
@@ -747,7 +754,9 @@ pub type FrameDisposition {
 ///
 /// Oversized frames return `Stop` and close the connection. The function
 /// silently drops over-rate frames. It logs and drops frames that it cannot
-/// decode.
+/// decode at debug level. With explicit payload logging opt-in, only this
+/// text decode diagnostic includes a grapheme-bounded `frame_preview`.
+/// Binary frames, successful frames, and connect metadata have no preview.
 pub fn handle_text_frame(
   state: ConnectionState,
   text: String,
@@ -768,10 +777,23 @@ pub fn handle_text_frame(
           )
         }
         Error(error) -> {
-          log.warn(state.logger, "Failed to decode wire protocol message", [
-            #("socket_id", state.socket_id),
-            #("error", codec.format_decode_error(error)),
-          ])
+          log.rejection(
+            state.logger,
+            "Failed to decode wire protocol message",
+            fn() {
+              list.append(
+                [
+                  #("socket_id", state.socket_id),
+                  #("error", codec.format_decode_error(error)),
+                ],
+                internal.preview_metadata(
+                  "frame_preview",
+                  text,
+                  beryl.configured_logging(state.sockets),
+                ),
+              )
+            },
+          )
           emit_frame_stop(
             state,
             started_at,
@@ -822,14 +844,7 @@ pub fn handle_binary_frame(
           }
 
           Error(error) -> {
-            log.warn(
-              state.logger,
-              "Failed to decode binary wire protocol message",
-              [
-                #("socket_id", state.socket_id),
-                #("error", codec.format_decode_error(error)),
-              ],
-            )
+            log_binary_decode_failure(state, error)
             emit_frame_stop(
               state,
               started_at,
@@ -842,6 +857,22 @@ pub fn handle_binary_frame(
         }
     }
   })
+}
+
+fn log_binary_decode_failure(
+  state: ConnectionState,
+  error: codec.DecodeError,
+) -> Nil {
+  log.rejection(
+    state.logger,
+    "Failed to decode binary wire protocol message",
+    fn() {
+      [
+        #("socket_id", state.socket_id),
+        #("error", codec.format_decode_error(error)),
+      ]
+    },
+  )
 }
 
 fn finish_route(

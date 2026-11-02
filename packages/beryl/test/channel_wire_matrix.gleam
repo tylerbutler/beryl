@@ -70,25 +70,26 @@ fn raw_effects(
   input: socket.Input(Nil),
 ) -> List(socket.Effect) {
   case input {
-    socket.Join(name, payload, ref) -> raw_join(pattern, name, payload, ref)
-    socket.Message(_name, "ping", _payload, Some(ref)) -> [
-      socket.ReplyOk(ref, pong_payload()),
+    socket.Join(name, payload, reference) ->
+      raw_join(pattern, name, payload, reference)
+    socket.Message(_name, "ping", _payload, Some(reference)) -> [
+      socket.ReplyOk(reference, pong_payload()),
     ]
-    socket.Message(_name, "boom", _payload, Some(ref)) -> [
-      socket.ReplyError(ref, boom_payload()),
+    socket.Message(_name, "boom", _payload, Some(reference)) -> [
+      socket.ReplyError(reference, boom_payload()),
     ]
-    socket.Message(name, "push_me", _payload, _ref) -> [
+    socket.Message(name, "push_me", _payload, _reference) -> [
       socket.Push(name, pushed_event, pushed_payload()),
     ]
-    socket.Message(name, "shout", payload, _ref) -> {
+    socket.Message(name, "shout", payload, _reference) -> {
       let assert Ok(shout_json) = wire.dynamic_to_json(payload)
       [socket.BroadcastFrom(name, shouted_event, shout_json)]
     }
-    socket.Message(name, "track", _payload, _ref) -> [
+    socket.Message(name, "track", _payload, _reference) -> [
       socket.PresenceTrack(name, presence_key, presence_meta()),
       socket.BroadcastPresence(name, presence_event, encode_presence),
     ]
-    socket.Message(name, "blob", payload, _ref) -> [
+    socket.Message(name, "blob", payload, _reference) -> [
       socket.Push(name, binary_event, binary_payload("decoded", payload)),
     ]
     socket.Message(..)
@@ -102,22 +103,26 @@ fn raw_join(
   pattern: topic.TopicPattern,
   name: String,
   payload: dynamic.Dynamic,
-  ref: socket.JoinRef,
+  reference: socket.JoinReference,
 ) -> List(socket.Effect) {
-  use <- guard_reject(topic.matches(pattern, name), ref, unmatched_payload())
-  use <- guard_reject(!denied(payload), ref, denied_payload())
-  [socket.AcceptJoin(ref, Some(join_reply(name)))]
+  use <- guard_reject(
+    topic.matches(pattern, name),
+    reference,
+    unmatched_payload(),
+  )
+  use <- guard_reject(!denied(payload), reference, denied_payload())
+  [socket.AcceptJoin(reference, Some(join_reply(name)))]
 }
 
 fn guard_reject(
   allowed: Bool,
-  ref: socket.JoinRef,
+  reference: socket.JoinReference,
   reason: json.Json,
   otherwise: fn() -> List(socket.Effect),
 ) -> List(socket.Effect) {
   case allowed {
     True -> otherwise()
-    False -> [socket.RejectJoin(ref, reason)]
+    False -> [socket.RejectJoin(reference, reason)]
   }
 }
 

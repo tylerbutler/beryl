@@ -46,6 +46,11 @@ pub type Frames =
 /// throttle a public demo, and a test that tripped them would be asserting
 /// the limiter rather than the channels.
 pub fn start(_replica: String) -> System {
+  start_with_config(beryl.config(wire.phoenix_codec()))
+}
+
+/// Start the deployed handlers with test-specific runtime limits.
+pub fn start_with_config(config: beryl.Config) -> System {
   let presence_tracker = session_presence.start()
   let #(groups, groups_specification) = group.child_spec()
   let assert Ok(store) = document_store.start()
@@ -54,7 +59,7 @@ pub fn start(_replica: String) -> System {
 
   // Errors only: the runtime's info/warn lines would bury the test output.
   let config =
-    beryl.config(wire.phoenix_codec())
+    config
     |> beryl.with_logging(beryl.logging_config(
       level: beryl.ErrorLevel,
       include_payloads: False,

@@ -48,8 +48,8 @@ state. It does not receive `phx_reply`.
    that a match branch covers the client topic:
    ```gleam
    // "room:" <> _ matches "room:lobby", "room:42", etc.
-   socket.Join("room:" <> _, payload, ref) ->
-     socket.Next(model, [socket.AcceptJoin(ref, option.None)])
+   socket.Join("room:" <> _, payload, reference) ->
+     socket.Next(model, [socket.AcceptJoin(reference, option.None)])
    ```
    With `beryl/channel`, confirm a handler pattern matches the topic. The
    layer rejects an unclaimed topic with `{"reason": "unmatched topic"}`.
@@ -132,8 +132,8 @@ worker process. See
 
 ## Turn on debug logs
 
-beryl uses [palabres](https://hexdocs.pm/palabres/) loggers under the `beryl.*`
-namespaces. Enable debug logs when you diagnose integration problems:
+beryl emits [palabres](https://hexdocs.pm/palabres/) reports through OTP Logger.
+Enable debug diagnostics for the socket system you need to inspect:
 
 ```gleam
 let config =
@@ -144,13 +144,48 @@ let config =
   ))
 ```
 
+The application must also allow debug events through OTP Logger's primary
+level and handler filters. This builder does not change the host's logging
+setup or another beryl system's threshold. See
+[configure logging](/guides/observability/#configure-logging) for host setup
+and migration from beryl's former implicit Palabres configuration.
+
 Debug logs cover frame decode, join delivery, effect outcomes, reply/push send outcomes, disconnects, heartbeat decisions, broadcasts, and rate limiting. Payload and frame previews are omitted by default to reduce accidental sensitive-data exposure. If you need bounded previews locally, enable them explicitly:
 
 ```gleam
 let logging =
   beryl.logging_config(level: beryl.DebugLevel, include_payloads: True)
   |> beryl.with_payload_preview_bytes(bytes: 100)
+
+let config = beryl.config(wire.phoenix_codec()) |> beryl.with_logging(logging)
 ```
+
+Mist and Ewe include `frame_preview` only in **debug text-frame decode failure**
+diagnostics. The setting is off by default. Successful frames and binary
+frames never include previews, and beryl does not add authentication headers
+or connect metadata.
+
+Despite the builder's name, `bytes` counts **grapheme clusters**, not UTF-8 bytes.
+The default limit is 200 graphemes. Zero (or a negative value) gives an empty
+preview; truncation preserves whole graphemes and adds no marker. This
+compatibility contract is separate from the 256-byte diagnostic-field limit,
+so a preview can exceed 256 bytes, especially with combining Unicode text.
+Both the beryl system and the host logger must permit debug. Enable previews
+only where recording malformed text cannot expose secrets.
+
+Expected client rejections use debug, including malformed text/binary frames,
+invalid topics/events, stale joins, duplicate reply refs, and message, join,
+channel, and topic-cap limits. They do not produce a warning for each drop.
+Lifecycle and configuration problems remain warnings; callback and internal
+failures remain errors.
+
+Diagnostic string fields (such as topic, event, ref, and codec error text) are
+limited to **256 UTF-8 bytes**, including `...` when truncated. C0, DEL, and C1
+control characters become `?`. Text stays valid UTF-8, but a truncation can
+split a grapheme cluster. Explicit frame previews use the separate configured
+grapheme limit. Rejection metadata is not constructed when the system or host
+primary level disables debug; host filters still apply when emitting a report.
+Callback crash descriptions retain their separate bounded crash format.
 
 ---
 
@@ -170,7 +205,7 @@ receive the event.
 
 3. **Single-node vs. multi-node.** Without PubSub, broadcasts are local to the node. If your deployment runs multiple BEAM nodes, configure PubSub:
    ```gleam
-   let pubsub_handle = pubsub.start(pubsub.default_config())
+   let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
    let config =
      beryl.config(wire.phoenix_codec())
      |> beryl.with_pubsub(pubsub_handle)

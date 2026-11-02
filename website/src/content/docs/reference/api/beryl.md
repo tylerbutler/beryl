@@ -46,7 +46,7 @@ beryl: type-safe real-time communication
 
  pub fn main() -> Nil {
    // Optional: start PubSub for distributed messaging
-   let pubsub_handle = pubsub.start(pubsub.default_config())
+   let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 
    // Build the supervised system. The app supplies `init` (the per-socket
    // model) and `update` (which routes every event by topic).
@@ -59,11 +59,20 @@ beryl: type-safe real-time communication
        init: fn(_info) { #(Nil, []) },
        update: fn(model, event) {
          case event {
-           Join("room:" <> _, _payload, ref) ->
-             Next(model, [AcceptJoin(ref, option.None)])
-           Message(topic, "new_msg", payload, _ref) ->
-             Next(model, [Broadcast(topic, "new_msg", payload)])
-           Join(..) | Message(..) | Binary(..) | Closed(..) | Info(..) ->
+           Join("room:" <> _, _payload, reference) ->
+             Next(model, [AcceptJoin(reference, option.None)])
+           Message(topic, "new_msg", payload, reference) ->
+             Next(model, [
+               Broadcast(topic, "new_msg", payload),
+               ..case reference {
+                 option.Some(reference) -> [socket.DiscardReply(reference)]
+                 option.None -> []
+               }
+             ])
+           Message(_, _, _, option.Some(reference)) ->
+             Next(model, [socket.DiscardReply(reference)])
+           Message(_, _, _, option.None)
+           | Join(..) | Binary(..) | Closed(..) | Info(..) ->
              Next(model, [])
          }
        },
@@ -222,6 +231,17 @@ Logging configuration for beryl diagnostics.
  This type is opaque. Construct it with `logging_config` and adjust it with
  the `with_*` functions. beryl can then add logging options without a
  breaking change.
+
+ The level filters this socket system's runtime and transport diagnostics.
+ beryl does not change OTP Logger levels, filters, metadata, or handlers.
+ The host application's logger configuration can further restrict output.
+
+ Expected client rejections and rate-limit drops use debug. Lifecycle and
+ configuration problems use warning; callback and internal failures use
+ error. Diagnostic string fields are limited to 256 UTF-8 bytes, including
+ a trailing `...` when truncated. Control characters become `?`.
+ Explicitly enabled frame previews have their own grapheme-length limit.
+ Callback crash descriptions retain their separate bounded crash format.
 
 <div class="api-entry-anchor" id="api-type-loglevel" aria-hidden="true"></div>
 
@@ -460,6 +480,11 @@ Build a logging configuration.
  exposure. Use `with_payload_preview_bytes` to adjust the bounded preview
  size when payload previews are enabled.
 
+ With `include_payloads: True`, debug text-frame decode failures include a
+ `frame_preview` in both Mist and Ewe. Successful frames and binary frames
+ do not include previews. Authentication headers and connect metadata are
+ never added. Both this system and the host must permit debug logs.
+
 <div class="api-entry-anchor" id="api-function-stop" aria-hidden="true"></div>
 
 ### `stop`
@@ -654,7 +679,11 @@ pub fn with_logging(
 ) -> Config
 ```
 
-Configure beryl's internal logging.
+Configure this socket system's runtime and transport logging.
+
+ This sets a local minimum level. The host application owns OTP Logger
+ configuration; enable the desired level there as well. Starting or
+ restarting beryl does not install handlers or configure Palabres.
 
 <div class="api-entry-anchor" id="api-function-with_max_connections" aria-hidden="true"></div>
 
@@ -847,7 +876,11 @@ pub fn with_payload_preview_bytes(
 
 Configure the maximum payload and frame preview length for logs.
 
- The `bytes` argument is measured in grapheme clusters.
+ Despite its name, `bytes` is measured in grapheme clusters, not UTF-8 bytes.
+ Zero (or a negative value) produces an empty preview. Truncation preserves
+ whole grapheme clusters and does not append a marker. This existing preview
+ contract is separate from the 256-byte diagnostic-field limit: a preview
+ can exceed 256 bytes. Only opted-in debug text-frame decode failures use it.
 
 <div class="api-entry-anchor" id="api-function-with_presence_handle" aria-hidden="true"></div>
 

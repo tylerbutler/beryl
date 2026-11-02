@@ -124,7 +124,8 @@ Each action applies to the current channel's topic. beryl applies actions in lis
 - **`channel.push`:** Send a named event only to this client connection.
 - **`channel.broadcast`:** Send a named event to every client on this topic, including the sender.
 - **`channel.broadcast_from`:** Send a named event to every other client on this topic.
-- **`channel.stay(state)`:** Keep the current connection open without sending anything.
+- **`channel.discard_reply(message.reply)`:** Release a reply reference without answering.
+- **`channel.stay(state)`:** Stay joined with no actions. Pending reply references still consume capacity.
 </Aside>
 
 ## 2. Start beryl and Mist
@@ -307,40 +308,46 @@ pub fn init(info: socket.ConnectInfo(Message)) -> #(Model, List(socket.Effect)) 
 
 pub fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
   case input {
-    socket.Join("room:" <> _, payload, ref) ->
+    socket.Join("room:" <> _, payload, reference) ->
       socket.Next(
         model,
         [socket.AcceptJoin(
-          ref,
+          reference,
           Some(result.unwrap(wire.dynamic_to_json(payload), json.null())),
         )],
       )
 
     // Reject every join that the application does not support.
-    socket.Join(_topic, _payload, ref) ->
+    socket.Join(_topic, _payload, reference) ->
       socket.Next(
         model,
         [socket.RejectJoin(
-          ref,
+          reference,
           json.object([#("reason", json.string("unknown topic"))]),
         )],
       )
 
-    socket.Message(topic, "new_msg", payload, _ref) ->
+    socket.Message(topic, "new_msg", payload, reference) ->
       socket.Next(
         model,
-        [socket.Broadcast(
-          topic,
-          "new_msg",
-          result.unwrap(wire.dynamic_to_json(payload), json.null()),
-        )],
+        [
+          socket.Broadcast(
+            topic,
+            "new_msg",
+            result.unwrap(wire.dynamic_to_json(payload), json.null()),
+          ),
+          ..case reference {
+            Some(reference) -> [socket.DiscardReply(reference)]
+            None -> []
+          }
+        ],
       )
 
-    socket.Message(_, _, _, Some(ref)) ->
+    socket.Message(_, _, _, Some(reference)) ->
       socket.Next(
         model,
         [socket.ReplyError(
-          ref,
+          reference,
           json.object([#("error", json.string("unknown_event"))]),
         )],
       )
