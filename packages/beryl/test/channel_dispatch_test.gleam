@@ -492,6 +492,17 @@ pub fn a_disconnect_after_a_leave_does_not_terminate_twice_test() -> Nil {
   helper.no_trace(wiring.trace)
 }
 
+pub fn a_push_then_disconnect_updates_channel_state_before_termination_test() -> Nil {
+  let #(channels, wiring, frames) = joined_room("room:a")
+  helper.push(channels, "s1", "room:a", "count", "r-2")
+  helper.disconnect(channels, "s1")
+  helper.next_trace(wiring.trace) |> should.equal("terminate:room:a:normal:1")
+  helper.recv(frames) |> string.contains("count") |> should.be_true
+  helper.recv(frames) |> string.contains("phx_close") |> should.be_true
+  helper.no_trace(wiring.trace)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
+
 // --- duplicate rejoin ------------------------------------------------------
 
 pub fn a_rejoin_terminates_the_previous_instance_first_test() -> Nil {
