@@ -71,7 +71,7 @@ export function loadScenarioConfig(profile, env = globalThis.__ENV ?? {}) {
       env,
       parameters,
       "PRESENCE_DELIVERY_EVENT",
-      "presence_diff",
+      "presence_list",
     ),
     guardrailTopic: text(
       env,

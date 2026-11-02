@@ -23,7 +23,7 @@ import {
   finalizeClient,
   isForbiddenReply,
   participantId,
-  presenceDiffContains,
+  presenceSnapshotMatches,
   replyContainsMarker,
 } from "./lib/workload.js";
 
@@ -168,19 +168,25 @@ assert.equal(
 );
 assert.equal(participantId(2, 7), "generator-2-vu-7");
 assert.equal(
-  presenceDiffContains({ joins: { alice: {} }, leaves: {} }, "join", "alice"),
+  presenceSnapshotMatches({ alice: { vu: 1 }, bob: { vu: 2 } }, "join", "alice"),
   true,
 );
 assert.equal(
-  presenceDiffContains({ joins: { alice: {} }, leaves: {} }, "leave", "alice"),
+  presenceSnapshotMatches({ alice: { vu: 1 } }, "leave", "alice"),
   false,
 );
 assert.equal(
-  presenceDiffContains({ joins: {}, leaves: { alice: {} } }, "leave", "alice"),
+  presenceSnapshotMatches({ bob: { vu: 2 } }, "leave", "alice"),
   true,
 );
-assert.equal(presenceDiffContains({ key: "alice" }, "join", "alice"), false);
-assert.equal(presenceDiffContains({ key: "alice" }, "leave", "alice"), false);
+assert.equal(presenceSnapshotMatches({}, "join", "alice"), false);
+assert.equal(presenceSnapshotMatches({}, "leave", "alice"), true);
+assert.equal(presenceSnapshotMatches({}, "leave", "toString"), true);
+assert.equal(presenceSnapshotMatches({}, "join", "toString"), false);
+for (const payload of [null, undefined, [], "alice"]) {
+  assert.equal(presenceSnapshotMatches(payload, "join", "alice"), false);
+  assert.equal(presenceSnapshotMatches(payload, "leave", "alice"), false);
+}
 assert.equal(replyContainsMarker({ marker: "sent" }, "sent"), true);
 assert.equal(replyContainsMarker({ marker: "corrupted" }, "sent"), false);
 assert.equal(replyContainsMarker({}, "sent"), false);

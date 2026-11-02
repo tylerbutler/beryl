@@ -6,8 +6,8 @@ author: Tyler Butler
 # Resolution order: --target flag > this field > auto-detect from filesystem.
 # Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, kiro, opencode, windsurf
 targets:
-- claude
-- copilot
+  - claude
+  - copilot
 
 dependencies:
   lsp:
@@ -21,6 +21,7 @@ devDependencies:
   apm:
     - tylerbutler/apm-base
     - tylerbutler/agent-marketplace/plugins/gleam
+    - google/elephant-goldfish-model
   mcp: []
 includes: auto
 scripts: {}

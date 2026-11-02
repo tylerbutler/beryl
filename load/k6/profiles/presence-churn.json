@@ -23,7 +23,7 @@
     "TOPIC": "bench:presence",
     "PRESENCE_TRACK_EVENT": "presence_track",
     "PRESENCE_UNTRACK_EVENT": "presence_untrack",
-    "PRESENCE_DELIVERY_EVENT": "presence_diff",
+    "PRESENCE_DELIVERY_EVENT": "presence_list",
     "DELIVERY_TIMEOUT_MS": 5000,
     "SESSION_DURATION_MS": 10000,
     "OPERATION_INTERVAL_MS": 250
