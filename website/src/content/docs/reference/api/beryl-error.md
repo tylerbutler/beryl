@@ -20,12 +20,16 @@ Shared beryl-owned error helpers.
 <section class="api-symbol-index__group">
   <a class="api-symbol-index__section" href="#types">Types</a>
   <ul>
+<li><a href="#api-type-callerror"><code>CallError</code></a></li>
+<li><a href="#api-type-operationfailure"><code>OperationFailure</code></a></li>
 <li><a href="#api-type-startfailure"><code>StartFailure</code></a></li>
   </ul>
 </section>
 <section class="api-symbol-index__group">
   <a class="api-symbol-index__section" href="#functions">Functions</a>
   <ul>
+<li><a href="#api-function-describe_call_error"><code>describe_call_error</code></a></li>
+<li><a href="#api-function-describe_operation_failure"><code>describe_operation_failure</code></a></li>
 <li><a href="#api-function-describe_start_failure"><code>describe_start_failure</code></a></li>
 <li><a href="#api-function-from_actor_start_error"><code>from_actor_start_error</code></a></li>
   </ul>
@@ -33,6 +37,33 @@ Shared beryl-owned error helpers.
 </nav>
 
 ## Types
+
+<div class="api-entry-anchor" id="api-type-callerror" aria-hidden="true"></div>
+
+### `CallError`
+
+```gleam
+pub type CallError {
+  CallUnavailable
+  CallDown(reason: process.ExitReason)
+  CallTimedOut
+}
+```
+
+A synchronous actor call could not obtain a reply.
+
+<div class="api-entry-anchor" id="api-type-operationfailure" aria-hidden="true"></div>
+
+### `OperationFailure`
+
+```gleam
+pub type OperationFailure
+```
+
+An underlying native operation failure, retained without lossy conversion.
+
+ Only native operation boundaries construct this value. Format it on demand
+ with `describe_operation_failure`; the original reason remains intact.
 
 <div class="api-entry-anchor" id="api-type-startfailure" aria-hidden="true"></div>
 
@@ -48,6 +79,26 @@ A stable description of an internal beryl actor startup failure.
  dependency-specific error constructors.
 
 ## Functions
+
+<div class="api-entry-anchor" id="api-function-describe_call_error" aria-hidden="true"></div>
+
+### `describe_call_error`
+
+```gleam
+pub fn describe_call_error(CallError) -> String
+```
+
+Describe an actor-call failure, including its original exit reason.
+
+<div class="api-entry-anchor" id="api-function-describe_operation_failure" aria-hidden="true"></div>
+
+### `describe_operation_failure`
+
+```gleam
+pub fn describe_operation_failure(OperationFailure) -> String
+```
+
+Describe a native failure with bounded nesting and output length.
 
 <div class="api-entry-anchor" id="api-function-describe_start_failure" aria-hidden="true"></div>
 

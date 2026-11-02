@@ -116,6 +116,7 @@ Configuration for starting a groups actor.
 pub type GroupError {
   GroupAlreadyExists(name: String)
   GroupNotFound(name: String)
+  GroupCallFailed(error.CallError)
 }
 ```
 
@@ -139,6 +140,14 @@ GroupNotFound(name: String)
 
 The group was not found.
 
+##### `GroupCallFailed`
+
+```gleam
+GroupCallFailed(error.CallError)
+```
+
+The actor was unavailable, exited, or did not reply in time.
+
 <div class="api-entry-anchor" id="api-type-groups" aria-hidden="true"></div>
 
 ### `Groups`
@@ -157,8 +166,8 @@ A running groups instance.
  The stable registered subject is resolved on the caller's node. Keep a
  `Groups` handle on the node where its child specification runs. Calls from
  another BEAM node cannot reach the owning actor. All public operations,
- including `broadcast`, panic if the actor is unavailable or the call times
- out.
+ including `broadcast`, return a typed call failure if the actor is
+ unavailable or the call times out.
 
 <div class="api-entry-anchor" id="api-type-message" aria-hidden="true"></div>
 
@@ -186,7 +195,7 @@ pub fn add(
 
 Add a topic to a group.
 
- Panics if the groups actor is unavailable or does not reply within the
+ Returns `GroupCallFailed` if the actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
 
 <div class="api-entry-anchor" id="api-function-broadcast" aria-hidden="true"></div>
@@ -211,8 +220,7 @@ Broadcast a message to all topics in a group.
  `BroadcastRejected` reports the number of earlier topics admitted. Those
  admissions remain valid; fan-out is not transactional.
 
- Panics if the groups actor is unavailable or does not reply within the
- configured call timeout.
+ Actor-call failures are returned inside `GroupLookupFailed`.
 
 <div class="api-entry-anchor" id="api-function-child_spec" aria-hidden="true"></div>
 
@@ -252,7 +260,7 @@ pub fn create(
 
 Create a named group.
 
- Panics if the groups actor is unavailable or does not reply within the
+ Returns `GroupCallFailed` if the actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
 
 <div class="api-entry-anchor" id="api-function-default_config" aria-hidden="true"></div>
@@ -278,7 +286,7 @@ pub fn delete(
 
 Delete a group.
 
- Panics if the groups actor is unavailable or does not reply within the
+ Returns `GroupCallFailed` if the actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
 
 <div class="api-entry-anchor" id="api-function-list_groups" aria-hidden="true"></div>
@@ -286,12 +294,12 @@ Delete a group.
 ### `list_groups`
 
 ```gleam
-pub fn list_groups(Groups) -> List(String)
+pub fn list_groups(Groups) -> Result(List(String), GroupError)
 ```
 
 Return all group names.
 
- Panics if the groups actor is unavailable or does not reply within the
+ Returns `GroupCallFailed` if the actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
 
 <div class="api-entry-anchor" id="api-function-remove" aria-hidden="true"></div>
@@ -308,7 +316,7 @@ pub fn remove(
 
 Remove a topic from a group.
 
- Panics if the groups actor is unavailable or does not reply within the
+ Returns `GroupCallFailed` if the actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
 
 <div class="api-entry-anchor" id="api-function-topics" aria-hidden="true"></div>
@@ -324,7 +332,7 @@ pub fn topics(
 
 Return all topics in a group.
 
- Panics if the groups actor is unavailable or does not reply within the
+ Returns `GroupCallFailed` if the actor is unavailable or does not reply within the
  configured call timeout (5 seconds by default).
 
 <div class="api-entry-anchor" id="api-function-with_call_timeout" aria-hidden="true"></div>
@@ -341,6 +349,6 @@ pub fn with_call_timeout(
 Set the timeout for synchronous group operations, in milliseconds.
 
  This applies to `create`, `delete`, `add`, `remove`, `topics`, and
- `list_groups`. These functions panic if the actor does not reply within
- this timeout. If the panic is caught, the caller retains no call monitor
- and receives no late reply. A timed-out mutation may still be applied.
+ `list_groups`. These functions return `GroupCallFailed` if no reply arrives
+ in time. The caller retains no monitor and receives no late reply.
+ A timed-out mutation may still be applied.

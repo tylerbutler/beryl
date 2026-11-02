@@ -9,6 +9,65 @@ not capacity.
 For codec-only time, heap allocation, and reduction measurements, use the
 [optional Glychee benchmarks](../benchmarks/codec/README.md).
 
+## Overview
+
+Use this directory for end-to-end protocol and workload measurements.
+The [k6 suite contract](./k6/README.md) separates the runtime entry point
+from reusable [client helpers](./k6/lib/README.md) and
+[workloads](./k6/scenarios/README.md). [k6/run.js:options]
+
+## Subdirectories and boundaries
+
+- [k6](./k6/README.md) owns profile loading, configuration, workload
+  dispatch, and result serialization. [k6/run.js:handleSummary]
+- `results/` holds run outputs and the admission-safety fixture described below.
+  [k6/lib/results.js:summaryPath] [justfile:load-run]
+
+## Interface
+
+`run.js` exports k6 `options`, eight scenario entry functions, and
+`handleSummary(data)`. The suite also provides the Node
+`renderSmokeComment(directory, runUrl)` helper for stored smoke results.
+The [k6 contract](./k6/README.md#interface) lists these exports;
+the profile and environment tables below describe operator inputs.
+[k6/run.js:options] [k6/run.js:handleSummary]
+[k6/render-smoke-comment.mjs:renderSmokeComment]
+
+## Invariants
+
+Configuration validates target URLs, Phoenix version, numeric bounds, and
+profile settings before workload execution. The client matches reply
+references, topics, and join references. Workload checks include cleanup
+and unexpected asynchronous client errors. Preserve these correctness
+checks when changing measurement settings.
+[k6/lib/config.js:loadConfig] [k6/lib/config.js:buildWebSocketUrl]
+[k6/lib/profile.js:parseProfile]
+[k6/lib/phoenix.js:PhoenixClient._handleMessage]
+[k6/scenarios/workloads.js:includeShutdown]
+[k6/scenarios/workloads.js:includeClientErrors]
+
+## Side effects
+
+Intentional runs open WebSockets, send channel/presence/broadcast operations,
+and record k6 metrics; the mixed profile also issues HTTP GETs.
+`just load-run` uses Docker host networking, mounts the repository, and
+writes summaries under the selected output path. Use only targets you are
+authorized to load. Repeated default summary paths overwrite earlier results.
+[k6/lib/phoenix.js:PhoenixClient.connect]
+[k6/scenarios/workloads.js:mixedWsHttp]
+[k6/run.js:handleSummary] [k6/lib/results.js:summaryPath]
+[justfile:load-run]
+
+## Verification
+
+From the repository root, `just load-syntax` and `just load-helpers` run
+Node-only parsing and local checks without target traffic. `just load-check`
+adds Docker/k6 inspection using placeholder targets; it may pull
+`grafana/k6:2.1.0`. Load runs and benchmark-server startup are separate,
+intentional operations. See [k6 setup](#k6-setup) for prerequisites.
+[justfile:load-syntax] [justfile:load-helpers] [justfile:load-check]
+[justfile:load-run]
+
 ## Local setup
 
 ### Admission safety fixture
@@ -76,7 +135,7 @@ none gate latency or throughput percentiles.
 | `connection-rate` | `constant-arrival-rate`: 10 iterations/s for 1 m, 20 preallocated VUs, 100 maximum, 15 s graceful stop | Open and cleanly close a connection without joining |
 | `push-round-trip` | `constant-vus`: 10 VUs for 1 m, 15 s graceful stop | Join `bench:reply`; send `echo` every 250 ms for 10,000 ms and verify the marker reply |
 | `broadcast-fanout` | `constant-vus`: 10 VUs for 1 m, 15 s graceful stop | Groups of 5 join generated `bench:broadcast:*` topics; after 2,000 ms warmup, each publisher requires acknowledgements from 4 peers within 5,000 ms |
-| `presence-churn` | `constant-vus`: 10 VUs for 1 m, 15 s graceful stop | Join `bench:presence`; track and untrack every 250 ms for 10,000 ms and require matching `presence_diff` joins/leaves within 5,000 ms |
+| `presence-churn` | `constant-vus`: 10 VUs for 1 m, 15 s graceful stop | Join `bench:presence`; track and untrack every 250 ms for 10,000 ms and require `presence_list` snapshots showing key arrival/removal within 5,000 ms |
 | `mixed-ws-http` | `constant-vus`: 10 VUs for 1 m, 15 s graceful stop | Join `bench:mixed`; pair each 250 ms echo/reply with `GET HTTP_TARGET_URL` for 10,000 ms |
 | `guardrail-validation` | `constant-vus`: 1 VU for 30 s, 10 s graceful stop | Repeatedly require `guardrail:forbidden` to reject the join with reason `forbidden`; expected join errors are not counted as unexpected |
 
@@ -164,7 +223,9 @@ target's hardware, OTP version, and scheduler settings.
 
 The benchmark contract is explicit: `echo` returns the submitted marker;
 `broadcast` and `broadcast_ack` fan out unchanged payloads;
-`presence_track`/`presence_untrack` produce matching `presence_diff` entries;
+`presence_track`/`presence_untrack` publish flat `presence_list` snapshots
+mapping session keys to metadata. The workload waits for its unique key to
+appear after tracking, then disappear after untracking;
 and `guardrail:forbidden` rejects joins.
 
 ## Metrics
@@ -195,7 +256,7 @@ Interpret the summary in this order:
    unexpected-client errors identify client/protocol correctness failures.
 2. Join rejection rates separate explicit server policy from timeouts.
    Timeout rates mean no qualifying reply arrived before the client deadline;
-   broadcast/presence delivery rates mean the expected fan-out or diff was
+   broadcast/presence delivery rates mean the expected fan-out or roster change was
    observed before its delivery deadline.
 3. Compare latency trends across equivalent repeated runs, especially their
    tails; do not treat a percentile from one short run as a capacity result.
@@ -285,7 +346,8 @@ a controlled run approaches it, then repeat the baseline. See the
 `handleSummary` writes a JSON object with `metadata` and the complete k6
 `result`. The default path is
 `load/results/<profile>-summary.json`; set a unique `SUMMARY_PATH` for every
-measured run. `load/results` is generated/ignored except for `.gitkeep`.
+measured run. `load/results` holds generated/ignored outputs alongside `.gitkeep` and the
+checked-in `admission-bounds.json` fixture described above.
 
 Metadata schema version 1 contains:
 
@@ -359,7 +421,8 @@ has an explicit rationale. Never derive a gate from one favorable run.
 ## CI smoke and artifacts
 
 The `load-smoke` GitHub Actions job runs a matrix of Erlang 27/28 and Mist/Ewe
-on port 8000. It installs Gleam 1.16.0, validates `protocol-smoke`, builds the
+on port 8000. It installs Gleam through the root mise configuration,
+validates `protocol-smoke`, builds the
 fixture, waits up to 30 one-second health attempts, and runs the pinned k6
 container. It enforces protocol/error thresholds only.
 

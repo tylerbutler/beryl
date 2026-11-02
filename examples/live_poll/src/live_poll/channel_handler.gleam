@@ -96,11 +96,12 @@ fn handle_message(
         store.AlreadyClosed(state) -> [
           channel.reply_ok(message.reply, poll.to_json(state)),
         ]
-        store.RoomNotFound -> []
+        store.RoomNotFound -> [channel.discard_reply(message.reply)]
       }
       channel.next(room, actions)
     }
-    poll.Unsupported -> channel.stay(room)
+    poll.Unsupported ->
+      channel.next(room, [channel.discard_reply(message.reply)])
   }
 }
 

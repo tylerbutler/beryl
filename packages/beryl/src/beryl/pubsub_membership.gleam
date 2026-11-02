@@ -9,6 +9,7 @@
 //// Calls use a timeout-safe Erlang boundary. A timed-out caller does not keep
 //// a monitor or receive a late reply.
 
+import beryl/error
 import beryl/internal
 import beryl/log
 import beryl/pubsub_native
@@ -27,7 +28,10 @@ const recovery_delay_ms = 10
 
 /// A handle to one scope's local membership actor.
 pub opaque type Registry {
-  Registry(subject: process.Subject(Message))
+  Registry(
+    subject: process.Subject(Message),
+    readiness: pubsub_native.Readiness,
+  )
 }
 
 /// Latest topic intent owned by one runtime router.
@@ -45,6 +49,7 @@ fn take_intent(intent: Intent) -> Result(List(String), Nil)
 
 /// A membership operation failure.
 pub type RegistryError {
+  CallFailed(error.CallError)
   /// The scope has no stable `pg` generation yet.
   ScopeRecovering
   /// The underlying `pg` operation failed.
@@ -55,6 +60,7 @@ pub type RegistryError {
 
 /// Messages accepted by the membership actor.
 pub opaque type Message {
+  GetRegistry(reply: process.Subject(Registry))
   Ready(reply: process.Subject(Result(Nil, RegistryError)))
   Join(
     topic: String,
@@ -95,7 +101,16 @@ fn call(
   subject: process.Subject(Message),
   timeout_ms: Int,
   request: fn(process.Subject(reply)) -> Message,
-) -> reply
+) -> Result(reply, error.CallError)
+
+fn call_operation(
+  registry: Registry,
+  request: fn(process.Subject(Result(reply, RegistryError))) -> Message,
+) -> Result(reply, RegistryError) {
+  call(registry.subject, call_timeout_ms, request)
+  |> result.map_error(CallFailed)
+  |> result.flatten
+}
 
 @external(erlang, "beryl_ffi", "connection_limit_send")
 fn send(subject: process.Subject(Message), message: Message) -> Bool
@@ -106,7 +121,11 @@ pub fn start(
   scope: atom.Atom,
 ) -> Result(actor.Started(Registry), actor.StartError) {
   actor.new_with_initialiser(call_timeout_ms, fn(_default_subject) {
-    let registry = from_pid(process.self())
+    let registry =
+      Registry(
+        subject: registry_subject(process.self()),
+        readiness: pubsub_native.new_readiness(),
+      )
     schedule_recovery(State(
       scope: scope,
       registry: registry,
@@ -125,12 +144,15 @@ pub fn start(
 }
 
 // nolint: unused_exports -- startup adapter invoked from Erlang
-/// Build a registry handle for an actor process started by OTP.
-pub fn from_pid(pid: process.Pid) -> Registry {
-  Registry(subject: pubsub_native.subject_for_pid(
-    pid,
-    atom.create("pubsub_memberships"),
-  ))
+/// Obtain the actor's captured readiness handle once during OTP startup.
+///
+/// Queries never repeat this call and cannot adopt a replacement registry.
+pub fn from_pid(pid: process.Pid) -> Result(Registry, error.CallError) {
+  call(registry_subject(pid), call_timeout_ms, GetRegistry)
+}
+
+fn registry_subject(pid: process.Pid) -> process.Subject(Message) {
+  pubsub_native.subject_for_pid(pid, atom.create("pubsub_memberships"))
 }
 
 // nolint: unused_exports -- Erlang recovery tests inspect the actor owner
@@ -149,32 +171,58 @@ pub fn is_alive(registry: Registry) -> Bool {
   }
 }
 
-// nolint: unused_exports -- startup compatibility adapter invoked from Erlang
 /// Wait until the registry has synchronised with a stable `pg` generation.
 pub fn ready(registry: Registry) -> Result(Nil, RegistryError) {
-  call(registry.subject, call_timeout_ms, Ready)
+  call_operation(registry, Ready)
 }
 
-// nolint: unused_exports -- mutation compatibility adapter invoked from Erlang
+/// Read only the captured registry's fully reconciled pg generation.
+///
+/// This reads protected readiness storage without messaging the actor.
+pub fn members(
+  registry: Registry,
+  scope: atom.Atom,
+  topic: String,
+  local_only: Bool,
+) -> Result(List(process.Pid), RegistryError) {
+  case local_only {
+    True ->
+      pubsub_native.get_local_members(
+        scope,
+        registry.readiness,
+        pid(registry),
+        topic,
+      )
+    False ->
+      pubsub_native.get_members(scope, registry.readiness, pid(registry), topic)
+  }
+  |> result.map_error(fn(failure) {
+    case failure {
+      pubsub_native.RegistryUnavailable -> CallFailed(error.CallUnavailable)
+      pubsub_native.ScopeRecovering -> ScopeRecovering
+      pubsub_native.PgUnavailable(reason) -> PgUnavailable(reason)
+    }
+  })
+}
+
 /// Record and apply one local owner's topic membership.
 pub fn join(
   registry: Registry,
   topic: String,
   owner: process.Pid,
 ) -> Result(Nil, RegistryError) {
-  call(registry.subject, call_timeout_ms, fn(reply) {
+  call_operation(registry, fn(reply) {
     Join(topic:, owner:, reply: Some(reply))
   })
 }
 
-// nolint: unused_exports -- mutation compatibility adapter invoked from Erlang
 /// Remove one local owner's topic membership.
 pub fn leave(
   registry: Registry,
   topic: String,
   owner: process.Pid,
 ) -> Result(Nil, RegistryError) {
-  call(registry.subject, call_timeout_ms, fn(reply) {
+  call_operation(registry, fn(reply) {
     Leave(topic:, owner:, reply: Some(reply))
   })
 }
@@ -211,6 +259,10 @@ fn handle_message(
   message: Message,
 ) -> actor.Next(State, Message) {
   case message {
+    GetRegistry(reply) -> {
+      process.send(reply, state.registry)
+      actor.continue(state)
+    }
     Ready(reply) ->
       reply_with(Some(reply), synchronise(state, fn(_) { Ok(Nil) }))
     Join(topic, owner, reply) -> handle_join(state, topic, owner, reply)
@@ -388,6 +440,7 @@ fn reply_with(
 
 fn describe_error(error: RegistryError) -> String {
   case error {
+    CallFailed(reason) -> error.describe_call_error(reason)
     ScopeRecovering -> "scope recovering"
     PgUnavailable(_) -> "pg unavailable"
     OwnerNotLocal -> "owner is not local"
@@ -497,7 +550,7 @@ fn recover_generation(
   case state.pg {
     Some(PgGeneration(pid: current_pid, ..)) if current_pid == pg_pid ->
       Ok(state)
-    Some(_) | None -> state |> prune_dead_owners |> replay(pg_pid)
+    Some(_) | None -> state |> forget_pg |> prune_dead_owners |> replay(pg_pid)
   }
 }
 
@@ -524,7 +577,10 @@ fn finish_operation(
     Error(error) -> unavailable(state, error)
     Ok(Nil) ->
       case stable_scope(state.scope, pg_pid) {
-        True -> #(Ok(Nil), state)
+        True -> {
+          pubsub_native.publish_readiness(state.registry.readiness, pg_pid)
+          #(Ok(Nil), state)
+        }
         False -> unavailable(state, ScopeRecovering)
       }
   }
@@ -625,6 +681,7 @@ fn unavailable(
 }
 
 fn forget_pg(state: State) -> State {
+  pubsub_native.clear_readiness(state.registry.readiness)
   case state.pg {
     None -> state
     Some(PgGeneration(monitor: monitor, ..)) -> {
@@ -638,8 +695,8 @@ fn schedule_recovery(state: State) -> State {
   case state.retry {
     Some(_) -> state
     None -> {
-      let Registry(subject) = state.registry
-      let timer = process.send_after(subject, recovery_delay_ms, Recover)
+      let timer =
+        process.send_after(state.registry.subject, recovery_delay_ms, Recover)
       State(..state, retry: Some(timer))
     }
   }

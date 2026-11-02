@@ -1,11 +1,143 @@
 lockfile_version: '1'
-generated_at: '2026-10-13T02:37:50.029355+00:00'
-apm_version: 0.33.0
+generated_at: '2026-11-02T15:33:48.734870+00:00'
+apm_version: 0.35.0
 dependencies:
+- repo_url: google/elephant-goldfish-model
+  name: egm
+  host: github.com
+  resolved_commit: a7efe38e0389137cece95392dbab1d94965a414d
+  version: 0.1.0
+  package_type: skill_bundle
+  deployed_files:
+  - .agents/skills/egm-bootstrap
+  - .agents/skills/egm-bootstrap/SKILL.md
+  - .agents/skills/egm-bootstrap/TEST.md
+  - .agents/skills/egm-bootstrap/agents/openai.yaml
+  - .agents/skills/egm-bootstrap/assets/icon.svg
+  - .agents/skills/egm-bootstrap/references/templates.md
+  - .agents/skills/egm-bootstrap/references/worker-return.schema.json
+  - .agents/skills/egm-bootstrap/test_scenarios.yaml
+  - .agents/skills/egm-brainstorm
+  - .agents/skills/egm-brainstorm/SKILL.md
+  - .agents/skills/egm-brainstorm/TEST.md
+  - .agents/skills/egm-brainstorm/agents/openai.yaml
+  - .agents/skills/egm-brainstorm/assets/icon.svg
+  - .agents/skills/egm-brainstorm/test_scenarios.yaml
+  - .agents/skills/egm-draft
+  - .agents/skills/egm-draft/SKILL.md
+  - .agents/skills/egm-draft/TEST.md
+  - .agents/skills/egm-draft/agents/openai.yaml
+  - .agents/skills/egm-draft/assets/icon.svg
+  - .agents/skills/egm-draft/references/design_doc.md
+  - .agents/skills/egm-draft/test_scenarios.yaml
+  - .agents/skills/egm-drift-report
+  - .agents/skills/egm-drift-report/SKILL.md
+  - .agents/skills/egm-drift-report/TEST.md
+  - .agents/skills/egm-drift-report/agents/openai.yaml
+  - .agents/skills/egm-drift-report/assets/icon.svg
+  - .agents/skills/egm-drift-report/test_scenarios.yaml
+  - .agents/skills/egm-resolve
+  - .agents/skills/egm-resolve/SKILL.md
+  - .agents/skills/egm-resolve/TEST.md
+  - .agents/skills/egm-resolve/agents/openai.yaml
+  - .agents/skills/egm-resolve/assets/icon.svg
+  - .agents/skills/egm-resolve/test_scenarios.yaml
+  - .agents/skills/egm-review
+  - .agents/skills/egm-review-loop
+  - .agents/skills/egm-review-loop/SKILL.md
+  - .agents/skills/egm-review-loop/TEST.md
+  - .agents/skills/egm-review-loop/agents/openai.yaml
+  - .agents/skills/egm-review-loop/assets/icon.svg
+  - .agents/skills/egm-review-loop/test_scenarios.yaml
+  - .agents/skills/egm-review/SKILL.md
+  - .agents/skills/egm-review/TEST.md
+  - .agents/skills/egm-review/agents/openai.yaml
+  - .agents/skills/egm-review/assets/icon.svg
+  - .agents/skills/egm-review/test_scenarios.yaml
+  - .claude/agents/bootstrap_orchestrator.md
+  - .claude/agents/codebase_details.md
+  - .claude/agents/comprehension.md
+  - .claude/agents/design_critic.md
+  - .claude/agents/implementation_readiness.md
+  - .claude/agents/structural.md
+  - .claude/agents/style.md
+  - .claude/agents/synthesizer.md
+  - .claude/agents/zoom_out.md
+  - .github/agents/bootstrap_orchestrator.agent.md
+  - .github/agents/codebase_details.agent.md
+  - .github/agents/comprehension.agent.md
+  - .github/agents/design_critic.agent.md
+  - .github/agents/implementation_readiness.agent.md
+  - .github/agents/structural.agent.md
+  - .github/agents/style.agent.md
+  - .github/agents/synthesizer.agent.md
+  - .github/agents/zoom_out.agent.md
+  deployed_file_hashes:
+    .agents/skills/egm-bootstrap/SKILL.md: sha256:1082c0ac8e2af65d3babdc1f53b86de218a3a11686159ca6c41f32e685a6dc85
+    .agents/skills/egm-bootstrap/TEST.md: sha256:835d11b8e2f521220139d94d6c8d6cc1c79186c4403206f2e0a53476d7c0cb77
+    .agents/skills/egm-bootstrap/agents/openai.yaml: sha256:e5f83ece63fce8c73329efedd990f912ab395e1e8339f89f83f9e6efef00fb27
+    .agents/skills/egm-bootstrap/assets/icon.svg: sha256:e1f021c3074bc22d982301bff8374cf1c2ff7c032d1834b66fed91a9ab57d370
+    .agents/skills/egm-bootstrap/references/templates.md: sha256:f49793727cccbd72afdc4a0569a1d8e8138e943d2fc9b0df772b09deaca80437
+    .agents/skills/egm-bootstrap/references/worker-return.schema.json: sha256:f18a3822f60a0f117e1582cccac78a90cf14154afca811d4e81ea3fe562e52a5
+    .agents/skills/egm-bootstrap/test_scenarios.yaml: sha256:9ea91ed9fc8763b1e95a2ecf9f529be2a2c1b9b7190816b97963ec932c1bdc17
+    .agents/skills/egm-brainstorm/SKILL.md: sha256:3842832a8503659df4f0fd85bc79ee9a81f33840c820843d6beb0e6640d24ad5
+    .agents/skills/egm-brainstorm/TEST.md: sha256:acdf14eecef6eb85fca3958f6abb2686122848a2aee4d6a3617786d398d17dce
+    .agents/skills/egm-brainstorm/agents/openai.yaml: sha256:2b858c20f9d3b54cc1e02410a4fd6f7989b36d6d5d152cc87cd0d1082ce3bfc9
+    .agents/skills/egm-brainstorm/assets/icon.svg: sha256:89d894e7e9c10c2ad955ef1964049e508b718e96e8a177f547b240c774498b49
+    .agents/skills/egm-brainstorm/test_scenarios.yaml: sha256:b8b136dfc81ba52ffe65db79ec57da6f1214501dad9bdbe0be664cb05928177f
+    .agents/skills/egm-draft/SKILL.md: sha256:5e901889ba5084112c4626d57c964b54d6585560faef7e32fe3cc83fd74b7f32
+    .agents/skills/egm-draft/TEST.md: sha256:19872448e7e2f2af41feea9f9de3c78942462c52a76901510ffa52ecaa7a2f4c
+    .agents/skills/egm-draft/agents/openai.yaml: sha256:eafc643897b5a4ea7a849bd4211acaf8f3bc31a079f199ef5d04d08b410705b7
+    .agents/skills/egm-draft/assets/icon.svg: sha256:0cca32ed85b4198fdf3566198f92a17c943ee3d9a72d38c2898132b67130aebd
+    .agents/skills/egm-draft/references/design_doc.md: sha256:eb8e580e4de6be88da33fdbe662d1b39a0fa7a13378d2dd240f82eb712684e0d
+    .agents/skills/egm-draft/test_scenarios.yaml: sha256:6c2ae95dfa40469169d65d20a8a16a7e2f8608f4c1a081c01b1f54b2e2ff7e1a
+    .agents/skills/egm-drift-report/SKILL.md: sha256:53a95f790f9276dff08c67373eb4b53bf0444217f5a0fbf796d5718cb5ada49e
+    .agents/skills/egm-drift-report/TEST.md: sha256:596632190ef932059f49871d12abdcce9b581565f74a32f0f37f488473c68bb2
+    .agents/skills/egm-drift-report/agents/openai.yaml: sha256:b54c32c1badc9a73e507f097377324dc31f2839cfef9c426d4dba1c622d5673c
+    .agents/skills/egm-drift-report/assets/icon.svg: sha256:47bc4ecbe493f4454f9b7642f42de9fe41f8a93cbb86aa3ffbb5d58532ea0e2d
+    .agents/skills/egm-drift-report/test_scenarios.yaml: sha256:e688d8129d32bc90ad23a86da017175036695fa0872a04dbce591a890ea70788
+    .agents/skills/egm-resolve/SKILL.md: sha256:c2ad2924dca8a1c2c4945c45ed2b2223dd45935e8bd2e36f352fe05dff0119d0
+    .agents/skills/egm-resolve/TEST.md: sha256:ee61f28caf337c2b25b0c589e32a980dfcb80e4d0ef80b9abf35e72c67ae1308
+    .agents/skills/egm-resolve/agents/openai.yaml: sha256:7ad63dc69777e6e8b2e3d33cf4105149043038ffb489e750b3f483be7836cf30
+    .agents/skills/egm-resolve/assets/icon.svg: sha256:14ac0ad863fc6ab83ba5fd5f7bd46fd11b609d65f9e482b3fcddd7a139834733
+    .agents/skills/egm-resolve/test_scenarios.yaml: sha256:6d667608097ff4c80fb861da2c7580cf7b7f5d01290895ea74422890254a0570
+    .agents/skills/egm-review-loop/SKILL.md: sha256:68a0f3ec00e456293b9646ef5b699a96bad4be18e559309dd6f83e733d66a8f4
+    .agents/skills/egm-review-loop/TEST.md: sha256:c75ca18d6da52c204bb0b59ee5bed123cf3f8ed7a8fdf47211684f3bf4e15a19
+    .agents/skills/egm-review-loop/agents/openai.yaml: sha256:2073f27ed2c084c8db710f72dac367d26cb8cbc16aa2195546feb732b47a23ce
+    .agents/skills/egm-review-loop/assets/icon.svg: sha256:d6d5537843253fe634d248b6eadd5a5bcd2ef7742e016896eb11c583174eb530
+    .agents/skills/egm-review-loop/test_scenarios.yaml: sha256:75c0a3811c3acb0084969f95b63806837f81c117873a05fc55c3b3327d5e36be
+    .agents/skills/egm-review/SKILL.md: sha256:3dc63e8787437c3f21fde30e80ae819164fce30360b5e8cfe4fd1cb4dac844eb
+    .agents/skills/egm-review/TEST.md: sha256:4b436d4542162b2b7c1e864884cf74b23d9410f5d1e95f9e70c0ae38a6f9954d
+    .agents/skills/egm-review/agents/openai.yaml: sha256:780d8877443f704ee27d504c13d08f304f0bca4c4418f5703f61ae40416fca74
+    .agents/skills/egm-review/assets/icon.svg: sha256:02154028864bd8547a45d7c9f55c59f95cb4ce3f57ecb3426f67034ab97d022f
+    .agents/skills/egm-review/test_scenarios.yaml: sha256:bca74669372112c5aa31c7a71e1fef76ccedd7a17169e6d3f64c2a2686dcce97
+    .claude/agents/bootstrap_orchestrator.md: sha256:5c2fa484754f8d582669500d16d5728fe95daff8bd964f8e7f09142c6a666bfc
+    .claude/agents/codebase_details.md: sha256:d80db07e449b57b3b3776d1401cca72a54b6b65a0ab218b86f9064ee4b8167bc
+    .claude/agents/comprehension.md: sha256:974f4972f717dc7b102a9b1407b3a625749149f2ae905727241e919f43cc3fa5
+    .claude/agents/design_critic.md: sha256:cee6294735ce2bd4fea19245852b6eb07cbe8ede7e72a4bfc829f586e4a39d0f
+    .claude/agents/implementation_readiness.md: sha256:1f6aa61cfe7cb86dc94943ab3b3fd339e5baba533937198fd10edb06dfa64e8f
+    .claude/agents/structural.md: sha256:f0d4fe6faee4e388366b7d653fe353a9b09f45ca1bf5dae29280e351cda7da87
+    .claude/agents/style.md: sha256:9d0d59d7fac7ee479f9beea22d28b8ea20b6fea0215e06bd292a14eb2bb3b692
+    .claude/agents/synthesizer.md: sha256:402e661fa44684ce51246575d169f65003981846f318cf13cf124c8895b4ccab
+    .claude/agents/zoom_out.md: sha256:adc9d7b7db4c304866e61d5e5e446502231abe188ce64656939305e07ae7995f
+    .github/agents/bootstrap_orchestrator.agent.md: sha256:5c2fa484754f8d582669500d16d5728fe95daff8bd964f8e7f09142c6a666bfc
+    .github/agents/codebase_details.agent.md: sha256:d80db07e449b57b3b3776d1401cca72a54b6b65a0ab218b86f9064ee4b8167bc
+    .github/agents/comprehension.agent.md: sha256:974f4972f717dc7b102a9b1407b3a625749149f2ae905727241e919f43cc3fa5
+    .github/agents/design_critic.agent.md: sha256:cee6294735ce2bd4fea19245852b6eb07cbe8ede7e72a4bfc829f586e4a39d0f
+    .github/agents/implementation_readiness.agent.md: sha256:1f6aa61cfe7cb86dc94943ab3b3fd339e5baba533937198fd10edb06dfa64e8f
+    .github/agents/structural.agent.md: sha256:f0d4fe6faee4e388366b7d653fe353a9b09f45ca1bf5dae29280e351cda7da87
+    .github/agents/style.agent.md: sha256:9d0d59d7fac7ee479f9beea22d28b8ea20b6fea0215e06bd292a14eb2bb3b692
+    .github/agents/synthesizer.agent.md: sha256:402e661fa44684ce51246575d169f65003981846f318cf13cf124c8895b4ccab
+    .github/agents/zoom_out.agent.md: sha256:adc9d7b7db4c304866e61d5e5e446502231abe188ce64656939305e07ae7995f
+  content_hash: sha256:b1137368a72d5de040920564b77e62e59b1741cc5dcd6b8eb97a944eb8ab5172
+  is_dev: true
+  discovered_via: egm
+  marketplace_plugin_name: egm
+  declared_license: Apache-2.0
 - repo_url: tylerbutler/agent-marketplace
   name: gleam
   host: github.com
-  resolved_commit: 94699bd70b7f1bf6f887dbc006c5b80ac34317c3
+  resolved_commit: a88af94c38d2247b18e59d9f237676e62edfed2a
   version: 0.1.0
   virtual_path: plugins/gleam
   is_virtual: true
@@ -35,21 +167,21 @@ dependencies:
     .agents/skills/gleam-reference-docs/evals/evals.json: sha256:9da907b7e7c07b3529d20d3ee2cf80b6d7f4bc8794ad151b550896268f1f29db
     .agents/skills/gleam-review/SKILL.md: sha256:1d510df9a726b675f5a7de84508eb668828e5f14b36ca96139867b29db502d17
     .agents/skills/gleam-review/references/conventions.md: sha256:cd0b6dee401eff48c7afcb83db73ee5971e2563989f266dfd58bd93b997fe6ed
-    .claude/agents/beam-vm-reviewer.md: sha256:ac71fee93fa8a8caa2cca9248fbd06a3666726c59de93b53feb346df8ce2512c
+    .claude/agents/beam-vm-reviewer.md: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
     .claude/agents/erlang-specialist.md: sha256:4bb6bf9b41f0f62cd0d779e0020b276c05ec68ebb4b913135774d0a12acdf851
     .claude/skills/gleam-reference-docs/SKILL.md: sha256:7d3dd41722242d3cd627aae529ffd919391c8ff8a6be950c9ef61cd0b193c531
     .claude/skills/gleam-reference-docs/assets/generate-reference.mjs: sha256:a2581e009f9fe189a02681ad29d410a9e55a7c0a399de498bf5710ef539e6f43
     .claude/skills/gleam-reference-docs/evals/evals.json: sha256:9da907b7e7c07b3529d20d3ee2cf80b6d7f4bc8794ad151b550896268f1f29db
     .claude/skills/gleam-review/SKILL.md: sha256:1d510df9a726b675f5a7de84508eb668828e5f14b36ca96139867b29db502d17
     .claude/skills/gleam-review/references/conventions.md: sha256:cd0b6dee401eff48c7afcb83db73ee5971e2563989f266dfd58bd93b997fe6ed
-    .github/agents/beam-vm-reviewer.agent.md: sha256:ac71fee93fa8a8caa2cca9248fbd06a3666726c59de93b53feb346df8ce2512c
+    .github/agents/beam-vm-reviewer.agent.md: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
     .github/agents/erlang-specialist.agent.md: sha256:4bb6bf9b41f0f62cd0d779e0020b276c05ec68ebb4b913135774d0a12acdf851
   content_hash: sha256:aa48826aed0d947f3b3fcede8721d57256a3f109af2a0a8445623ee80d3a98e1
   is_dev: true
 - repo_url: tylerbutler/apm-base
   name: apm-base
   host: github.com
-  resolved_commit: cf1d0e1736975b7f99607d130c87de989322c8ca
+  resolved_commit: f8c51b44e805ab209a495d2535d4d90b5bcaeab5
   version: 0.2.4
   package_type: apm_package
   deployed_files:
@@ -82,12 +214,12 @@ dependencies:
     .github/instructions/use-ste.instructions.md: sha256:c4512aac8ae85c13578effb80b704cc72a14a6a13a3c5f3db036ca2e899513de
     .github/prompts/create-pr.prompt.md: sha256:5fcb1b64247130aec3a0ebd114ae6d127de44f7e824087033c468d8debb593a2
     .github/prompts/merge-upstream.prompt.md: sha256:bf990755d11f1e73610d9cde3b656aa175c7f63cdd8d069158302c6496a5b77e
-  content_hash: sha256:b79cb18c0a888d9c830388493ae241334ccfa4af00a2851a1c4c002d9de0ac21
+  content_hash: sha256:32acbc32b3d85d1e2221e64f067648370cf1f175f88bc817549f4b3b255a1890
   is_dev: true
 - repo_url: cursor/plugins
   name: unslop
   host: github.com
-  resolved_commit: 7845807642f9ef234a0ec5b4067fa3f11fd92a85
+  resolved_commit: ae5650febf4320793844c12c4adaa937f417f8da
   version: unknown
   virtual_path: pstack/skills/unslop
   is_virtual: true
@@ -108,8 +240,8 @@ dependencies:
   materialization_repo_url: DietrichGebert/ponytail
   name: ponytail
   host: github.com
-  resolved_commit: 2961b52fc1fe6a5a87c7a959a79512e5c2f3ffe5
-  version: 2961b52
+  resolved_commit: 96608e078b2d5ea607c5c3b8b5a54d1c1fba6846
+  version: 96608e0
   depth: 2
   resolved_by: tylerbutler/apm-base
   package_type: marketplace_plugin
@@ -141,19 +273,19 @@ dependencies:
   - .github/hooks/ponytail-copilot-hooks.json
   deployed_file_hashes:
     .agents/skills/ponytail-audit/SKILL.md: sha256:2b3223a02c386d1263e1b08343cb8eb3a53e444cdafb1d79e26c8ec2a8fcad28
-    .agents/skills/ponytail-debt/SKILL.md: sha256:c82bb352bab21e081e71b70430af451b91750760fa776a4a807c8cfa52d4c85f
-    .agents/skills/ponytail-gain/SKILL.md: sha256:60e05eaf65e8e404c8975a944eda9d3ed4ae3345478b3550b0e74570982c187e
-    .agents/skills/ponytail-help/SKILL.md: sha256:2927276bc9c10221ce8bcf80adb798db130cd70eb33a95db91ab3a0d105f5109
+    .agents/skills/ponytail-debt/SKILL.md: sha256:b5ec2762f6ba8c4af9ea7173aa6c9f91b88655a25e43f9de0264f6ce8722b25f
+    .agents/skills/ponytail-gain/SKILL.md: sha256:231034a896d6762e4b5c8468287083422c56b499119976ec9f76821f7d083090
+    .agents/skills/ponytail-help/SKILL.md: sha256:86ab0ce0af70cbeeeef499d5c884873b393f87f86401dcc45553662ce2c1eff9
     .agents/skills/ponytail-review/SKILL.md: sha256:33fe4ebe22a460924e5d4a261e223df22e409cc94ab76182bee9fb91a3ef022e
-    .agents/skills/ponytail/SKILL.md: sha256:ba68ff26239c3c3b05b2a9a47ee0d9a6b93a69639a2555ec87a5d44bffaf2f0c
+    .agents/skills/ponytail/SKILL.md: sha256:9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509
     .claude/skills/ponytail-audit/SKILL.md: sha256:2b3223a02c386d1263e1b08343cb8eb3a53e444cdafb1d79e26c8ec2a8fcad28
-    .claude/skills/ponytail-debt/SKILL.md: sha256:c82bb352bab21e081e71b70430af451b91750760fa776a4a807c8cfa52d4c85f
-    .claude/skills/ponytail-gain/SKILL.md: sha256:60e05eaf65e8e404c8975a944eda9d3ed4ae3345478b3550b0e74570982c187e
-    .claude/skills/ponytail-help/SKILL.md: sha256:2927276bc9c10221ce8bcf80adb798db130cd70eb33a95db91ab3a0d105f5109
+    .claude/skills/ponytail-debt/SKILL.md: sha256:b5ec2762f6ba8c4af9ea7173aa6c9f91b88655a25e43f9de0264f6ce8722b25f
+    .claude/skills/ponytail-gain/SKILL.md: sha256:231034a896d6762e4b5c8468287083422c56b499119976ec9f76821f7d083090
+    .claude/skills/ponytail-help/SKILL.md: sha256:86ab0ce0af70cbeeeef499d5c884873b393f87f86401dcc45553662ce2c1eff9
     .claude/skills/ponytail-review/SKILL.md: sha256:33fe4ebe22a460924e5d4a261e223df22e409cc94ab76182bee9fb91a3ef022e
-    .claude/skills/ponytail/SKILL.md: sha256:ba68ff26239c3c3b05b2a9a47ee0d9a6b93a69639a2555ec87a5d44bffaf2f0c
-    .github/hooks/ponytail-copilot-hooks.json: sha256:72b8481f1a9d093a38ab3de5a358bf9b8a145f8b20c8837aed51c848fef31d17
-  content_hash: sha256:0c6e81cea88fe3c8b4a1d87d498c7363a91ef734e5973ffec9c5b3ebf376ad45
+    .claude/skills/ponytail/SKILL.md: sha256:9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509
+    .github/hooks/ponytail-copilot-hooks.json: sha256:692b5148c3605d2ece2f081834b650c3c43d75cb272a7884dc40e9ce4425ef79
+  content_hash: sha256:b995a71ddd28e617eb0e7968c7ec7a0cc8229b3af20065432ce5ecb1da2d92bc
   is_dev: true
 - repo_url: hardikpandya/stop-slop
   name: stop-slop
@@ -201,7 +333,7 @@ dependencies:
   materialization_repo_url: JuliusBrussee/caveman
   name: caveman-commit
   host: github.com
-  resolved_commit: 2e08b9177c07bb7249a8a2d1a6758e5db281d002
+  resolved_commit: 2e068f735253cce28256744804785f01887d9646
   version: unknown
   virtual_path: skills/caveman-commit
   is_virtual: true
@@ -232,7 +364,43 @@ deployments:
   - tylerbutler/agent-marketplace/plugins/gleam
   - .
   active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:ac71fee93fa8a8caa2cca9248fbd06a3666726c59de93b53feb346df8ce2512c
+  content_hash: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
+- kind: project-relative
+  target: claude
+  value: .claude/agents/bootstrap_orchestrator.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:5c2fa484754f8d582669500d16d5728fe95daff8bd964f8e7f09142c6a666bfc
+- kind: project-relative
+  target: claude
+  value: .claude/agents/codebase_details.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:d80db07e449b57b3b3776d1401cca72a54b6b65a0ab218b86f9064ee4b8167bc
+- kind: project-relative
+  target: claude
+  value: .claude/agents/comprehension.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:974f4972f717dc7b102a9b1407b3a625749149f2ae905727241e919f43cc3fa5
+- kind: project-relative
+  target: claude
+  value: .claude/agents/design_critic.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:cee6294735ce2bd4fea19245852b6eb07cbe8ede7e72a4bfc829f586e4a39d0f
 - kind: project-relative
   target: claude
   value: .claude/agents/erlang-specialist.md
@@ -242,6 +410,51 @@ deployments:
   - tylerbutler/agent-marketplace/plugins/gleam
   active_owner: tylerbutler/agent-marketplace/plugins/gleam
   content_hash: sha256:4bb6bf9b41f0f62cd0d779e0020b276c05ec68ebb4b913135774d0a12acdf851
+- kind: project-relative
+  target: claude
+  value: .claude/agents/implementation_readiness.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:1f6aa61cfe7cb86dc94943ab3b3fd339e5baba533937198fd10edb06dfa64e8f
+- kind: project-relative
+  target: claude
+  value: .claude/agents/structural.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:f0d4fe6faee4e388366b7d653fe353a9b09f45ca1bf5dae29280e351cda7da87
+- kind: project-relative
+  target: claude
+  value: .claude/agents/style.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:9d0d59d7fac7ee479f9beea22d28b8ea20b6fea0215e06bd292a14eb2bb3b692
+- kind: project-relative
+  target: claude
+  value: .claude/agents/synthesizer.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:402e661fa44684ce51246575d169f65003981846f318cf13cf124c8895b4ccab
+- kind: project-relative
+  target: claude
+  value: .claude/agents/zoom_out.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:adc9d7b7db4c304866e61d5e5e446502231abe188ce64656939305e07ae7995f
 - kind: project-relative
   target: claude
   value: .claude/commands/create-pr.md
@@ -430,7 +643,7 @@ deployments:
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:c82bb352bab21e081e71b70430af451b91750760fa776a4a807c8cfa52d4c85f
+  content_hash: sha256:b5ec2762f6ba8c4af9ea7173aa6c9f91b88655a25e43f9de0264f6ce8722b25f
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail-gain
@@ -448,7 +661,7 @@ deployments:
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:60e05eaf65e8e404c8975a944eda9d3ed4ae3345478b3550b0e74570982c187e
+  content_hash: sha256:231034a896d6762e4b5c8468287083422c56b499119976ec9f76821f7d083090
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail-help
@@ -466,7 +679,7 @@ deployments:
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:2927276bc9c10221ce8bcf80adb798db130cd70eb33a95db91ab3a0d105f5109
+  content_hash: sha256:86ab0ce0af70cbeeeef499d5c884873b393f87f86401dcc45553662ce2c1eff9
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail-review
@@ -493,7 +706,7 @@ deployments:
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:ba68ff26239c3c3b05b2a9a47ee0d9a6b93a69639a2555ec87a5d44bffaf2f0c
+  content_hash: sha256:9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509
 - kind: project-relative
   target: claude
   value: .claude/skills/prose-banlist
@@ -631,6 +844,411 @@ deployments:
   content_hash: sha256:c788a282fc75b981b421dfdad5d84ea7f83f946c126daa39cfc7d3f97845e193
 - kind: project-relative
   target: copilot
+  value: .agents/skills/egm-bootstrap
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-bootstrap/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:1082c0ac8e2af65d3babdc1f53b86de218a3a11686159ca6c41f32e685a6dc85
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-bootstrap/TEST.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:835d11b8e2f521220139d94d6c8d6cc1c79186c4403206f2e0a53476d7c0cb77
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-bootstrap/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:e5f83ece63fce8c73329efedd990f912ab395e1e8339f89f83f9e6efef00fb27
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-bootstrap/assets/icon.svg
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:e1f021c3074bc22d982301bff8374cf1c2ff7c032d1834b66fed91a9ab57d370
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-bootstrap/references/templates.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:f49793727cccbd72afdc4a0569a1d8e8138e943d2fc9b0df772b09deaca80437
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-bootstrap/references/worker-return.schema.json
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:f18a3822f60a0f117e1582cccac78a90cf14154afca811d4e81ea3fe562e52a5
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-bootstrap/test_scenarios.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:9ea91ed9fc8763b1e95a2ecf9f529be2a2c1b9b7190816b97963ec932c1bdc17
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-brainstorm
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-brainstorm/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:3842832a8503659df4f0fd85bc79ee9a81f33840c820843d6beb0e6640d24ad5
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-brainstorm/TEST.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:acdf14eecef6eb85fca3958f6abb2686122848a2aee4d6a3617786d398d17dce
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-brainstorm/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:2b858c20f9d3b54cc1e02410a4fd6f7989b36d6d5d152cc87cd0d1082ce3bfc9
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-brainstorm/assets/icon.svg
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:89d894e7e9c10c2ad955ef1964049e508b718e96e8a177f547b240c774498b49
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-brainstorm/test_scenarios.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:b8b136dfc81ba52ffe65db79ec57da6f1214501dad9bdbe0be664cb05928177f
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-draft
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-draft/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:5e901889ba5084112c4626d57c964b54d6585560faef7e32fe3cc83fd74b7f32
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-draft/TEST.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:19872448e7e2f2af41feea9f9de3c78942462c52a76901510ffa52ecaa7a2f4c
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-draft/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:eafc643897b5a4ea7a849bd4211acaf8f3bc31a079f199ef5d04d08b410705b7
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-draft/assets/icon.svg
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:0cca32ed85b4198fdf3566198f92a17c943ee3d9a72d38c2898132b67130aebd
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-draft/references/design_doc.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:eb8e580e4de6be88da33fdbe662d1b39a0fa7a13378d2dd240f82eb712684e0d
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-draft/test_scenarios.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:6c2ae95dfa40469169d65d20a8a16a7e2f8608f4c1a081c01b1f54b2e2ff7e1a
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-drift-report
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-drift-report/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:53a95f790f9276dff08c67373eb4b53bf0444217f5a0fbf796d5718cb5ada49e
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-drift-report/TEST.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:596632190ef932059f49871d12abdcce9b581565f74a32f0f37f488473c68bb2
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-drift-report/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:b54c32c1badc9a73e507f097377324dc31f2839cfef9c426d4dba1c622d5673c
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-drift-report/assets/icon.svg
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:47bc4ecbe493f4454f9b7642f42de9fe41f8a93cbb86aa3ffbb5d58532ea0e2d
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-drift-report/test_scenarios.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:e688d8129d32bc90ad23a86da017175036695fa0872a04dbce591a890ea70788
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-resolve
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-resolve/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:c2ad2924dca8a1c2c4945c45ed2b2223dd45935e8bd2e36f352fe05dff0119d0
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-resolve/TEST.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:ee61f28caf337c2b25b0c589e32a980dfcb80e4d0ef80b9abf35e72c67ae1308
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-resolve/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:7ad63dc69777e6e8b2e3d33cf4105149043038ffb489e750b3f483be7836cf30
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-resolve/assets/icon.svg
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:14ac0ad863fc6ab83ba5fd5f7bd46fd11b609d65f9e482b3fcddd7a139834733
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-resolve/test_scenarios.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:6d667608097ff4c80fb861da2c7580cf7b7f5d01290895ea74422890254a0570
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review-loop
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review-loop/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:68a0f3ec00e456293b9646ef5b699a96bad4be18e559309dd6f83e733d66a8f4
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review-loop/TEST.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:c75ca18d6da52c204bb0b59ee5bed123cf3f8ed7a8fdf47211684f3bf4e15a19
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review-loop/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:2073f27ed2c084c8db710f72dac367d26cb8cbc16aa2195546feb732b47a23ce
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review-loop/assets/icon.svg
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:d6d5537843253fe634d248b6eadd5a5bcd2ef7742e016896eb11c583174eb530
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review-loop/test_scenarios.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:75c0a3811c3acb0084969f95b63806837f81c117873a05fc55c3b3327d5e36be
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:3dc63e8787437c3f21fde30e80ae819164fce30360b5e8cfe4fd1cb4dac844eb
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review/TEST.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:4b436d4542162b2b7c1e864884cf74b23d9410f5d1e95f9e70c0ae38a6f9954d
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:780d8877443f704ee27d504c13d08f304f0bca4c4418f5703f61ae40416fca74
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review/assets/icon.svg
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:02154028864bd8547a45d7c9f55c59f95cb4ce3f57ecb3426f67034ab97d022f
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-review/test_scenarios.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:bca74669372112c5aa31c7a71e1fef76ccedd7a17169e6d3f64c2a2686dcce97
+- kind: project-relative
+  target: copilot
   value: .agents/skills/gleam-reference-docs
   runtime: null
   scope: project
@@ -763,7 +1381,7 @@ deployments:
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:c82bb352bab21e081e71b70430af451b91750760fa776a4a807c8cfa52d4c85f
+  content_hash: sha256:b5ec2762f6ba8c4af9ea7173aa6c9f91b88655a25e43f9de0264f6ce8722b25f
 - kind: project-relative
   target: copilot
   value: .agents/skills/ponytail-gain
@@ -781,7 +1399,7 @@ deployments:
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:60e05eaf65e8e404c8975a944eda9d3ed4ae3345478b3550b0e74570982c187e
+  content_hash: sha256:231034a896d6762e4b5c8468287083422c56b499119976ec9f76821f7d083090
 - kind: project-relative
   target: copilot
   value: .agents/skills/ponytail-help
@@ -799,7 +1417,7 @@ deployments:
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:2927276bc9c10221ce8bcf80adb798db130cd70eb33a95db91ab3a0d105f5109
+  content_hash: sha256:86ab0ce0af70cbeeeef499d5c884873b393f87f86401dcc45553662ce2c1eff9
 - kind: project-relative
   target: copilot
   value: .agents/skills/ponytail-review
@@ -826,7 +1444,7 @@ deployments:
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:ba68ff26239c3c3b05b2a9a47ee0d9a6b93a69639a2555ec87a5d44bffaf2f0c
+  content_hash: sha256:9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509
 - kind: project-relative
   target: copilot
   value: .agents/skills/prose-banlist
@@ -944,7 +1562,43 @@ deployments:
   - tylerbutler/agent-marketplace/plugins/gleam
   - .
   active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:ac71fee93fa8a8caa2cca9248fbd06a3666726c59de93b53feb346df8ce2512c
+  content_hash: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
+- kind: project-relative
+  target: copilot
+  value: .github/agents/bootstrap_orchestrator.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:5c2fa484754f8d582669500d16d5728fe95daff8bd964f8e7f09142c6a666bfc
+- kind: project-relative
+  target: copilot
+  value: .github/agents/codebase_details.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:d80db07e449b57b3b3776d1401cca72a54b6b65a0ab218b86f9064ee4b8167bc
+- kind: project-relative
+  target: copilot
+  value: .github/agents/comprehension.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:974f4972f717dc7b102a9b1407b3a625749149f2ae905727241e919f43cc3fa5
+- kind: project-relative
+  target: copilot
+  value: .github/agents/design_critic.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:cee6294735ce2bd4fea19245852b6eb07cbe8ede7e72a4bfc829f586e4a39d0f
 - kind: project-relative
   target: copilot
   value: .github/agents/erlang-specialist.agent.md
@@ -956,13 +1610,58 @@ deployments:
   content_hash: sha256:4bb6bf9b41f0f62cd0d779e0020b276c05ec68ebb4b913135774d0a12acdf851
 - kind: project-relative
   target: copilot
+  value: .github/agents/implementation_readiness.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:1f6aa61cfe7cb86dc94943ab3b3fd339e5baba533937198fd10edb06dfa64e8f
+- kind: project-relative
+  target: copilot
+  value: .github/agents/structural.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:f0d4fe6faee4e388366b7d653fe353a9b09f45ca1bf5dae29280e351cda7da87
+- kind: project-relative
+  target: copilot
+  value: .github/agents/style.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:9d0d59d7fac7ee479f9beea22d28b8ea20b6fea0215e06bd292a14eb2bb3b692
+- kind: project-relative
+  target: copilot
+  value: .github/agents/synthesizer.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:402e661fa44684ce51246575d169f65003981846f318cf13cf124c8895b4ccab
+- kind: project-relative
+  target: copilot
+  value: .github/agents/zoom_out.agent.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:adc9d7b7db4c304866e61d5e5e446502231abe188ce64656939305e07ae7995f
+- kind: project-relative
+  target: copilot
   value: .github/hooks/ponytail-copilot-hooks.json
   runtime: null
   scope: project
   owners:
   - dietrichgebert/ponytail
   active_owner: dietrichgebert/ponytail
-  content_hash: sha256:72b8481f1a9d093a38ab3de5a358bf9b8a145f8b20c8837aed51c848fef31d17
+  content_hash: sha256:692b5148c3605d2ece2f081834b650c3c43d75cb272a7884dc40e9ce4425ef79
 - kind: project-relative
   target: copilot
   value: .github/instructions/use-ste.instructions.md
@@ -1029,5 +1728,5 @@ local_deployed_files:
 - .claude/agents/beam-vm-reviewer.md
 - .github/agents/beam-vm-reviewer.agent.md
 local_deployed_file_hashes:
-  .claude/agents/beam-vm-reviewer.md: sha256:ac71fee93fa8a8caa2cca9248fbd06a3666726c59de93b53feb346df8ce2512c
-  .github/agents/beam-vm-reviewer.agent.md: sha256:ac71fee93fa8a8caa2cca9248fbd06a3666726c59de93b53feb346df8ce2512c
+  .claude/agents/beam-vm-reviewer.md: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
+  .github/agents/beam-vm-reviewer.agent.md: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a

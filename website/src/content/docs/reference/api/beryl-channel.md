@@ -34,6 +34,7 @@ The channel composition surface: a channel is a topic pattern paired
      channel.accept(0)
      |> channel.on_message(fn(count, message) {
          channel.next(count + 1, [
+           channel.discard_reply(message.reply),
            channel.broadcast(message.event, json.int(count + 1)),
          ])
        })
@@ -69,7 +70,7 @@ The channel composition surface: a channel is a topic pattern paired
 
  Each accepted topic runs in its own worker process under a supervisor
  that its socket actor owns. The socket actor owns the protocol state,
- refs, subscriptions, presence data, and frame writes. The worker runs
+ references, subscriptions, presence data, and frame writes. The worker runs
  `join` during startup. The socket actor waits for a maximum of five
  seconds. The worker also runs `on_message` and `on_info`, and sends its
  actions to the socket actor.
@@ -281,8 +282,10 @@ A `join` callback's answer: join this channel, or refuse.
 
  Start an accepted result with [`accept`](#accept), then pipe it through
  the `on_*` functions for the inputs that the channel handles. Unhandled
- inputs keep the channel joined and produce no actions. [`handler`](#handler)
- seals the private `state` and `info` types.
+ inputs keep the channel joined. The default message callback discards its
+ reply reference without sending a reply; other unhandled inputs produce
+ no actions.
+ [`handler`](#handler) seals the private `state` and `info` types.
 
 <div class="api-entry-anchor" id="api-type-message" aria-hidden="true"></div>
 
@@ -293,7 +296,7 @@ pub type Message {
   Message(
     event: String,
     payload: dynamic.Dynamic,
-    reply: option.Option(socket.ReplyRef)
+    reply: option.Option(socket.ReplyReference)
   )
 }
 ```
@@ -303,6 +306,9 @@ A client message delivered to a joined channel's `on_message` callback.
  `reply` is present only when the client asked for a reply; pass it to
  [`reply_ok`](#reply_ok), [`reply_error`](#reply_error), or
  [`discard_reply`](#discard_reply).
+ A pending reference consumes socket capacity until you reply, discard it, or
+ close the topic. Keep the reference in your state if you will reply on a
+ later turn. [`stay`](#stay) and [`next`](#next) do not release it.
 
 <div class="api-entry-anchor" id="api-type-next" aria-hidden="true"></div>
 
@@ -452,7 +458,7 @@ Leave this channel after applying `actions` in order.
 ### `discard_reply`
 
 ```gleam
-pub fn discard_reply(option.Option(socket.ReplyRef)) -> Action(Active)
+pub fn discard_reply(option.Option(socket.ReplyReference)) -> Action(Active)
 ```
 
 Discard a client message reply handle without sending a wire reply.
@@ -493,6 +499,9 @@ pub fn next(
 ```
 
 Stay joined with the given state, applying `actions` in order.
+
+ Pending reply references remain charged unless an action replies or
+ discards them.
 
 <div class="api-entry-anchor" id="api-function-notify" aria-hidden="true"></div>
 
@@ -541,6 +550,9 @@ pub fn on_message(
 ```
 
 Handle client messages on this channel's topic.
+
+ Reply to each message, discard its reply reference, or keep the reference
+ for a later turn. A custom callback replaces the default callback's reply disposal.
 
 <div class="api-entry-anchor" id="api-function-on_presence" aria-hidden="true"></div>
 
@@ -608,6 +620,10 @@ Run cleanup when the channel ends for any reason: client leave, a
  closes this topic, after it removes the channel instance. This phase
  allows broadcasts, presence untracking, and presence broadcasts. It does
  not allow pushes, replies, or presence tracking.
+
+ Cleanup runs even when socket output capacity is full. Returned actions
+ must fit the callback and socket queue limits. If admission fails, the
+ runtime logs the rejection and closes the topic without those actions.
 
  An `on_terminate` panic does not stop the socket. The runtime logs the
  panic and completes the close without this callback's actions. The worker
@@ -697,7 +713,7 @@ Refuse the join, returning `reason` to the client.
 
 ```gleam
 pub fn reply_error(
-  option.Option(socket.ReplyRef),
+  option.Option(socket.ReplyReference),
   json.Json
 ) -> Action(Active)
 ```
@@ -713,7 +729,7 @@ Reply with an error when a client message supplied a reply handle.
 
 ```gleam
 pub fn reply_ok(
-  option.Option(socket.ReplyRef),
+  option.Option(socket.ReplyReference),
   json.Json
 ) -> Action(Active)
 ```
@@ -732,6 +748,9 @@ pub fn stay(a) -> Next(a)
 ```
 
 Stay joined with the given state and no actions.
+
+ This does not release a message's reply reference. Use
+ `next(state, [discard_reply(message.reply)])` to ignore a client message.
 
 <div class="api-entry-anchor" id="api-function-with_actions" aria-hidden="true"></div>
 
