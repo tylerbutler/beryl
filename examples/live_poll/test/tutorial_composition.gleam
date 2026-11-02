@@ -50,7 +50,7 @@ pub fn update(
   input: socket.Input(Message),
 ) -> socket.Next(Model) {
   case input {
-    socket.Join("guide", _, ref) -> {
+    socket.Join("guide", _, reference) -> {
       let generation = model.guide_generation + 1
       let assert Ok(Nil) =
         socket.notify(model.sender, GuideReady(generation, initial_tip))
@@ -61,20 +61,20 @@ pub fn update(
           guide_deliveries: 0,
           guide_generation: generation,
         ),
-        [socket.AcceptJoin(ref, None)],
+        [socket.AcceptJoin(reference, None)],
       )
     }
-    socket.Join(topic, _, ref) ->
+    socket.Join(topic, _, reference) ->
       case room_name(topic) {
         Ok(room) -> {
           store.join(polls, room)
           socket.Next(Model(..model, topics: set.insert(model.topics, topic)), [
-            socket.AcceptJoin(ref, None),
+            socket.AcceptJoin(reference, None),
           ])
         }
         Error(_) ->
           socket.Next(model, [
-            socket.RejectJoin(ref, json.string("unknown topic")),
+            socket.RejectJoin(reference, json.string("unknown topic")),
           ])
       }
     socket.Message(topic, event, payload, reply) ->
@@ -84,7 +84,7 @@ pub fn update(
             model,
             raw_command(polls, room, topic, event, payload, reply),
           )
-        False, _ | True, Error(_) -> socket.Next(model, [])
+        False, _ | True, Error(_) -> socket.Next(model, discard_reply(reply))
       }
     socket.Info(GuideReady(generation, text)) ->
       case
@@ -138,7 +138,7 @@ fn raw_command(
   topic: String,
   event: String,
   payload: Dynamic,
-  reply: Option(socket.ReplyRef),
+  reply: Option(socket.ReplyReference),
 ) -> List(socket.Effect) {
   case poll.command(event, payload) {
     poll.GetState ->
@@ -152,11 +152,13 @@ fn raw_command(
           ])
         Error(error) ->
           case reply {
-            Some(ref) -> [socket.ReplyError(ref, poll.error_to_json(error))]
+            Some(reference) -> [
+              socket.ReplyError(reference, poll.error_to_json(error)),
+            ]
             None -> []
           }
       }
-    poll.Close | poll.Unsupported -> []
+    poll.Close | poll.Unsupported -> discard_reply(reply)
   }
 }
 
@@ -223,7 +225,7 @@ fn channel_command(
           channel.reply_error(message.reply, poll.error_to_json(error)),
         ]
       }
-    poll.Close | poll.Unsupported -> []
+    poll.Close | poll.Unsupported -> [channel.discard_reply(message.reply)]
   }
 }
 
@@ -239,4 +241,11 @@ fn tip(text: String, count: Int) -> json.Json {
     #("text", json.string(text)),
     #("delivery", json.int(count)),
   ])
+}
+
+fn discard_reply(reply: Option(socket.ReplyReference)) -> List(socket.Effect) {
+  case reply {
+    Some(reference) -> [socket.DiscardReply(reference)]
+    None -> []
+  }
 }

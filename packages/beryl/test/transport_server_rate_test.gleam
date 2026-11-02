@@ -15,7 +15,6 @@
 
 import app_test_helper
 import beryl
-import beryl/internal
 import beryl/socket
 import beryl/transport
 import beryl/transport/server
@@ -26,17 +25,6 @@ import gleam/string
 import gleeunit/should
 import test_helper
 import unitest
-
-/// Palabres's level is a global, singleton setting (see
-/// `beryl/internal.configure`); restore it to beryl's own default so a
-/// `DebugLevel` test doesn't leak verbosity into tests that run after it.
-fn restore_default_logging_level() -> Nil {
-  internal.configure(internal.LoggingConfig(
-    level: internal.Info,
-    include_payloads: False,
-    payload_preview_bytes: 200,
-  ))
-}
 
 fn start_system(config: beryl.Config) -> beryl.Sockets {
   let assert Ok(channels) =
@@ -181,7 +169,7 @@ pub fn message_rate_alone_does_not_shed_at_the_edge_test() -> Nil {
     ))
   let channels = start_system(config)
   let connection = connect(channels, "10.10.10.3")
-  let selector = test_helper.begin_capture()
+  use selector <- test_helper.with_capture()
 
   let connection = send_text(connection, heartbeat("hb-1"))
   let assert Ok(reply) = receive_text(connection)
@@ -197,7 +185,6 @@ pub fn message_rate_alone_does_not_shed_at_the_edge_test() -> Nil {
 
   let _connection = connection
   test_helper.stop_capture()
-  restore_default_logging_level()
 }
 
 // ── Combined accounting ──────────────────────────────────────────────────

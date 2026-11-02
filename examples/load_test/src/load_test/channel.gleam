@@ -24,20 +24,27 @@ pub fn update(
   input: Input(message),
 ) -> Next(Nil) {
   case input {
-    Join("guardrail:forbidden", _, ref) ->
+    Join("guardrail:forbidden", _, reference) ->
       socket.Next(model, [
-        RejectJoin(ref, json.object([#("reason", json.string("forbidden"))])),
+        RejectJoin(
+          reference,
+          json.object([#("reason", json.string("forbidden"))]),
+        ),
       ])
-    Join("bench:" <> _, _, ref) -> socket.Next(model, [AcceptJoin(ref, None)])
-    Join(_, _, ref) ->
+    Join("bench:" <> _, _, reference) ->
+      socket.Next(model, [AcceptJoin(reference, None)])
+    Join(_, _, reference) ->
       socket.Next(model, [
-        RejectJoin(ref, json.object([#("reason", json.string("unmatched"))])),
+        RejectJoin(
+          reference,
+          json.object([#("reason", json.string("unmatched"))]),
+        ),
       ])
-    Message(topic, event_name, payload, ref) -> {
+    Message(topic, event_name, payload, reference) -> {
       bench.wait_elapsed(callback_elapsed_us)
       socket.Next(
         model,
-        message_effects(presence, topic, event_name, payload, ref),
+        message_effects(presence, topic, event_name, payload, reference),
       )
     }
     socket.Binary(..) | socket.Closed(..) | socket.Info(_) ->
@@ -50,22 +57,28 @@ pub fn message_effects(
   topic: String,
   event_name: String,
   payload: Dynamic,
-  ref: Option(socket.ReplyRef),
+  reference: Option(socket.ReplyReference),
 ) -> List(Effect) {
   case event_name {
     "echo" ->
       socket.reply_ok(
-        ref,
+        reference,
         result.unwrap(wire.dynamic_to_json(payload), json.null()),
       )
     "broadcast" | "broadcast_ack" -> {
       let outgoing = result.unwrap(wire.dynamic_to_json(payload), json.null())
-      [Broadcast(topic, event_name, outgoing), ..socket.reply_ok(ref, outgoing)]
+      [
+        Broadcast(topic, event_name, outgoing),
+        ..socket.reply_ok(reference, outgoing)
+      ]
     }
-    "presence_track" -> track(presence, topic, payload, ref)
-    "presence_untrack" -> untrack(presence, topic, payload, ref)
+    "presence_track" -> track(presence, topic, payload, reference)
+    "presence_untrack" -> untrack(presence, topic, payload, reference)
     _ ->
-      reply_error(ref, json.object([#("reason", json.string("unknown_event"))]))
+      reply_error(
+        reference,
+        json.object([#("reason", json.string("unknown_event"))]),
+      )
   }
 }
 
@@ -94,17 +107,17 @@ fn track(
   presence: session_presence.Tracker,
   topic: String,
   payload: Dynamic,
-  ref: Option(socket.ReplyRef),
+  reference: Option(socket.ReplyReference),
 ) -> List(Effect) {
   case key_and_meta(payload) {
     Error(_) ->
       reply_error(
-        ref,
+        reference,
         json.object([#("reason", json.string("invalid_presence"))]),
       )
     Ok(#(key, meta)) -> {
       session_presence.track(presence, topic, key, meta)
-      socket.reply_ok(ref, json.object([#("key", json.string(key))]))
+      socket.reply_ok(reference, json.object([#("key", json.string(key))]))
     }
   }
 }
@@ -113,7 +126,7 @@ fn untrack(
   presence: session_presence.Tracker,
   topic: String,
   payload: Dynamic,
-  ref: Option(socket.ReplyRef),
+  reference: Option(socket.ReplyReference),
 ) -> List(Effect) {
   let decoder = {
     use key <- decode.field("key", decode.string)
@@ -122,21 +135,21 @@ fn untrack(
   case decode.run(payload, decoder) {
     Error(_) ->
       reply_error(
-        ref,
+        reference,
         json.object([#("reason", json.string("invalid_presence"))]),
       )
     Ok(key) -> {
       session_presence.untrack(presence, topic, key)
-      socket.reply_ok(ref, json.object([#("key", json.string(key))]))
+      socket.reply_ok(reference, json.object([#("key", json.string(key))]))
     }
   }
 }
 
 fn reply_error(
-  ref: Option(socket.ReplyRef),
+  reference: Option(socket.ReplyReference),
   payload: json.Json,
 ) -> List(Effect) {
-  case ref {
+  case reference {
     Some(value) -> [ReplyError(value, payload)]
     None -> []
   }

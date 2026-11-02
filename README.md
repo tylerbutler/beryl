@@ -27,8 +27,12 @@ layer. `beryl_mist` provides the [Mist](https://hex.pm/packages/mist)
 WebSocket transport. `beryl_ewe` provides an
 [Ewe](https://hex.pm/packages/ewe) transport with the same API.
 
-beryl supports only the **Erlang/BEAM** runtime. It does not support
-JavaScript.
+The `beryl`, `beryl_mist`, and `beryl_ewe` packages support the
+**Erlang/BEAM** runtime. The separate `beryl_protocol` package supports Erlang
+and JavaScript. It provides pure channel lifecycle transitions without
+supervision, PubSub, or presence. See the
+[Durable Object example](examples/portable_channels/README.md) for a
+JavaScript host that uses Roost for Phoenix framing.
 
 ## Quick start
 
@@ -51,6 +55,7 @@ fn room_channel() -> channel.Handler {
     channel.accept(State(room: context.topic))
     |> channel.on_message(fn(state, message) {
       channel.next(state, [
+        channel.discard_reply(message.reply),
         channel.broadcast(
           message.event,
           wire.dynamic_to_json(message.payload),

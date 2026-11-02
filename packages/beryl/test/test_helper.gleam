@@ -78,6 +78,17 @@ fn start_capture(pid: process.Pid) -> Nil
 @external(erlang, "beryl_log_capture", "stop")
 fn stop_capture_ffi() -> Nil
 
+@external(erlang, "beryl_log_capture", "with_capture")
+fn with_capture_ffi(action: fn() -> a) -> a
+
+/// Capture logs with test-owned host verbosity, restoring it even on failure.
+pub fn with_capture(action: fn(process.Selector(CapturedLog)) -> a) -> a {
+  use <- with_capture_ffi()
+  let selector = captured_selector()
+  drain(selector)
+  action(selector)
+}
+
 fn captured_decoder() -> decode.Decoder(CapturedLog) {
   use message <- decode.field(1, decode.string)
   use metadata <- decode.field(2, decode.dict(decode.string, decode.string))

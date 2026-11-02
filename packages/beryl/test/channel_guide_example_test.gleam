@@ -43,6 +43,7 @@ pub fn room() -> channel.Handler {
     channel.accept(state)
     |> channel.on_message(fn(state: State, message: channel.Message) {
       channel.next(State(..state, sent: state.sent + 1), [
+        channel.discard_reply(message.reply),
         channel.broadcast_from(message.event, json.int(state.sent + 1)),
       ])
     })

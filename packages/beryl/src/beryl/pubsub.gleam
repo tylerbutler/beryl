@@ -24,9 +24,9 @@
 //// Give incompatible payload types distinct, fixed configuration scopes:
 ////
 //// ```gleam
-//// let numbers: pubsub.PubSub(Int) =
+//// let assert Ok(numbers): Result(pubsub.PubSub(Int), _) =
 ////   pubsub.start(pubsub.config_with_scope("my_app_numbers"))
-//// let text: pubsub.PubSub(String) =
+//// let assert Ok(text): Result(pubsub.PubSub(String), _) =
 ////   pubsub.start(pubsub.config_with_scope("my_app_text"))
 //// ```
 ////
@@ -44,11 +44,15 @@
 //// handles remain valid, and repeated joins still create one membership.
 ////
 //// Broadcasts are best-effort. During recovery, broadcasts and subscriber
-//// queries can see empty or partial membership. Broadcasts are not buffered
-//// or replayed, and a `Nil` return does not confirm delivery. Each node must
+//// queries return `Error(ScopeRecovering)` until local replay restores the
+//// memberships of live owners. Queries do not wait for the membership actor:
+//// they read a readiness marker tied to its exact reconciled pg generation.
+//// After local replay they may still see partial remote membership.
+//// Broadcasts are not buffered
+//// or replayed, and `Ok(Nil)` does not confirm delivery. Each node must
 //// start its own scope; local recovery is not a cluster-wide readiness barrier.
 ////
-//// Startup and membership operations can exit with an OTP error during
+//// Startup and membership operations return typed errors during
 //// service failure or recovery. A failed or timed-out join or leave may have
 //// recorded its intent; failure does not roll it back. Retrying is idempotent.
 //// See `start` for startup conflicts and loss of the membership registry.
@@ -56,7 +60,7 @@
 //// ## Quick start
 ////
 //// ```gleam
-//// let pubsub_handle = pubsub.start(pubsub.default_config())
+//// let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 ////
 //// // Sending: broadcast to all subscribers of a topic
 //// pubsub.broadcast(pubsub_handle, "room:lobby", "new_msg", "hello")
@@ -72,12 +76,51 @@
 ////   |> pubsub.selecting(subscriber, RemoteBroadcast)
 //// ```
 
+import beryl/error
 import beryl/pubsub_membership
 import beryl/pubsub_native
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/atom
 import gleam/erlang/process.{type Pid, type Selector}
 import gleam/list
+import gleam/result
+
+/// A PubSub operation could not complete.
+///
+/// Failed or timed-out mutations may already have recorded their intent.
+/// Retrying join and leave is idempotent; errors do not roll intent back.
+pub type PubSubError {
+  StartupFailed(error.OperationFailure)
+  MembershipCallFailed(error.CallError)
+  ScopeRecovering
+  PgUnavailable(error.OperationFailure)
+  OwnerNotLocal
+}
+
+/// Describe an operation failure, preserving bounded underlying diagnostics.
+pub fn describe_error(failure: PubSubError) -> String {
+  case failure {
+    StartupFailed(reason) ->
+      "PubSub startup failed: " <> error.describe_operation_failure(reason)
+    MembershipCallFailed(reason) ->
+      "PubSub membership call failed: " <> error.describe_call_error(reason)
+    ScopeRecovering -> "PubSub scope recovering"
+    PgUnavailable(reason) ->
+      "PubSub pg unavailable: " <> error.describe_operation_failure(reason)
+    OwnerNotLocal -> "PubSub owner is not local"
+  }
+}
+
+fn registry_error_to_pubsub_error(
+  failure: pubsub_membership.RegistryError,
+) -> PubSubError {
+  case failure {
+    pubsub_membership.CallFailed(reason) -> MembershipCallFailed(reason)
+    pubsub_membership.ScopeRecovering -> ScopeRecovering
+    pubsub_membership.PgUnavailable(reason) -> PgUnavailable(reason)
+    pubsub_membership.OwnerNotLocal -> OwnerNotLocal
+  }
+}
 
 /// A PubSub message delivered to subscribers.
 ///
@@ -141,37 +184,23 @@ pub opaque type PubSub(payload) {
 // ── FFI declarations ────────────────────────────────────────────────────────
 
 @external(erlang, "beryl_pubsub_ffi", "start_pg_scope")
-fn ffi_start_pg_scope(scope: atom.Atom) -> pubsub_membership.Registry
-
-@external(erlang, "beryl_pubsub_ffi", "join_group")
-fn ffi_join_group(
+fn ffi_start_pg_scope(
   scope: atom.Atom,
-  registry: pubsub_membership.Registry,
-  group: String,
-  pid: Pid,
-) -> Nil
+) -> Result(pubsub_membership.Registry, error.OperationFailure)
 
-@external(erlang, "beryl_pubsub_ffi", "leave_group")
-fn ffi_leave_group(
-  scope: atom.Atom,
-  registry: pubsub_membership.Registry,
-  group: String,
-  pid: Pid,
-) -> Nil
-
-@external(erlang, "beryl_pubsub_ffi", "get_members")
-fn ffi_get_members(
-  scope: atom.Atom,
-  registry: pubsub_membership.Registry,
-  group: String,
-) -> List(Pid)
-
-@external(erlang, "beryl_pubsub_ffi", "get_local_members")
-fn ffi_get_local_members(
-  scope: atom.Atom,
-  registry: pubsub_membership.Registry,
-  group: String,
-) -> List(Pid)
+fn members(
+  instance: PubSub(payload),
+  topic: String,
+  local_only: Bool,
+) -> Result(List(Pid), PubSubError) {
+  pubsub_membership.members(
+    instance.registry,
+    instance.scope,
+    topic,
+    local_only,
+  )
+  |> result.map_error(registry_error_to_pubsub_error)
+}
 
 /// Recover a `Message(payload)` from the raw process message `selecting`
 /// matched on. `selecting` checks only the scope tag and arity; field types
@@ -220,26 +249,34 @@ pub fn config_with_scope(name: String) -> PubSubConfig {
 /// The registry restores live local subscriptions after a `pg` process restart.
 /// Each participating node must start the same scope.
 ///
-/// Startup errors cause an OTP exit instead of returning a handle. A scope
+/// Startup errors return `StartupFailed` with the native reason. A scope
 /// already owned by an external `pg` process is a startup conflict; beryl does
 /// not adopt or stop it. Startup waits for supervision and local membership
 /// reconciliation, but can fail if the service is recovering.
 ///
 /// Loss of the registry itself, including supervisor restart-intensity
 /// exhaustion, invalidates existing handles. Their membership, broadcast, and
-/// subscriber-query calls exit rather than silently using an empty replacement.
+/// subscriber-query calls return `MembershipCallFailed` rather than silently
+/// using an empty replacement.
 /// Call `start` again, create new subscribers, and rejoin their topics.
 /// This is not persistent storage across service or node failure.
 ///
 /// `payload` is fixed by how the returned value is used or annotated at the
-/// call site. For example: `pubsub.start(config) : PubSub(MySyncPayload)`.
+/// call site. For example, annotate the successful handle as
+/// `PubSub(MySyncPayload)`.
 /// Starting the same scope again returns another handle to the same runtime
 /// instance, so every use of that scope must choose the same payload type.
 /// These calls do not create isolated instances or check payload compatibility.
 /// Use distinct, fixed scopes for incompatible types, as in the module example.
-pub fn start(config: PubSubConfig) -> PubSub(payload) {
-  let registry = ffi_start_pg_scope(config.scope)
-  PubSub(scope: config.scope, registry: registry)
+pub fn start(config: PubSubConfig) -> Result(PubSub(payload), PubSubError) {
+  use registry <- result.try(
+    ffi_start_pg_scope(config.scope) |> result.map_error(StartupFailed),
+  )
+  use _ <- result.try(
+    pubsub_membership.ready(registry)
+    |> result.map_error(registry_error_to_pubsub_error),
+  )
+  Ok(PubSub(scope: config.scope, registry: registry))
 }
 
 /// A typed subscription handle owned by a single process.
@@ -306,11 +343,16 @@ pub fn subscriber(pubsub_instance: PubSub(payload)) -> Subscriber(payload) {
 /// it once.
 ///
 /// The registry retains the membership through `pg` restarts and removes it
-/// when its owner exits. During recovery this call can exit with an OTP error.
+/// when its owner exits. During recovery this call can return `ScopeRecovering`
+/// or `PgUnavailable`. Actor-call failures return `MembershipCallFailed`.
 /// The call uses a five-second registry timeout; an error or timeout does not
 /// roll back intent already recorded by the registry. Retrying is idempotent.
-pub fn join(subscriber: Subscriber(payload), topic: String) -> Nil {
-  ffi_join_group(subscriber.scope, subscriber.registry, topic, subscriber.owner)
+pub fn join(
+  subscriber: Subscriber(payload),
+  topic: String,
+) -> Result(Nil, PubSubError) {
+  pubsub_membership.join(subscriber.registry, topic, subscriber.owner)
+  |> result.map_error(registry_error_to_pubsub_error)
 }
 
 /// Leave a topic previously joined with `join`.
@@ -320,15 +362,14 @@ pub fn join(subscriber: Subscriber(payload), topic: String) -> Nil {
 /// harmless. Other owners, scopes, and topics are unaffected.
 ///
 /// A leave removes recovery intent as well as live membership. Like `join`,
-/// it can exit during recovery or after a five-second registry timeout.
+/// it returns a typed error during recovery or after a five-second timeout.
 /// A failed call may still take effect; retrying is idempotent.
-pub fn leave(subscriber: Subscriber(payload), topic: String) -> Nil {
-  ffi_leave_group(
-    subscriber.scope,
-    subscriber.registry,
-    topic,
-    subscriber.owner,
-  )
+pub fn leave(
+  subscriber: Subscriber(payload),
+  topic: String,
+) -> Result(Nil, PubSubError) {
+  pubsub_membership.leave(subscriber.registry, topic, subscriber.owner)
+  |> result.map_error(registry_error_to_pubsub_error)
 }
 
 /// Queue a join for the runtime router. The registry retries reconciliation.
@@ -391,19 +432,24 @@ pub fn selecting(
 }
 
 /// Broadcast a message to all topic subscribers on all nodes.
+///
+/// Registry and scope failures are returned before sending. Success means
+/// best-effort dispatch, not confirmed delivery.
+/// This does not wait for the registry actor; local recovery returns
+/// `ScopeRecovering` until memberships have been replayed.
 pub fn broadcast(
   pubsub_instance: PubSub(payload),
   topic: String,
   event: String,
   payload: payload,
-) -> Nil {
+) -> Result(Nil, PubSubError) {
   let message =
     Message(topic: topic, event: event, payload: payload, from: System)
-  let members =
-    ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
+  use members <- result.try(members(pubsub_instance, topic, False))
   list.each(members, fn(pid) {
     send_to_pid(pid, pubsub_instance.scope, message)
   })
+  Ok(Nil)
 }
 
 /// Broadcast a message to all subscribers except a specific PID.
@@ -413,12 +459,14 @@ pub fn broadcast_from(
   topic: String,
   event: String,
   payload: payload,
-) -> Nil {
+) -> Result(Nil, PubSubError) {
   let message =
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
-  ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
+  use members <- result.try(members(pubsub_instance, topic, False))
+  members
   |> list.filter(fn(pid) { pid != from })
   |> list.each(send_to_pid(_, pubsub_instance.scope, message))
+  Ok(Nil)
 }
 
 /// Send an internal message to one member obtained from `subscribers`.
@@ -449,7 +497,7 @@ pub fn broadcast_from_socket(
   topic: String,
   event: String,
   payload: payload,
-) -> Nil {
+) -> Result(Nil, PubSubError) {
   let message =
     Message(
       topic: topic,
@@ -457,9 +505,11 @@ pub fn broadcast_from_socket(
       payload: payload,
       from: FromSocket(from, except_socket_id),
     )
-  ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
+  use members <- result.try(members(pubsub_instance, topic, False))
+  members
   |> list.filter(fn(pid) { pid != from })
   |> list.each(send_to_pid(_, pubsub_instance.scope, message))
+  Ok(Nil)
 }
 
 /// Broadcast a message only to subscribers on the current node.
@@ -468,18 +518,14 @@ pub fn local_broadcast(
   topic: String,
   event: String,
   payload: payload,
-) -> Nil {
+) -> Result(Nil, PubSubError) {
   let message =
     Message(topic: topic, event: event, payload: payload, from: System)
-  let members =
-    ffi_get_local_members(
-      pubsub_instance.scope,
-      pubsub_instance.registry,
-      topic,
-    )
+  use members <- result.try(members(pubsub_instance, topic, True))
   list.each(members, fn(pid) {
     send_to_pid(pid, pubsub_instance.scope, message)
   })
+  Ok(Nil)
 }
 
 /// Broadcast to other local subscribers using the unchanged scoped wire tuple.
@@ -490,32 +536,35 @@ pub fn local_broadcast_from(
   topic: String,
   event: String,
   payload: payload,
-) -> Nil {
+) -> Result(Nil, PubSubError) {
   let message =
     Message(topic: topic, event: event, payload: payload, from: FromPid(from))
-  ffi_get_local_members(pubsub_instance.scope, pubsub_instance.registry, topic)
+  use members <- result.try(members(pubsub_instance, topic, True))
+  members
   |> list.filter(fn(pid) { pid != from })
   |> list.each(send_to_pid(_, pubsub_instance.scope, message))
+  Ok(Nil)
 }
 
 /// Return all topic subscribers on all nodes.
+///
+/// Recovery and registry failures are errors, not empty subscriber lists.
+/// The query does not message or wait for the registry actor. Local recovery
+/// returns `ScopeRecovering` until the original registry has reconciled the
+/// current pg generation; remote membership may still be partial afterwards.
 pub fn subscribers(
   pubsub_instance: PubSub(payload),
   topic: String,
-) -> List(Pid) {
-  ffi_get_members(pubsub_instance.scope, pubsub_instance.registry, topic)
+) -> Result(List(Pid), PubSubError) {
+  members(pubsub_instance, topic, False)
 }
 
 /// Return the number of topic subscribers on all nodes.
 pub fn subscriber_count(
   pubsub_instance: PubSub(payload),
   topic: String,
-) -> Int {
-  list.length(ffi_get_members(
-    pubsub_instance.scope,
-    pubsub_instance.registry,
-    topic,
-  ))
+) -> Result(Int, PubSubError) {
+  subscribers(pubsub_instance, topic) |> result.map(list.length)
 }
 
 fn send_to_pid(pid: Pid, scope: atom.Atom, message: Message(payload)) -> Nil {
