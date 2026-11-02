@@ -1,6 +1,6 @@
 import beryl/socket.{
-  type Effect, type Input, type Next, type ReplyRef, AcceptJoin, RejectJoin,
-  ReplyError, ReplyOk,
+  type Effect, type Input, type Next, type ReplyReference, AcceptJoin,
+  RejectJoin, ReplyError, ReplyOk,
 }
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
@@ -54,7 +54,7 @@ fn handle_message(
   store: store.Store,
   event: String,
   payload: Dynamic,
-  ref: Option(ReplyRef),
+  ref: Option(ReplyReference),
 ) -> List(Effect) {
   case event {
     "sync" ->
@@ -82,7 +82,7 @@ fn handle_message(
 fn add_todo(
   store: store.Store,
   payload: Dynamic,
-  ref: Option(ReplyRef),
+  ref: Option(ReplyReference),
 ) -> List(Effect) {
   case decode.run(payload, decode.at(["text"], decode.string)) {
     Error(_) ->
@@ -123,7 +123,7 @@ fn add_todo(
 fn toggle_todo(
   store: store.Store,
   payload: Dynamic,
-  ref: Option(ReplyRef),
+  ref: Option(ReplyReference),
 ) -> List(Effect) {
   case decode_id(payload) {
     Error(Nil) ->
@@ -158,7 +158,7 @@ fn toggle_todo(
 fn delete_todo(
   store: store.Store,
   payload: Dynamic,
-  ref: Option(ReplyRef),
+  ref: Option(ReplyReference),
 ) -> List(Effect) {
   case decode_id(payload) {
     Error(Nil) ->
@@ -195,7 +195,7 @@ fn decode_id(payload: Dynamic) -> Result(Int, Nil) {
   |> result.replace_error(Nil)
 }
 
-fn reply_ok(ref: Option(ReplyRef), payload: json.Json) -> List(Effect) {
+fn reply_ok(ref: Option(ReplyReference), payload: json.Json) -> List(Effect) {
   case ref {
     Some(ref) -> [ReplyOk(ref, payload)]
     None -> []
@@ -203,7 +203,7 @@ fn reply_ok(ref: Option(ReplyRef), payload: json.Json) -> List(Effect) {
 }
 
 fn reply_error(
-  ref: Option(ReplyRef),
+  ref: Option(ReplyReference),
   code: String,
   message: String,
 ) -> List(Effect) {

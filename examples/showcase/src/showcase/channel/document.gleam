@@ -102,6 +102,7 @@ fn open(
                   encoded,
                 )
                 channel.next(state, [
+                  channel.discard_reply(message.reply),
                   channel.broadcast_from(
                     "doc_state",
                     json.object([#("state", json.string(encoded))]),

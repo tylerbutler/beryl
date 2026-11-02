@@ -172,6 +172,10 @@ export default defineConfig({
 									slug: "guides/websocket",
 								},
 								{
+									label: "Portable channel hosts",
+									slug: "guides/portable-host",
+								},
+								{
 									label: "Authentication",
 									slug: "guides/authentication",
 								},

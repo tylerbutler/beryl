@@ -7,16 +7,16 @@ import gleeunit/should
 import todo_server/app
 import todo_server/store
 
-fn join_ref(topic: String) -> socket.JoinRef {
-  socket.make_join_ref(
+fn join_ref(topic: String) -> socket.JoinReference {
+  socket.make_join_reference(
     topic: topic,
     join_ref: Some("join"),
     message_ref: Some("1"),
   )
 }
 
-fn message_ref() -> socket.ReplyRef {
-  socket.make_message_ref(
+fn message_ref() -> socket.ReplyReference {
+  socket.make_reply_reference(
     topic: "todos",
     join_ref: Some("join"),
     message_ref: Some("2"),

@@ -347,7 +347,9 @@ Size-check, rate-check, and decode an inbound text frame in the
 
  Oversized frames return `Stop` and close the connection. The function
  silently drops over-rate frames. It logs and drops frames that it cannot
- decode.
+ decode at debug level. With explicit payload logging opt-in, only this
+ text decode diagnostic includes a grapheme-bounded `frame_preview`.
+ Binary frames, successful frames, and connect metadata have no preview.
 
 <div class="api-entry-anchor" id="api-function-handler" aria-hidden="true"></div>
 
@@ -397,14 +399,16 @@ Initialize a new WebSocket connection in its connection process.
  select on it and act on each request. If the request owner died before the
  transfer, the reservation bind fails, runtime admission is skipped, and
  the selector immediately delivers `Close`. Call `close_connection` when
- the connection closes. `logger_name` names the transport in decode warnings
+ the connection closes. `logger_name` names the transport in decode diagnostics
  (e.g. `"beryl_mist"`). `codec` is the codec negotiated for this socket;
  `None` inherits the app-wide codec.
 
  `force_close` must immediately close the underlying socket. beryl calls
  it if binding fails or the outbound budget is full, so a blocked writer
  cannot retain an unbounded mailbox. Return an error when the close fails
- unexpectedly; beryl logs that failure.
+ unexpectedly; beryl logs that failure. beryl releases the connection slot
+ and reports the disconnect before calling it, since a forced stop can
+ bypass the transport's normal close callback.
 
 <div class="api-entry-anchor" id="api-function-is_websocket_request" aria-hidden="true"></div>
 

@@ -1,13 +1,74 @@
 -module(beryl_pubsub_test_ffi).
 -export([is_scoped_wire_message/5, drain_messages/5,
          kill_scope/1, recovered/4, unmanaged_scope_rejected/1,
-         during_outage/2, unavailable/1, kill_registry/1, scope_pid/1,
+         during_outage/2, kill_registry/1, scope_pid/1,
          healthy_ready_reductions/2, timeout_call_cleans_up/1,
          with_malformed_messages/2, with_suspended_registry/2,
-         membership_intent_size/1, nonlocal_leave_preserves_registry/1]).
+         membership_intent_size/1, nonlocal_leave_preserves_registry/1,
+         call_target/1, operation_failure/1, with_unmanaged_scope/2,
+         with_unreconciled_scope/2]).
+
+with_unreconciled_scope(Scope, Action) ->
+    with_suspended_registry(Scope, fun(_RegistryPid) ->
+        OldPid = kill_scope(Scope),
+        Deadline = erlang:monotonic_time(millisecond) + 5000,
+        NewPid = await_restarted_scope(Scope, OldPid, Deadline),
+        %% The new pg has finished init but cannot have replayed local intent:
+        %% the original registry is suspended with its old readiness marker.
+        _ = sys:get_state(NewPid, 1000),
+        [] = pg:get_local_members(Scope, <<"room:unreconciled">>),
+        Action()
+    end).
+
+await_restarted_scope(Scope, OldPid, Deadline) ->
+    case whereis(Scope) of
+        Pid when is_pid(Pid), Pid =/= OldPid -> Pid;
+        _ ->
+            case erlang:monotonic_time(millisecond) < Deadline of
+                true ->
+                    receive after 1 -> ok end,
+                    await_restarted_scope(Scope, OldPid, Deadline);
+                false -> error(scope_did_not_restart)
+            end
+    end.
+
+%% Test targets speak exactly the Subject(Subject(Nil)) protocol. A crashing
+%% target exits only after receiving the request, exercising the DOWN branch.
+call_target(<<"down">>) ->
+    Pid = spawn(fun() ->
+        receive {call_test, _Reply} ->
+            exit({test_call_failure, 42, <<"original">>})
+        end
+    end),
+    {subject, Pid, call_test};
+call_target(<<"success">>) ->
+    Pid = spawn(fun() ->
+        receive {call_test, Reply} ->
+            'gleam@erlang@process':send(Reply, nil)
+        end
+    end),
+    {subject, Pid, call_test}.
+
+operation_failure(<<"large">>) ->
+    {native_failure, lists:duplicate(10000, <<"details">>)};
+operation_failure(<<"unicode">>) ->
+    %% Printable under both default latin1 and +pc unicode; ~tP legitimately
+    %% renders CJK charlists as integer lists under the default printable range.
+    {native_failure, [$c, $a, $f, 16#00E9]}.
+
+with_unmanaged_scope(Scope, Action) ->
+    {ok, Pid} = pg:start(Scope),
+    try Action()
+    after gen_server:stop(Pid)
+    end.
+
+start_ready(Scope) ->
+    {ok, Registry} = beryl_pubsub_ffi:start_pg_scope(Scope),
+    {ok, nil} = 'beryl@pubsub_membership':ready(Registry),
+    Registry.
 
 with_suspended_registry(Scope, Action) ->
-    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Registry = start_ready(Scope),
     Pid = 'beryl@pubsub_membership':pid(Registry),
     true = erlang:suspend_process(Pid),
     try Action(Pid)
@@ -20,7 +81,7 @@ membership_intent_size(Owner) ->
         ets:info(Table, owner) =:= Owner]).
 
 nonlocal_leave_preserves_registry(Scope) ->
-    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Registry = start_ready(Scope),
     RegistryPid = 'beryl@pubsub_membership':pid(Registry),
     {ok, Peer, _Node} = peer:start_link(#{
         name => peer:random_name("beryl_leave"),
@@ -34,15 +95,15 @@ nonlocal_leave_preserves_registry(Scope) ->
         {ok, nil} = 'beryl@pubsub_membership':ready(Registry),
         {ok, nil} = 'beryl@pubsub_membership':join(
             Registry, <<"room:healthy">>, self()),
-        Instance = 'beryl@pubsub':start(
+        {ok, Instance} = 'beryl@pubsub':start(
             'beryl@pubsub':config_with_scope(atom_to_binary(Scope))),
-        nil = 'beryl@pubsub':broadcast(
+        {ok, nil} = 'beryl@pubsub':broadcast(
             Instance, <<"room:healthy">>, <<"ok">>, nil),
         receive {Scope, <<"room:healthy">>, <<"ok">>, nil, system} -> ok
         after 1000 -> error(healthy_delivery_failed)
         end,
         RegistryPid = 'beryl@pubsub_membership':pid(
-            beryl_pubsub_ffi:start_pg_scope(Scope)),
+            start_ready(Scope)),
         {ok, nil} = 'beryl@pubsub_membership':leave(
             Registry, <<"room:healthy">>, self()),
         true
@@ -66,7 +127,7 @@ with_malformed_messages(Scope, Receive) ->
 scope_pid(Scope) -> whereis(Scope).
 
 healthy_ready_reductions(Scope, OwnerCount) ->
-    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Registry = start_ready(Scope),
     Owners = [spawn(fun owner_loop/0) || _ <- lists:seq(1, OwnerCount)],
     lists:foreach(fun({Owner, Index}) ->
         {ok, nil} = 'beryl@pubsub_membership':join(
@@ -85,16 +146,15 @@ healthy_ready_reductions(Scope, OwnerCount) ->
     After - Before.
 
 timeout_call_cleans_up(Scope) ->
-    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Registry = start_ready(Scope),
     RegistryPid = 'beryl@pubsub_membership':pid(Registry),
     Parent = self(),
     Worker = spawn(fun() ->
         {monitors, BeforeMonitors} = process_info(self(), monitors),
         true = erlang:suspend_process(RegistryPid),
         try
-            try 'beryl@pubsub_membership':ready(Registry)
-            catch _:_ -> ok
-            end
+            {error, {call_failed, call_timed_out}} =
+                'beryl@pubsub_membership':ready(Registry)
         after
             erlang:resume_process(RegistryPid)
         end,
@@ -132,16 +192,8 @@ during_outage(Scope, Operation) ->
         ok = sys:resume(Supervisor)
     end.
 
-unavailable(Operation) ->
-    try Operation(), false
-    catch
-        exit:{pubsub_unavailable, _Scope, _Reason} -> true;
-        exit:{pubsub_start_failed, _Scope, _Reason} -> true;
-        exit:{noproc, {gen_server, call, _Args}} -> true
-    end.
-
 kill_registry(Scope) ->
-    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Registry = start_ready(Scope),
     Pid = 'beryl@pubsub_membership':pid(Registry),
     Ref = monitor(process, Pid),
     exit(Pid, kill),
@@ -165,15 +217,12 @@ recovered(Scope, OldPid, Topic, Count) ->
 unmanaged_scope_rejected(Scope) ->
     {ok, Pid} = pg:start(Scope),
     Rejected = try
-        beryl_pubsub_ffi:start_pg_scope(Scope),
-        false
-    catch
-        exit:{pubsub_start_failed, Scope, _Reason} ->
-            is_process_alive(Pid)
+        {error, _Reason} = beryl_pubsub_ffi:start_pg_scope(Scope),
+        is_process_alive(Pid)
     after
         gen_server:stop(Pid)
     end,
-    Registry = beryl_pubsub_ffi:start_pg_scope(Scope),
+    Registry = start_ready(Scope),
     Rejected andalso
         is_pid('beryl@pubsub_membership':pid(Registry)).
 

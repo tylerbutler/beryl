@@ -65,7 +65,7 @@ pub fn main() {
       fn(_req) { panic as "not implemented" },
     )
     |> ewe.new
-    |> ewe.listening(port: 8000)
+    |> ewe.listening(on: 8000)
     |> ewe.start
 
   process.sleep_forever()
