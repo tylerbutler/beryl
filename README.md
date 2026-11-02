@@ -7,6 +7,14 @@
 > beryl is not yet 1.0. Minor releases can change the API or remove features.
 > Treat beryl as experimental. Try it and send feedback.
 
+## System overview
+
+beryl separates a portable channel state machine from its BEAM runtime and
+WebSocket transports. Applications use typed socket dispatch or composed
+channel handlers. The runtime manages processes, presence, and PubSub;
+transport adapters perform WebSocket I/O. See the [package contracts](./packages/README.md)
+for the interfaces and ownership boundaries.
+
 ## Install
 
 GitHub hosts the current beryl packages. Hex does not. Add these dependencies
@@ -43,6 +51,7 @@ import beryl/wire
 import beryl/channel
 import beryl_mist as mist_transport
 import gleam/erlang/process
+import gleam/json
 import gleam/otp/static_supervisor
 import mist
 
@@ -54,13 +63,17 @@ fn room_channel() -> channel.Handler {
   channel.handler("room:*", fn(context) {
     channel.accept(State(room: context.topic))
     |> channel.on_message(fn(state, message) {
-      channel.next(state, [
-        channel.discard_reply(message.reply),
-        channel.broadcast(
-          message.event,
-          wire.dynamic_to_json(message.payload),
-        ),
-      ])
+      case wire.dynamic_to_json(message.payload) {
+        Ok(payload) ->
+          channel.next(state, [
+            channel.discard_reply(message.reply),
+            channel.broadcast(message.event, payload),
+          ])
+        Error(Nil) ->
+          channel.next(state, [
+            channel.reply_error(message.reply, json.string("Invalid JSON payload")),
+          ])
+      }
     })
   })
 }
@@ -140,6 +153,75 @@ flowchart TD
 | `beryl/channel` | Typed channel composition module in the `beryl` package. |
 | `aquamarine` | Client-side channel runtime that uses Roost for Phoenix compatibility. |
 
+## Interface
+
+`beryl.child_spec` and `beryl/channel.child_spec` construct supervised
+application specifications. Mist and Ewe expose `upgrade` and `handler`;
+both use `beryl/transport/server.TransportConfig`. The portable
+`beryl_protocol.step` returns state and ordered actions for a host to execute.
+The [package blueprint](./packages/README.md) links each interface to its source.
+
+### Subdirectories and system boundaries
+
+| Directory | Contract |
+|---|---|
+| [Packages](./packages/README.md) | Portable protocol, BEAM runtime, and Mist/Ewe adapters. |
+| [Examples](./examples/README.md) | Runnable servers, browser clients, tutorial checkpoints, and a Durable Object host. |
+| [Website](./website/README.md) | Astro/Starlight site, interactive demos, and documentation generators. |
+| [Scripts](./scripts/README.md) | Dependency preparation, portable dependency checks, and Erlang FFI analysis. |
+| [Load testing](./load/README.md) | k6 workloads, client lifecycle, and result reporting. |
+| [Benchmarks](./benchmarks/README.md) | Opt-in codec fixtures and measurements. |
+| [Design documentation](./docs/README.md) | Design notes and the Marp rendering hook. |
+
+## Global invariants
+
+- Keep protocol transitions separate from host I/O. Hosts supply time and
+  connection identity and execute returned actions in order.
+  (`packages/beryl_protocol/src/beryl_protocol.gleam:new`, `step`, `Action`)
+- Supply a codec and preserve exact join/reply capabilities. Construct
+  configuration through its public factory and builders.
+  (`packages/beryl/src/beryl.gleam:config`,
+  `packages/beryl/src/beryl/socket.gleam:JoinReference`, `ReplyReference`)
+- Delegate adapter admission, frame handling, and cleanup to the shared
+  transport server.
+  (`packages/beryl/src/beryl/transport/server.gleam:init_connection`,
+  `close_connection`)
+- Keep `LocalNode` presence diffs local. PubSub participants sharing a scope
+  must use compatible payloads and the scoped five-element wire tuple.
+  (`packages/beryl/src/beryl/presence.gleam:DiffScope`,
+  `packages/beryl/src/beryl/pubsub.gleam:send_to_pid`)
+- The workspace bundles `beryl_protocol` into beryl. It excludes examples
+  and benchmarks from release and keeps benchmark dependencies and execution
+  opt-in. (`gleam.toml:tools.trellis.publish.bundle`,
+  `gleam.toml:tools.trellis.exclude`)
+- Edit generated API documentation at its Gleam source, then regenerate it.
+  (`website/scripts/generate-reference.mjs:generateReference`)
+
+## Global side effects
+
+Starting a BEAM application creates supervised processes, queues, monitors,
+and timers. Configured presence and PubSub change shared state and send
+inter-node messages; adapters write WebSocket frames. The portable protocol
+performs no I/O. See the [package effects](./packages/README.md#side-effects).
+
+Example hosts can also change browser DOM state, write bundles, or persist
+Durable Object state. Documentation generators write files and can invoke
+tools or make a release-tag lookup. Dependency setup downloads packages;
+load tests send traffic to the selected target. Read the corresponding
+directory contract before running these commands.
+
+## System verification
+
+From the repository root, `just test` runs workspace tests, including beryl's
+serial and distributed lanes. Workspace exclusions mean it does not cover
+every example or benchmark (`justfile:test`, `test-distributed`,
+`gleam.toml:tools.trellis.exclude.test`).
+
+Use `just protocol-test` for both protocol targets, `just beam-check` for
+Erlang FFI, and the child contracts for browser, portable-host, website, load,
+and benchmark checks. `just ci` runs the main CI checks (`justfile:protocol-test`,
+`beam-check`, `ci`).
+
 ## Features
 
 - **Channels:** Register typed handlers by topic pattern. Each joined topic has
@@ -160,13 +242,15 @@ flowchart TD
 
 ## Examples
 
-The `examples/` directory contains four runnable demos:
+The `examples/` directory includes these runnable demos. The
+[example contracts](./examples/README.md) also cover tutorial checkpoints,
+Lustre presence, the portable host, and shared helpers.
 
 | Example | What it demonstrates |
 |---------|----------------------|
 | [`examples/cursors`](examples/cursors/) | App-side dispatch, topic wildcards, session presence, `BroadcastFrom`, rate limiting |
-| [`examples/chatrooms`](examples/chatrooms/) | Channel handlers, auth, join rejection, replies, pushes, groups, validation, typing indicators |
-| [`examples/collab_docs`](examples/collab_docs/) | Channel handlers, client-side CRDT document blocks, segment wildcards, conflict resolution |
+| [`examples/chatrooms`](examples/chatrooms/) | Channel handlers, auth, join rejection, replies, broadcasts, groups, validation, typing indicators |
+| [`examples/collab_docs`](examples/collab_docs/) | Channel handlers, client-side CRDT document blocks, tenant/document topic validation, conflict resolution |
 | [`examples/showcase`](examples/showcase/) | End-to-end `beryl/channel` composition across every subsystem |
 
 See the [Examples page](https://beryl.tylerbutler.com/examples/) for a full
@@ -273,11 +357,12 @@ A hostile client can exhaust node memory through one connection in two ways:
   one buffer.
 
 In both cases, the transport receive buffer has no size limit before beryl
-checks the frame size. **beryl's per-IP connection limit
-(`with_max_connections_per_ip`), per-connection frame-rate limit
-(`with_frame_rate`), and per-socket message-rate limit (`with_message_rate`)
+checks the frame size. **beryl's per-connection frame-rate limit
+(`with_frame_rate`) and per-socket message-rate limit (`with_message_rate`)
 do not prevent this attack**. These limits run after frame assembly. The
-buffer can grow in one accepted connection before dispatch.
+per-IP connection limit (`with_max_connections_per_ip`) runs before the
+WebSocket upgrade, but does not bound memory within an admitted connection.
+The buffer can grow in one accepted connection before dispatch.
 
 To limit transport memory in production, you **must** put an edge proxy or load
 balancer in front of beryl. You can use nginx, HAProxy, Envoy, or a cloud load

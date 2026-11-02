@@ -8,6 +8,43 @@ real-time sockets.
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
 > releases, and quality should not be considered production-ready.
 
+## Overview
+
+The adapter exposes Ewe request handlers and delegates shared admission,
+configuration, and frame policy to beryl's public transport server
+(`src/beryl_ewe.gleam:upgrade`, `src/beryl_ewe.gleam:handler`).
+
+## Interface
+
+- `upgrade(request, channels, config, next)` attempts a WebSocket upgrade
+  (`src/beryl_ewe.gleam:upgrade`).
+- `handler(channels, config, http_fallback)` combines WebSocket and HTTP
+  handling (`src/beryl_ewe.gleam:handler`).
+- Configuration uses the imported `beryl/transport/server.TransportConfig`.
+  [Source contract](./src/README.md) describes the Ewe callbacks and lifecycle.
+- The manifest declares runtime dependencies on beryl and Ewe; this package
+  does not implement the shared server policy (`gleam.toml:dependencies`,
+  `src/beryl_ewe.gleam:upgrade`).
+
+## Invariants
+
+- CONNECT without Host gets a header from request host/port. CONNECT and
+  recognized WebSocket requests use upgrade; other requests use the fallback
+  (`src/beryl_ewe.gleam:upgrade`, `src/beryl_ewe.gleam:handler`).
+- Inbound frames and outbound write completion pass through shared server
+  lifecycle functions (`src/beryl_ewe.gleam:on_message`).
+
+## Side effects
+
+Ewe manages the WebSocket lifecycle and writes text/binary frames. Shared server
+calls admit/register/route/clean up the connection; force-close kills its owner
+process (`src/beryl_ewe.gleam:do_upgrade`, `src/beryl_ewe.gleam:on_message`,
+`src/beryl_ewe.gleam:force_close`).
+
+## Verification
+
+From the repository root: `just test beryl_ewe`.
+
 ## Installation
 
 beryl packages are currently distributed from GitHub, not Hex:
@@ -80,9 +117,9 @@ limits at the edge.
 
 It mirrors the
 [`beryl_mist`](https://github.com/tylerbutler/beryl/tree/main/packages/beryl_mist)
-package: both transports expose the same config-builder and handler API, so you
-can run beryl sockets on either web server by choosing the matching transport
-package.
+package: both use the shared transport-server config builders and matching
+handler APIs, so you can run beryl sockets on either web server by choosing the
+matching transport package.
 
 ## Documentation
 
