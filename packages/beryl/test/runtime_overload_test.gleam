@@ -3,6 +3,7 @@ import beryl
 import beryl/channel
 import beryl/group
 import beryl/overload
+import beryl/presence
 import beryl/snapshot
 import beryl/socket
 import beryl/transport
@@ -16,18 +17,214 @@ import gleam/option
 import gleam/string
 import gleeunit/should
 import test_helper
+import unitest
 
 @external(erlang, "beryl_test_process_ffi", "with_suspended")
 fn with_suspended(pid: process.Pid, action: fn() -> a) -> a
 
+pub fn full_presence_queue_during_close_finishes_teardown_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each(
+    [#(False, False), #(True, False), #(False, True), #(True, True)],
+    fn(scenario) {
+      let #(explicit_untrack, stale_ack) = scenario
+      let entered = process.new_subject()
+      let assert Ok(handle) =
+        presence.start(
+          presence.default_config("close-admission")
+          |> presence.with_queue_limits(limits(4, 4096))
+          |> presence.with_on_diff(fn(diff) {
+            case
+              stale_ack
+              && {
+                presence.diff_joins(diff, "room:stale") != []
+                || presence.diff_leaves(diff, "room:a") != []
+              }
+            {
+              True -> {
+                let release = process.new_subject()
+                process.send(entered, release)
+                process.receive_forever(release)
+              }
+              False -> Nil
+            }
+          }),
+        )
+      let started = process.new_subject()
+      let assert Ok(sockets) =
+        app_test_helper.start_app(
+          beryl.config(wire.phoenix_codec())
+            |> beryl.with_presence_handle(handle)
+            |> beryl.with_presence_op_timeout(500),
+          init: fn(info) {
+            case info.socket_id {
+              "closing" -> process.send(started, #(info.self, process.self()))
+              _ -> Nil
+            }
+            #(info.socket_id, [])
+          },
+          update: fn(id, input: socket.Input(Nil)) {
+            case input {
+              socket.Join(topic, _, ref) if id == "closing" ->
+                socket.Next(id, [
+                  socket.AcceptJoin(ref, option.None),
+                  socket.PresenceTrack(topic, "user", json.null()),
+                  socket.Push(topic, "ready", json.null()),
+                ])
+              socket.Closed("room:a" as topic, _)
+                if explicit_untrack && id == "closing"
+              ->
+                socket.Next(id, [
+                  socket.PresenceUntrack(topic, "user"),
+                  socket.Broadcast("room:watch", "unexpected", json.null()),
+                ])
+              socket.Join(_, _, ref) ->
+                socket.Next(id, [socket.AcceptJoin(ref, option.None)])
+              socket.Closed(..)
+              | socket.Message(..)
+              | socket.Binary(..)
+              | socket.Info(..) -> socket.Next(id, [])
+            }
+          },
+        )
+      let healthy = helper.connect(sockets, "healthy")
+      helper.join(sockets, "healthy", "room:watch", "watch", "watch")
+      let _ = helper.recv(healthy)
+      helper.join(sockets, "healthy", "room:a", "observer", "observer")
+      let _ = helper.recv(healthy)
+      let closed = process.new_subject()
+      let frames =
+        app_test_helper.connect_with_close(sockets, "closing", fn() {
+          process.send(closed, Nil)
+        })
+      let assert Ok(#(sender, pid)) = process.receive(started, 1000)
+      let monitor = process.monitor(pid)
+      helper.join(sockets, "closing", "room:a", "j", "join")
+      helper.recv(frames) |> string.contains("phx_reply") |> should.be_true
+      let tracked = [helper.recv(frames), helper.recv(frames)]
+      list.each(["presence_diff", "ready"], fn(event) {
+        tracked |> list.any(string.contains(_, event)) |> should.be_true
+      })
+      helper.recv(healthy) |> string.contains("\"user\"") |> should.be_true
+      test_helper.wait_until(
+        fn() {
+          let assert Ok(current) = presence.queue_snapshot(handle)
+          current.items == 1
+        },
+        1000,
+        5,
+      )
+      let assert Ok(presence_pid) =
+        process.subject_owner(presence.subject(handle))
+      let acknowledgements = process.new_subject()
+      let fill = fn(operation_ids) {
+        list.each(operation_ids, fn(operation_id) {
+          presence.untrack_async(
+            handle,
+            [],
+            "fill",
+            operation_id,
+            acknowledgements,
+          )
+          |> should.equal(Ok(Nil))
+        })
+      }
+      let filled = case stale_ack {
+        False -> {
+          with_suspended(presence_pid, fn() {
+            fill([1, 2, 3])
+            helper.leave(sockets, "closing", "room:a", "j", "leave")
+            helper.recv(frames)
+            |> string.contains("\"leave\"")
+            |> should.be_true
+            helper.recv(frames)
+            |> string.contains("phx_error")
+            |> should.be_true
+            process.receive(closed, 1000) |> should.equal(Ok(Nil))
+          })
+          [1, 2, 3]
+        }
+        True -> {
+          helper.join(sockets, "closing", "room:stale", "stale", "stale")
+          helper.recv(frames) |> string.contains("phx_reply") |> should.be_true
+          let assert Ok(release_track) = process.receive(entered, 1000)
+          let assert Ok(ready) = process.receive(frames, 2000)
+          ready |> string.contains("ready") |> should.be_true
+          helper.leave(sockets, "closing", "room:a", "j", "leave")
+          helper.recv(frames) |> string.contains("\"leave\"") |> should.be_true
+          test_helper.wait_until(
+            fn() {
+              let assert Ok(current) = presence.queue_snapshot(handle)
+              current.items == 3
+            },
+            1000,
+            5,
+          )
+          // Hold the stale ack until cleanup is parked and its queue is full.
+          let release_untrack =
+            with_suspended(pid, fn() {
+              process.send(release_track, Nil)
+              let assert Ok(release_untrack) = process.receive(entered, 1000)
+              fill([1, 2])
+              release_untrack
+            })
+          helper.recv(frames) |> string.contains("phx_error") |> should.be_true
+          helper.recv(frames) |> string.contains("phx_error") |> should.be_true
+          process.receive(closed, 1000) |> should.equal(Ok(Nil))
+          process.send(release_untrack, Nil)
+          [1, 2]
+        }
+      }
+      let leave = helper.recv(healthy)
+      leave |> string.contains("presence_diff") |> should.be_true
+      leave |> string.contains("\"leaves\":{\"user\"") |> should.be_true
+      let assert Ok(process.ProcessDown(reason: process.Normal, ..)) =
+        process.new_selector()
+        |> process.select_specific_monitor(monitor, fn(down) { down })
+        |> process.selector_receive(1000)
+      socket.queue_snapshot(sender) |> should.equal(Error(overload.Unavailable))
+      test_helper.wait_until(
+        fn() {
+          let assert Ok(current) = snapshot.get(sockets)
+          snapshot.connected_sockets(current) == 1
+        },
+        1000,
+        5,
+      )
+      test_helper.wait_until(
+        fn() { presence.list(handle, "room:a") == Ok([]) },
+        1000,
+        5,
+      )
+      list.each(filled, fn(_) {
+        let assert Ok(presence.MutationAck(outcome: presence.Untracked, ..)) =
+          process.receive(acknowledgements, 1000)
+        Nil
+      })
+      app_test_helper.recv_none(frames)
+      app_test_helper.recv_none(healthy)
+      beryl.stop(sockets) |> should.equal(Ok(Nil))
+    },
+  )
+}
+
 pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil {
   let entered = process.new_subject()
+  let healthy_entered = process.new_subject()
   let assert Ok(sockets) =
     app_test_helper.start_app(
-      config() |> beryl.with_router_queue_limits(limits(1, 4096)),
+      config()
+        |> beryl.with_effect_limits(limits(3, 4096))
+        |> beryl.with_router_queue_limits(limits(1, 4096)),
       init: app_test_helper.accepting_init,
       update: fn(model, input) {
         case input {
+          socket.Join("room:a", _, _) -> {
+            let release = process.new_subject()
+            process.send(healthy_entered, release)
+            process.receive_forever(release)
+            app_test_helper.accepting_update(model, input)
+          }
           socket.Join("room:reject", _, ref) -> {
             let release = process.new_subject()
             process.send(entered, release)
@@ -35,6 +232,7 @@ pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil
             socket.Next(model, [
               socket.AcceptJoin(ref, option.None),
               socket.Push("room:reject", "unexpected", json.null()),
+              socket.Broadcast("room:a", "unexpected", json.null()),
             ])
           }
           _ -> app_test_helper.accepting_update(model, input)
@@ -42,8 +240,28 @@ pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil
       },
     )
   let healthy = helper.connect(sockets, "healthy")
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = snapshot.queue(sockets)
+      queue.items == 0
+    },
+    1000,
+    5,
+  )
   helper.join(sockets, "healthy", "room:a", "j", "r")
-  let _ = helper.recv(healthy)
+  let assert Ok(healthy_release) = process.receive(healthy_entered, 1000)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = snapshot.queue(sockets)
+      queue.items == 0
+    },
+    1000,
+    5,
+  )
+  process.send(healthy_release, Nil)
+  helper.recv(healthy)
+  |> string.contains("\"status\":\"ok\"")
+  |> should.be_true
   test_helper.wait_until(
     fn() {
       let assert Ok(queue) = snapshot.queue(sockets)
@@ -69,6 +287,14 @@ pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil
       seed: socket.empty_seed(),
       close: fn() { process.send(closed, Nil) },
     )
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = snapshot.queue(sockets)
+      queue.items == 0
+    },
+    1000,
+    5,
+  )
   helper.join(sockets, "rejected", "room:reject", "j", "r")
   let assert Ok(release) = process.receive(entered, 1000)
   test_helper.wait_until(
@@ -97,6 +323,7 @@ pub fn rejected_index_closes_without_join_success_or_later_effects_test() -> Nil
     5,
   )
   app_test_helper.recv_none(frames)
+  app_test_helper.recv_none(healthy)
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 

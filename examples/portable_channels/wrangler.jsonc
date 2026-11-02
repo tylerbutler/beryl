@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "beryl-portable-channels",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-07-30",
+  "durable_objects": {
+    "bindings": [{ "name": "MATCHES", "class_name": "Match" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Match"] }]
+}
