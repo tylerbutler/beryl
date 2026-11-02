@@ -25,7 +25,7 @@ and `on_info`, plus `on_presence` when registered. It sends effects to the socke
 actor. The socket actor applies them in arrival order and enqueues each frame
 for the transport. Thus, effects
 for one topic keep their order. Effects for different topics can interleave.
-Before it drops the topic's reply refs, the socket actor tells the worker to
+Before it drops the topic's reply references, the socket actor tells the worker to
 close. This lets the socket actor deliver a push or reply that the worker
 computed before the leave.
 
@@ -80,8 +80,8 @@ Inbound WebSocket frames follow a two-step path:
 
 1. **Decode in the connection process** — the transport decodes raw frames with the configured codec (see [WebSocket Frames & Transports](/architecture/wire-and-transport)), so malformed input never reaches the runtime.
 2. **Route to update** — the decoded message is sent to the router, which forwards it to the socket's actor; the actor turns it into an `Input` for the socket's `update` function:
-   - `phx_join` → validates the topic (length, control characters, reserved `beryl:` prefix, join rate, topic cap), then delivers `Join(topic, payload, ref)`. The join is held pending until the update's effects answer it; an unanswered join is rejected (fail closed).
-   - Any other event on a joined topic → `Message(topic, event, payload, ref)`.
+   - `phx_join` → validates the topic (length, control characters, reserved `beryl:` prefix, join rate, topic cap), then delivers `Join(topic, payload, reference)`. The join is held pending until the update's effects answer it; an unanswered join is rejected (fail closed).
+   - Any other event on a joined topic → `Message(topic, event, payload, reference)`.
    - `heartbeat` → answered directly by the socket actor; the app never sees it.
    - `phx_leave` → acks the leave, then delivers `Closed(topic, Normal)`.
    - Binary frames → decoded through the codec's binary decoder when present and routed with binary message classification; otherwise delivered raw as `Binary(topic, data)` to each joined topic.
@@ -177,7 +177,7 @@ flowchart TB
   accepts new connections.
 - A socket actor fault closes only its connection and topics. Socket actors
   and topic workers are `Temporary`: supervision does not restart them or
-  reconstruct models, refs, or memberships. Recovery requires a new connection
+  reconstruct models, references, or memberships. Recovery requires a new connection
   and joins, or a topic rejoin if only its worker stopped.
 - The router is significant and `Transient`, so a graceful `beryl.stop` is
   final. A stop first
@@ -203,7 +203,7 @@ do not establish an end-to-end or node-wide memory bound. See
 | Decoded socket input | Socket actors own optional message, join, and channel/topic rate buckets. Rates default to disabled. Over-rate messages are dropped; over-rate joins receive an error reply. These are not worker queue limits. |
 | Topic-worker input | 256 outstanding inputs and 8 MiB per worker. Client input rejection closes the topic; server notifications return errors. |
 | Worker reports and action batches | One normal report per worker, charged to the socket. Each callback result has a 256-effect / 8 MiB limit. Rejected batches apply no prefix. |
-| Socket work and deferred presence work | 1024 items / 8 MiB, including active effects, reports, and unanswered refs. Presence suspension retains capacity. |
+| Socket work and deferred presence work | 1024 items / 8 MiB, including active effects, reports, and unanswered references. Presence suspension retains capacity. |
 | Shared router ingress and fan-out | 4096 items / 32 MiB before local publication and connection-child startup. Fan-out reserves destination capacity and continues past saturated recipients. |
 | Presence mutations | 4096 items / 32 MiB, including reserved runtime-session cleanup. Pending timeouts cancel; running timeouts retain capacity. |
 | Generic PubSub and remote presence sync | No pre-receipt bound. Downstream local socket fan-out still needs admission. |

@@ -25,7 +25,8 @@ worker_report_pending(Router, SocketId, Worker) ->
     {Table, _, _, _, _, _, _} = socket_queue(Router, SocketId),
     [{state, #{leases := Leases}}] = ets:lookup(Table, state),
     lists:any(fun
-        ({pending, _, _, {worker_report, _, _, Worker, _, _}}) -> true;
+        ({pending, _, _, {worker_report, _, _, ReportWorker, _, _}})
+                when ReportWorker =:= Worker -> true;
         (_) -> false
     end, maps:values(Leases)).
 

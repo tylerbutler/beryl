@@ -68,6 +68,7 @@ pub fn channel(application_context: Context) -> channel.Handler {
       case message.event {
         "cursor_move" ->
           channel.next(state, [
+            channel.discard_reply(message.reply),
             channel.broadcast_from("cursor_move", move(state, message.payload)),
           ])
 
@@ -75,12 +76,14 @@ pub fn channel(application_context: Context) -> channel.Handler {
           case decode_reaction(message.payload) {
             Ok(reaction) ->
               channel.next(state, [
+                channel.discard_reply(message.reply),
                 channel.broadcast_from("reaction", reaction),
               ])
-            Error(Nil) -> channel.stay(state)
+            Error(Nil) ->
+              channel.next(state, [channel.discard_reply(message.reply)])
           }
 
-        _ -> channel.stay(state)
+        _ -> channel.next(state, [channel.discard_reply(message.reply)])
       }
     })
     |> channel.on_info(fn(state, note) {

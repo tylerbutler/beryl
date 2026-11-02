@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Emit one invalid-message telemetry outcome for decoded events with invalid topics or event names."

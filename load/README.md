@@ -6,6 +6,9 @@ V2 client and profiles target Mist or Ewe. Run target and generators on
 separate hosts for capacity measurements; local runs validate the protocol,
 not capacity.
 
+For codec-only time, heap allocation, and reduction measurements, use the
+[optional Glychee benchmarks](../benchmarks/codec/README.md).
+
 ## Local setup
 
 ### Admission safety fixture

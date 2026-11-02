@@ -3,8 +3,10 @@
 import beryl/wire
 import beryl/wire/codec
 import envoy
+import gleam/dict
 import gleam/dynamic
 import gleam/dynamic/decode
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -224,6 +226,113 @@ pub fn dynamic_to_json_decodes_nested_json_values_test() -> Nil {
   let assert Ok(json_value) = wire.dynamic_to_json(dynamic_value)
 
   json.to_string(json_value) |> should.equal(encoded)
+}
+
+pub fn dynamic_to_json_preserves_unicode_escaping_and_empty_containers_test() -> Nil {
+  let text = "\"\\\n\r\t\u{0000}\u{00e9}\u{1f600}"
+  let payload =
+    dynamic.properties([
+      #(
+        dynamic.string(text),
+        dynamic.list([
+          dynamic.string(text),
+          dynamic.list([]),
+          dynamic.properties([]),
+        ]),
+      ),
+    ])
+  let assert Ok(converted) = wire.dynamic_to_json(payload)
+
+  json.parse(from: json.to_string(converted), using: decode.dynamic)
+  |> should.equal(Ok(payload))
+
+  let assert Ok(native_array) =
+    wire.dynamic_to_json(dynamic.array([dynamic.nil(), dynamic.list([])]))
+  json.to_string(native_array) |> should.equal("[null,[]]")
+}
+
+pub fn dynamic_to_json_rejects_unsupported_values_and_object_keys_test() -> Nil {
+  [
+    dynamic.bit_array(<<255>>),
+    dynamic.bit_array(<<1:size(1)>>),
+    dynamic.array([dynamic.bit_array(<<255>>)]),
+    dynamic.properties([#(dynamic.int(1), dynamic.nil())]),
+    dynamic.properties([#(dynamic.bit_array(<<255>>), dynamic.nil())]),
+  ]
+  |> list.each(fn(value) {
+    [
+      value,
+      dynamic.list([dynamic.int(1), value]),
+      dynamic.properties([
+        #(dynamic.string("valid"), dynamic.bool(True)),
+        #(dynamic.string("invalid"), value),
+      ]),
+    ]
+    |> list.each(fn(payload) {
+      wire.dynamic_to_json(payload) |> should.equal(Error(Nil))
+    })
+  })
+}
+
+pub fn dynamic_to_json_and_encode_preserve_object_member_order_test() -> Nil {
+  let wide_fields =
+    list.repeat(Nil, 40)
+    |> list.index_map(fn(_, index) {
+      #("field_" <> int.to_string(index), index)
+    })
+  [[#("a", 1), #("b", 2)], wide_fields]
+  |> list.each(fn(fields) {
+    let payload =
+      fields
+      |> list.map(fn(field) { #(dynamic.string(field.0), dynamic.int(field.1)) })
+      |> dynamic.properties
+    let expected =
+      fields
+      |> dict.from_list
+      |> dict.to_list
+      |> list.map(fn(field) { #(field.0, json.int(field.1)) })
+      |> json.object
+      |> json.to_string
+    let assert Ok(converted) = wire.dynamic_to_json(payload)
+    json.to_string(converted) |> should.equal(expected)
+
+    let message =
+      codec.inbound(None, Some("r"), "room:1", codec.Event("event"), payload)
+    wire.encode(message)
+    |> should.equal(Ok("[null,\"r\",\"room:1\",\"event\"," <> expected <> "]"))
+  })
+}
+
+pub fn dynamic_to_json_and_inbound_decoding_enforce_exact_depth_limit_test() -> Nil {
+  [
+    #("[", "]"),
+    #("{\"child\":", "}"),
+    #("{\"sibling\":0,\"child\":", "}"),
+  ]
+  |> list.each(fn(wrapping) {
+    [#("null", 64), #("[]", 63), #("{}", 63)]
+    |> list.each(fn(leaf) {
+      let encoded =
+        string.repeat(wrapping.0, leaf.1)
+        <> leaf.0
+        <> string.repeat(wrapping.1, leaf.1)
+      let assert Ok(payload) = json.parse(from: encoded, using: decode.dynamic)
+      let assert Ok(converted) = wire.dynamic_to_json(payload)
+      json.parse(from: json.to_string(converted), using: decode.dynamic)
+      |> should.equal(Ok(payload))
+      wire.decode_message("[null,\"r\",\"room:1\",\"event\"," <> encoded <> "]")
+      |> should.be_ok()
+
+      let too_deep = wrapping.0 <> encoded <> wrapping.1
+      let assert Ok(payload) = json.parse(from: too_deep, using: decode.dynamic)
+      wire.dynamic_to_json(payload) |> should.equal(Error(Nil))
+      let assert Error(codec.InvalidFormat(reason)) =
+        wire.decode_message(
+          "[null,\"r\",\"room:1\",\"event\"," <> too_deep <> "]",
+        )
+      reason |> should.equal("JSON nesting depth exceeded")
+    })
+  })
 }
 
 // === Reply status ===

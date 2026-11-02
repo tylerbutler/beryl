@@ -30,7 +30,7 @@
 ////
 //// pub fn main() -> Nil {
 ////   // Optional: start PubSub for distributed messaging
-////   let pubsub_handle = pubsub.start(pubsub.default_config())
+////   let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 ////
 ////   // Build the supervised system. The app supplies `init` (the per-socket
 ////   // model) and `update` (which routes every event by topic).
@@ -43,11 +43,20 @@
 ////       init: fn(_info) { #(Nil, []) },
 ////       update: fn(model, event) {
 ////         case event {
-////           Join("room:" <> _, _payload, ref) ->
-////             Next(model, [AcceptJoin(ref, option.None)])
-////           Message(topic, "new_msg", payload, _ref) ->
-////             Next(model, [Broadcast(topic, "new_msg", payload)])
-////           Join(..) | Message(..) | Binary(..) | Closed(..) | Info(..) ->
+////           Join("room:" <> _, _payload, reference) ->
+////             Next(model, [AcceptJoin(reference, option.None)])
+////           Message(topic, "new_msg", payload, reference) ->
+////             Next(model, [
+////               Broadcast(topic, "new_msg", payload),
+////               ..case reference {
+////                 option.Some(reference) -> [socket.DiscardReply(reference)]
+////                 option.None -> []
+////               }
+////             ])
+////           Message(_, _, _, option.Some(reference)) ->
+////             Next(model, [socket.DiscardReply(reference)])
+////           Message(_, _, _, option.None)
+////           | Join(..) | Binary(..) | Closed(..) | Info(..) ->
 ////             Next(model, [])
 ////         }
 ////       },
@@ -103,6 +112,17 @@ pub type LogLevel {
 /// This type is opaque. Construct it with `logging_config` and adjust it with
 /// the `with_*` functions. beryl can then add logging options without a
 /// breaking change.
+///
+/// The level filters this socket system's runtime and transport diagnostics.
+/// beryl does not change OTP Logger levels, filters, metadata, or handlers.
+/// The host application's logger configuration can further restrict output.
+///
+/// Expected client rejections and rate-limit drops use debug. Lifecycle and
+/// configuration problems use warning; callback and internal failures use
+/// error. Diagnostic string fields are limited to 256 UTF-8 bytes, including
+/// a trailing `...` when truncated. Control characters become `?`.
+/// Explicitly enabled frame previews have their own grapheme-length limit.
+/// Callback crash descriptions retain their separate bounded crash format.
 pub opaque type LoggingConfig {
   LoggingConfig(
     /// Minimum level emitted by beryl's namespaced loggers.
@@ -200,6 +220,11 @@ pub opaque type Config {
 /// Payloads are excluded by default to avoid accidental sensitive-data
 /// exposure. Use `with_payload_preview_bytes` to adjust the bounded preview
 /// size when payload previews are enabled.
+///
+/// With `include_payloads: True`, debug text-frame decode failures include a
+/// `frame_preview` in both Mist and Ewe. Successful frames and binary frames
+/// do not include previews. Authentication headers and connect metadata are
+/// never added. Both this system and the host must permit debug logs.
 pub fn logging_config(
   level level: LogLevel,
   include_payloads include_payloads: Bool,
@@ -303,6 +328,12 @@ pub fn with_topic_rate(
 }
 
 /// Add PubSub to a configuration for distributed broadcasts.
+///
+/// Runtime topic memberships reconcile asynchronously. A `pg` restart does
+/// not block local routing; distributed delivery remains best-effort during
+/// recovery. Reconciliation uses the latest active topics, not a backlog of
+/// join and leave operations. Registry loss invalidates this handle: start
+/// PubSub again and rebuild the beryl system with the replacement handle.
 pub fn with_pubsub(config: Config, pubsub: PubSub(json.Json)) -> Config {
   Config(..config, pubsub: Some(pubsub))
 }
@@ -432,15 +463,22 @@ pub fn with_max_connections(
   Config(..config, max_connections: max_connections)
 }
 
-/// Configure beryl's internal logging.
+/// Configure this socket system's runtime and transport logging.
+///
+/// This sets a local minimum level. The host application owns OTP Logger
+/// configuration; enable the desired level there as well. Starting or
+/// restarting beryl does not install handlers or configure Palabres.
 pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
   Config(..config, logging: logging)
 }
 
-// nolint: unused_exports -- public logging builder intended for downstream users
 /// Configure the maximum payload and frame preview length for logs.
 ///
-/// The `bytes` argument is measured in grapheme clusters.
+/// Despite its name, `bytes` is measured in grapheme clusters, not UTF-8 bytes.
+/// Zero (or a negative value) produces an empty preview. Truncation preserves
+/// whole grapheme clusters and does not append a marker. This existing preview
+/// contract is separate from the 256-byte diagnostic-field limit: a preview
+/// can exceed 256 bytes. Only opted-in debug text-frame decode failures use it.
 pub fn with_payload_preview_bytes(
   logging: LoggingConfig,
   bytes bytes: Int,
@@ -590,7 +628,7 @@ pub fn warn_if_unprotected(config: Config) -> Nil {
     && config.join_rate <= 0
     && config.channel_rate <= 0
   use <- bool.guard(when: !unprotected, return: Nil)
-  internal.logger("beryl")
+  internal.configured_logger("beryl", internal_logging_config(config.logging))
   |> log.warn("No abuse controls configured", [
     #(
       "hint",
@@ -792,76 +830,11 @@ fn validate_topic_rate(
 ///
 /// You can call `stop` more than once or use a handle whose system never
 /// started. In these cases, it returns `Error(NotRunning)` and does not crash.
-/// It returns `Error(StopTimeout)` if the app runtime does not
-/// acknowledge the stop within the shutdown window. After a successful stop
+/// It returns `Error(StopTimeout)` if the runtime does not drain or the
+/// subtree does not terminate within the shutdown window. After a successful stop
 /// the handle should no longer be used.
 pub fn stop(sockets: Sockets) -> Result(Nil, StopError) {
-  // The app-side dispatch limiter is supervised inside the beryl subtree,
-  // so it is not stopped directly here; it is torn down with the subtree.
-  stop_app_subtree(sockets.app, sockets.connection_limiter)
-}
-
-/// Gracefully stop only the nested beryl subtree and wait for it to
-/// terminate.
-///
-/// The runtime is the subtree's significant transient child, so draining and
-/// stopping it (normal termination) auto-shuts down the subtree supervisor and
-/// its sibling limiter. To honour "wait for only the beryl subtree to
-/// terminate", their pids are captured before the drain and monitored after
-/// admission succeeds. A monitor also reports an already-exited pid; the
-/// application's parent supervisor and sibling children are never touched.
-///
-/// Idempotent: `Error(NotRunning)` when the runtime is already down (pre-start,
-/// a restart window, or a prior stop); `Error(StopTimeout)` if the runtime does
-/// not acknowledge the drain or the subtree does not terminate in time.
-fn stop_app_subtree(
-  app: AppHandle,
-  connection_limiter: Option(connection_limit.ConnectionLimiter),
-) -> Result(Nil, StopError) {
-  case app.runtime_owner() {
-    Error(Nil) -> internal.result_error(NotRunning)
-    Ok(runtime_pid) -> {
-      let limiter_owner =
-        option.from_result(app_limiter_owner(connection_limiter))
-      use _ <- result.try(app.stop())
-      let runtime_monitor = process.monitor(runtime_pid)
-      let limiter_monitor = option.map(limiter_owner, process.monitor)
-      await_subtree_down(runtime_monitor, limiter_monitor)
-    }
-  }
-}
-
-/// Release subtree monitors after waiting, including when a wait times out.
-fn drop_subtree_monitors(
-  runtime_monitor: process.Monitor,
-  limiter_monitor: Option(process.Monitor),
-) -> Nil {
-  process.demonitor_process(runtime_monitor)
-  case limiter_monitor {
-    Some(monitor) -> process.demonitor_process(monitor)
-    None -> Nil
-  }
-}
-
-/// Wait for the runtime and, when one is supervised, the sibling limiter to
-/// terminate. `Error(StopTimeout)` when either is still alive at the deadline.
-fn await_subtree_down(
-  runtime_monitor: process.Monitor,
-  limiter_monitor: Option(process.Monitor),
-) -> Result(Nil, StopError) {
-  let awaited =
-    await_down(runtime_monitor)
-    |> result.try(fn(_) {
-      case limiter_monitor {
-        Some(monitor) -> await_down(monitor)
-        None -> Ok(Nil)
-      }
-    })
-  drop_subtree_monitors(runtime_monitor, limiter_monitor)
-  case awaited {
-    Ok(Nil) -> Ok(Nil)
-    Error(Nil) -> internal.result_error(StopTimeout)
-  }
+  sockets.app.stop()
 }
 
 /// The pid of the app subtree's optional limiter, if it is running.
@@ -1026,6 +999,10 @@ fn build_app_subtree(
         runtime_name,
         supervisor_name,
         process.named_subject(factory_name),
+        internal.configured_logger(
+          "beryl.runtime",
+          internal_logging_config(config.logging),
+        ),
         fn(spawn) {
           runtime.start_socket_child(factory: factory_name, spawn: spawn)
         },
@@ -1132,6 +1109,7 @@ fn reserve_socket_start(
   name: process.Name(runtime.Message(message)),
   socket_id: String,
   seed: socket.ConnectSeed,
+  logger: log.Logger,
   start: fn(work_queue.Queue(runtime.Message(message)), work_queue.Reservation) ->
     Bool,
 ) -> Bool {
@@ -1144,7 +1122,7 @@ fn reserve_socket_start(
   case reserved {
     Ok(#(queue, reservation)) -> start(queue, reservation)
     Error(error) -> {
-      log.new("beryl.runtime")
+      logger
       |> log.warn("Socket admission rejected", [
         #("reason", overload.describe(error)),
       ])
@@ -1157,6 +1135,7 @@ fn finish_socket_admission(
   queue: work_queue.Queue(runtime.Message(message)),
   reservation: work_queue.Reservation,
   child: process.Pid,
+  logger: log.Logger,
   request: fn(runtime.AdmissionToken, fn(Bool) -> Nil) ->
     runtime.Message(message),
 ) -> Bool {
@@ -1179,7 +1158,7 @@ fn finish_socket_admission(
         overload.OwnerUnavailable -> "runtime owner exited"
         overload.RequestTimedOut -> "request timed out"
       }
-      log.new("beryl.runtime")
+      logger
       |> log.warn("Socket admission failed", [#("reason", reason)])
       work_queue.release(queue, reservation)
       process.kill(child)
@@ -1194,6 +1173,7 @@ fn app_handle(
   name: process.Name(runtime.Message(message)),
   supervisor: process.Name(app_supervisor.Message),
   factory: Subject(runtime.SocketFactoryMessage(message)),
+  logger: log.Logger,
   start_socket_actor: fn(runtime.SocketSpawn(message)) ->
     Result(actor.Started(runtime.Inbox(message)), actor.StartError),
 ) -> AppHandle {
@@ -1214,7 +1194,12 @@ fn app_handle(
       }
       use <- bool.guard(when: !owner_matches, return: False)
 
-      use queue, reservation <- reserve_socket_start(name, socket_id, seed)
+      use queue, reservation <- reserve_socket_start(
+        name,
+        socket_id,
+        seed,
+        logger,
+      )
       // Reserve before starting a child; its initialiser binds orphan cleanup.
       case start_socket_actor(runtime.SocketSpawn(owner, queue, reservation)) {
         // nolint: thrown_away_error -- admission exposes only success or failure; actor start details are not part of this transport callback
@@ -1227,6 +1212,7 @@ fn app_handle(
             queue,
             reservation,
             started.pid,
+            logger,
             fn(admission, reply) {
               runtime.AdmitSocket(
                 owner,
@@ -1250,7 +1236,7 @@ fn app_handle(
       case work_queue.lookup(name) {
         Ok(queue) -> work_queue.close_target(queue, socket_id)
         Error(error) ->
-          log.new("beryl.runtime")
+          logger
           |> log.debug("Socket disconnect target unavailable", [
             #("reason", overload.describe(error)),
           ])
@@ -1310,16 +1296,21 @@ fn request_runtime_stop(
   let finished = process.new_subject()
 
   case app_supervisor.request_stop(supervisor, finished) {
-    Ok(app_supervisor.StopRejected) -> internal.result_error(NotRunning)
+    Ok(#(app_supervisor.StopRejected, _)) -> internal.result_error(NotRunning)
     Error(overload.AdmissionRejected(_)) | Error(overload.OwnerUnavailable) ->
       internal.result_error(NotRunning)
     Error(overload.RequestTimedOut) -> internal.result_error(StopTimeout)
-    Ok(app_supervisor.StopAccepted) ->
-      case process.receive(finished, 5000) {
-        Ok(app_supervisor.StopCompleted) -> Ok(Nil)
+    Ok(#(app_supervisor.StopAccepted, owner)) -> {
+      let monitor = process.monitor(owner)
+      let completion = case process.receive(finished, 5000) {
+        Ok(app_supervisor.StopCompleted) ->
+          await_down(monitor) |> result.replace_error(StopTimeout)
         Ok(app_supervisor.StopIncomplete) -> internal.result_error(StopTimeout)
         Error(Nil) -> internal.result_error(StopTimeout)
       }
+      process.demonitor_process(monitor)
+      completion
+    }
   }
 }
 
@@ -1392,14 +1383,26 @@ fn to_runtime_config(config: Config) -> runtime.Config {
 fn internal_logging_config(logging: LoggingConfig) -> internal.LoggingConfig {
   internal.LoggingConfig(
     level: case logging.level {
-      DebugLevel -> internal.Debug
-      InfoLevel -> internal.Info
-      WarnLevel -> internal.Warn
-      ErrorLevel -> internal.ErrorLevel
+      DebugLevel -> log.Debug
+      InfoLevel -> log.Info
+      WarnLevel -> log.Warn
+      ErrorLevel -> log.ErrorLevel
     },
     include_payloads: logging.include_payloads,
     payload_preview_bytes: logging.payload_preview_bytes,
   )
+}
+
+/// Create a diagnostic logger for this socket system.
+@internal
+pub fn configured_logger(sockets: Sockets, name: String) -> log.Logger {
+  internal.configured_logger(name, configured_logging(sockets))
+}
+
+/// Read this socket system's diagnostic configuration.
+@internal
+pub fn configured_logging(sockets: Sockets) -> internal.LoggingConfig {
+  internal_logging_config(sockets.config.logging)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

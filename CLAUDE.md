@@ -4,8 +4,10 @@
 
 Type-safe real-time channels and presence for Gleam, targeting the Erlang
 (BEAM) runtime. The repository is a [trellis](https://trellis.tylerbutler.com)-managed
-monorepo with three releasable packages:
+monorepo with four releasable packages:
 
+- **`packages/beryl_protocol`**: Pure channel protocol transitions for Erlang
+  and JavaScript. Hosts own I/O, authorization, scheduling, and application work.
 - **`packages/beryl`** — raw app dispatch plus `beryl/channel` (runtime,
   typed events/effects, presence, PubSub, wire protocol, abuse controls,
   transport SPI)
@@ -38,6 +40,8 @@ just deps         # Download dependencies (gleam + pnpm workspaces)
 just build        # trellis run build
 just build-strict # trellis run build --strict
 just test         # trellis run test (scope: `just test beryl_mist`)
+just protocol-test # strict build and pure tests on both targets
+just portable-host-test # Roost fixtures and Durable Object integration tests
 just format       # trellis run format
 just format-check # trellis run format --check
 just check        # trellis run check
@@ -50,13 +54,25 @@ just ci           # Run all CI checks (format, check, test, build, examples)
 just pr           # Alias for ci (use before PR)
 just main         # Extended checks for main branch
 just clean        # Remove build artifacts
+just bench-codec-deps  # Install optional mise-managed codec benchmark tools and deps
+just bench-codec-check # Strict benchmark build and fixture checks
+just bench-codec       # Run codec microbenchmarks locally
 ```
+
+## Codec benchmarks
+
+Codec benchmarks use a local mise configuration for Elixir and the root
+BEAM toolchain. Default dependency preparation, build, check, test, lint,
+docs, and release tasks exclude them; formatting and cleanup include them.
+See [benchmarks/codec/README.md](benchmarks/codec/README.md) for setup and
+measurement limits.
 
 ## Project Structure
 
 ```
 gleam.toml                         # Workspace config only ([tools.trellis])
 packages/
+├── beryl_protocol/                # Portable protocol core (Erlang and JavaScript)
 ├── beryl/                         # Core library package
 │   ├── gleam.toml
 │   ├── src/
@@ -95,6 +111,8 @@ packages/
     └── test/                      # Transport/handler tests + WS client FFI
 examples/                          # Runnable example apps (workspace members,
                                    # excluded from release) + pnpm/Playwright e2e
+benchmarks/codec/                  # Opt-in codec benchmarks (workspace member,
+                                   # excluded from release)
 website/                           # Astro/Starlight docs site (not a member)
 .changes/unreleased/               # trellis changelog fragments (TOML)
 ```

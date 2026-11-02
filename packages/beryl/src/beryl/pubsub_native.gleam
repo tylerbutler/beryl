@@ -5,22 +5,54 @@
 //// API and wire contract. `beryl/pubsub_membership` uses the fallible
 //// operations during scope recovery.
 
+import beryl/error
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/atom
 import gleam/erlang/process.{type Pid, type Subject}
 
 /// An error returned by a protected Erlang `pg` operation.
-pub type PgError
+pub type PgError =
+  error.OperationFailure
 
-// nolint: unused_exports -- public query adapter invoked from Erlang
+/// Registry-owned, protected readiness storage. The table dies with its owner.
+pub type Readiness
+
+/// A nonblocking query could not read a reconciled membership generation.
+pub type QueryError {
+  RegistryUnavailable
+  ScopeRecovering
+  PgUnavailable(PgError)
+}
+
+/// Create readiness storage in the membership actor, initially recovering.
+@external(erlang, "beryl_pubsub_ffi", "new_readiness")
+pub fn new_readiness() -> Readiness
+
+/// Publish a pg generation only after stable local membership reconciliation.
+@external(erlang, "beryl_pubsub_ffi", "publish_readiness")
+pub fn publish_readiness(readiness: Readiness, pg: Pid) -> Nil
+
+/// Clear readiness while the membership actor reconciles or recovers.
+@external(erlang, "beryl_pubsub_ffi", "clear_readiness")
+pub fn clear_readiness(readiness: Readiness) -> Nil
+
 /// Return all members of a topic across connected nodes.
-@external(erlang, "pg", "get_members")
-pub fn get_members(scope: atom.Atom, topic: String) -> List(Pid)
+@external(erlang, "beryl_pubsub_ffi", "query_members")
+pub fn get_members(
+  scope: atom.Atom,
+  readiness: Readiness,
+  registry: Pid,
+  topic: String,
+) -> Result(List(Pid), QueryError)
 
-// nolint: unused_exports -- local query adapter invoked from Erlang
 /// Return members of a topic on the local node.
-@external(erlang, "pg", "get_local_members")
-pub fn get_local_members(scope: atom.Atom, topic: String) -> List(Pid)
+@external(erlang, "beryl_pubsub_ffi", "query_local_members")
+pub fn get_local_members(
+  scope: atom.Atom,
+  readiness: Readiness,
+  registry: Pid,
+  topic: String,
+) -> Result(List(Pid), QueryError)
 
 /// Return the process registered for a `pg` scope.
 @external(erlang, "beryl_pubsub_ffi", "registered_scope")

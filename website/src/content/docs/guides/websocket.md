@@ -66,11 +66,11 @@ pub fn start_ewe(sockets: beryl.Sockets) -> Nil {
       server.default_config("/socket/websocket"),
       fn(
         http_request: Request(ewe.Connection),
-      ) -> Response(ewe.ResponseBody) {
+      ) -> Response(ewe.Body) {
         case request.path_segments(http_request) {
           [] ->
             response.new(200)
-            |> response.set_body(ewe.TextData("Hello!"))
+            |> response.set_body(ewe.Text("Hello!"))
           _ ->
             response.new(404)
             |> response.set_body(ewe.Empty)
@@ -78,7 +78,7 @@ pub fn start_ewe(sockets: beryl.Sockets) -> Nil {
       },
     )
     |> ewe.new
-    |> ewe.listening(port: 8000)
+    |> ewe.listening(on: 8000)
     |> ewe.start
 
   Nil

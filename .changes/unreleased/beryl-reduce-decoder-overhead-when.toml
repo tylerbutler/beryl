@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Performance"
+body = "Reduce decoder overhead when converting dynamic JSON payloads and remove temporary value lists from object depth checks. UTF-8 validation and the 64-level nesting limit are unchanged."

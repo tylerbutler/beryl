@@ -1,15 +1,15 @@
-//// `ReplyRef` validity and single-use semantics for app-side dispatch. A
-//// reply ref is single-use (a second reply against it is dropped) and stops
-//// being valid once its topic closes — a stored ref replied to after the
+//// `ReplyReference` validity and single-use semantics for app-side dispatch. A
+//// reply reference is single-use (a second reply against it is dropped) and stops
+//// being valid once its topic closes — a stored reference replied to after the
 //// topic left, or after a leave+rejoin, is dropped rather than sent as a
-//// stale/duplicate reply. A ref stored while its topic stays open can still
+//// stale/duplicate reply. A reference stored while its topic stays open can still
 //// be answered from a later turn (deferred reply).
 
 import app_test_helper
 import beryl
 import beryl/socket.{
-  type ReplyRef, AcceptJoin, DiscardReply, Info, Join, Message, Next, ReplyError,
-  ReplyOk,
+  type ReplyReference, AcceptJoin, DiscardReply, Info, Join, Message, Next,
+  ReplyError, ReplyOk,
 }
 import beryl/wire
 import gleam/erlang/process
@@ -27,15 +27,15 @@ pub type AppMessage {
 }
 
 type Model {
-  Model(stashed: Option(ReplyRef), previous: Option(ReplyRef))
+  Model(stashed: Option(ReplyReference), previous: Option(ReplyReference))
 }
 
-/// - "double": reply to the same ref twice in one effects list (single-use).
-/// - "stash": store the ref without replying (deferred reply).
+/// - "double": reply to the same reference twice in one effects list (single-use).
+/// - "stash": store the reference without replying (deferred reply).
 /// - `Info(DiscardStashed)`: discard the stored ref without a wire reply.
-/// - `Info(DiscardPrevious)`: attempt to discard the previous ref.
-/// - `Info(ReplyStashed)`: reply with the stored ref later.
-/// - `Info(ReplyPrevious)`: attempt both reply effects with the previous ref.
+/// - `Info(DiscardPrevious)`: attempt to discard the previous reference.
+/// - `Info(ReplyStashed)`: reply with the stored reference later.
+/// - `Info(ReplyPrevious)`: attempt both reply effects with the previous reference.
 fn start_system(
   senders: process.Subject(socket.Sender(AppMessage)),
 ) -> beryl.Sockets {
@@ -48,42 +48,43 @@ fn start_system(
       },
       update: fn(model: Model, event) {
         case event {
-          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          Join(_, _, reference) -> Next(model, [AcceptJoin(reference, None)])
           Info(Barrier(done)) -> {
             process.send(done, Nil)
             Next(model, [])
           }
-          Message(_topic, "double", _payload, Some(ref)) ->
+          Message(_topic, "double", _payload, Some(reference)) ->
             Next(model, [
-              ReplyOk(ref, json.object([#("n", json.int(1))])),
-              ReplyOk(ref, json.object([#("n", json.int(2))])),
+              ReplyOk(reference, json.object([#("n", json.int(1))])),
+              ReplyOk(reference, json.object([#("n", json.int(2))])),
             ])
-          Message(_topic, "stash", _payload, Some(ref)) ->
-            Next(Model(Some(ref), model.stashed), [])
+          Message(_topic, "stash", _payload, Some(reference)) ->
+            Next(Model(Some(reference), model.stashed), [])
           Info(DiscardStashed) ->
             case model.stashed {
-              Some(ref) -> Next(model, [DiscardReply(ref)])
+              Some(reference) ->
+                Next(model, [DiscardReply(reference: reference)])
               None -> Next(model, [])
             }
           Info(DiscardPrevious) ->
             case model.previous {
-              Some(ref) -> Next(model, [DiscardReply(ref)])
+              Some(reference) -> Next(model, [DiscardReply(reference)])
               None -> Next(model, [])
             }
           Info(ReplyStashed) ->
             case model.stashed {
-              Some(ref) ->
+              Some(reference) ->
                 Next(model, [
-                  ReplyOk(ref, json.object([#("late", json.bool(True))])),
+                  ReplyOk(reference, json.object([#("late", json.bool(True))])),
                 ])
               None -> Next(model, [])
             }
           Info(ReplyPrevious) ->
             case model.previous {
-              Some(ref) ->
+              Some(reference) ->
                 Next(model, [
-                  ReplyOk(ref, json.string("stale ok")),
-                  ReplyError(ref, json.string("stale error")),
+                  ReplyOk(reference, json.string("stale ok")),
+                  ReplyError(reference, json.string("stale error")),
                 ])
               None -> Next(model, [])
             }
@@ -108,7 +109,7 @@ pub fn message_ref_is_single_use_test() -> Nil {
   app_test_helper.push(channels, "s1", "room:a", "double", "r-2")
 
   // Only the first ReplyOk reaches the wire; the second is dropped because
-  // the ref was already answered.
+  // the reference was already answered.
   let reply = app_test_helper.recv(frames)
   reply |> string.contains("phx_reply") |> should.be_true
   reply |> string.contains("r-2") |> should.be_true
@@ -123,11 +124,11 @@ pub fn deferred_reply_from_info_is_delivered_test() -> Nil {
   app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
   let _join_reply = app_test_helper.recv(frames)
 
-  // Stash the ref without replying; the topic stays open.
+  // Stash the reference without replying; the topic stays open.
   app_test_helper.push(channels, "s1", "room:a", "stash", "r-2")
   app_test_helper.recv_none(frames)
 
-  // A later turn answers the stored ref — still valid.
+  // A later turn answers the stored reference — still valid.
   let assert Ok(_) = socket.notify(sender, ReplyStashed)
   let reply = app_test_helper.recv(frames)
   reply |> string.contains("phx_reply") |> should.be_true
@@ -300,7 +301,7 @@ pub fn reply_after_topic_close_is_dropped_test() -> Nil {
   let close_frame = app_test_helper.recv(frames)
   close_frame |> string.contains("phx_close") |> should.be_true
 
-  // The stored ref is stale now that its topic closed: the late reply is
+  // The stored reference is stale now that its topic closed: the late reply is
   // dropped rather than sent.
   let assert Ok(_) = socket.notify(sender, ReplyStashed)
   app_test_helper.recv_none(frames)
@@ -327,7 +328,7 @@ pub fn reply_after_rejoin_is_dropped_test() -> Nil {
   let rejoin_reply = app_test_helper.recv(frames)
   rejoin_reply |> string.contains("\"status\":\"ok\"") |> should.be_true
 
-  // The socket is joined again, but the ref stashed under the previous
+  // The socket is joined again, but the reference stashed under the previous
   // instance is stale: replying with it is dropped, not delivered against
   // the new join.
   let assert Ok(_) = socket.notify(sender, ReplyStashed)

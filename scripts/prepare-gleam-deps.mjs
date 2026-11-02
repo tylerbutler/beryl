@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { globSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, globSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const HEX_RATE_LIMIT = /rate limit .* exceeded|too many requests/i;
-const INCOMPATIBLE_LOCK = /incompatible locked version/i;
+const INCOMPATIBLE_LOCK =
+	/incompatible locked version|there's no compatible version of/i;
 const RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
 
 function sleep(milliseconds) {
@@ -48,9 +49,16 @@ function downloadDependencies(directory) {
 		download();
 	} catch (error) {
 		const output = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}\n${error}`;
-		if (!INCOMPATIBLE_LOCK.test(output)) throw error;
-		rmSync(path.join(directory, "manifest.toml"), { force: true });
-		download();
+		const manifestPath = path.join(directory, "manifest.toml");
+		if (!INCOMPATIBLE_LOCK.test(output) || !existsSync(manifestPath)) throw error;
+		const manifest = readFileSync(manifestPath);
+		rmSync(manifestPath);
+		try {
+			download();
+		} catch (retryError) {
+			writeFileSync(manifestPath, manifest);
+			throw retryError;
+		}
 	}
 }
 
@@ -77,6 +85,19 @@ export function prepareDependencies(directory, pathDependencyCount) {
 	throw new Error(`Dependency state did not stabilize in ${directory}`);
 }
 
+export function selectDependencyMembers(members, names = []) {
+	for (const name of names) {
+		if (!members.some((member) => member.name === name)) {
+			throw new Error(`Unknown workspace package: ${name}`);
+		}
+	}
+	return members.filter((member) =>
+		names.length > 0
+			? names.includes(member.name)
+			: !member.path.startsWith("benchmarks/"),
+	);
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	const { packages } = JSON.parse(
 		execFileSync("trellis", ["list", "--json"], {
@@ -84,7 +105,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 			encoding: "utf8",
 		}),
 	);
-	for (const member of packages) {
+	for (const member of selectDependencyMembers(packages, process.argv.slice(2))) {
 		console.log(`Preparing dependencies for ${member.name}`);
 		prepareDependencies(path.join(repoRoot, member.path), member.dependencies.length);
 	}

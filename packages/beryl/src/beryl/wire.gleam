@@ -204,32 +204,66 @@ fn dynamic_to_json_limited(
   value: Dynamic,
   remaining_depth: Int,
 ) -> Result(json.Json, Nil) {
-  decode.run(value, json_decoder(remaining_depth))
+  decode.run(value, decode.string)
+  |> result.map(json.string)
+  |> result.lazy_or(fn() {
+    decode.run(value, decode.int)
+    |> result.map(json.int)
+  })
+  |> result.lazy_or(fn() {
+    decode.run(value, decode.float)
+    |> result.map(json.float)
+  })
+  |> result.lazy_or(fn() {
+    decode.run(value, decode.bool)
+    |> result.map(json.bool)
+  })
+  |> result.lazy_or(fn() {
+    decode.run(value, decode.optional(decode.failure(Nil, expected: "Nil")))
+    |> result.map(fn(_) { json.null() })
+  })
   |> result.replace_error(Nil)
+  |> result.lazy_or(fn() { dynamic_container_to_json(value, remaining_depth) })
 }
 
-fn json_decoder(remaining_depth: Int) -> decode.Decoder(json.Json) {
-  let scalar_decoder =
-    decode.one_of(decode.string |> decode.map(json.string), [
-      decode.int |> decode.map(json.int),
-      decode.float |> decode.map(json.float),
-      decode.bool |> decode.map(json.bool),
-      decode.optional(decode.failure(json.null(), expected: "Nil"))
-        |> decode.map(fn(_) { json.null() }),
-    ])
+fn dynamic_container_to_json(
+  value: Dynamic,
+  remaining_depth: Int,
+) -> Result(json.Json, Nil) {
+  use <- bool.guard(when: remaining_depth <= 0, return: Error(Nil))
 
-  case remaining_depth <= 0 {
-    True -> scalar_decoder
-    False -> {
-      let nested_decoder =
-        decode.recursive(fn() { json_decoder(remaining_depth - 1) })
-      decode.one_of(scalar_decoder, [
-        decode.list(nested_decoder) |> decode.map(json.preprocessed_array),
-        decode.dict(decode.string, nested_decoder)
-          |> decode.map(fn(fields) { fields |> dict.to_list() |> json.object() }),
-      ])
-    }
+  case
+    decode.run(value, decode.list(decode.dynamic))
+    |> result.replace_error(Nil)
+  {
+    Ok(items) ->
+      items
+      |> list.try_map(fn(item) {
+        dynamic_to_json_limited(item, remaining_depth - 1)
+      })
+      |> result.map(json.preprocessed_array)
+    Error(Nil) -> dynamic_object_to_json(value, remaining_depth - 1)
   }
+}
+
+fn dynamic_object_to_json(
+  value: Dynamic,
+  remaining_depth: Int,
+) -> Result(json.Json, Nil) {
+  use fields <- result.try(
+    decode.run(value, decode.dict(decode.string, decode.dynamic))
+    |> result.replace_error(Nil),
+  )
+  fields
+  |> dict.to_list
+  |> list.try_map(fn(field) {
+    use converted_value <- result.try(dynamic_to_json_limited(
+      field.1,
+      remaining_depth,
+    ))
+    Ok(#(field.0, converted_value))
+  })
+  |> result.map(json.object)
 }
 
 fn within_json_depth(value: Dynamic, remaining_depth: Int) -> Bool {
@@ -251,9 +285,9 @@ fn within_object_depth(value: Dynamic, remaining_depth: Int) -> Bool {
   case decode.run(value, dict_decoder) |> result.replace_error(Nil) {
     Ok(fields) ->
       remaining_depth > 0
-      && fields
-      |> dict.values()
-      |> list.all(fn(nested) { within_json_depth(nested, remaining_depth - 1) })
+      && dict.fold(fields, True, fn(within_depth, _key, nested) {
+        within_depth && within_json_depth(nested, remaining_depth - 1)
+      })
     Error(Nil) -> True
   }
 }
@@ -407,8 +441,8 @@ pub fn decode_binary_message(data: BitArray) -> Result(Inbound, DecodeError) {
       event:bytes-size(event_size),
       payload:bytes,
     >> -> {
-      use join_ref <- result.try(optional_utf8(join_ref))
-      use ref <- result.try(optional_utf8(ref))
+      use join_ref <- result.try(optional_utf8(join_ref, "join_ref"))
+      use ref <- result.try(optional_utf8(ref, "ref"))
       use topic <- result.try(required_utf8(topic, "topic"))
       use event <- result.try(required_utf8(event, "event"))
       Ok(codec.inbound(
@@ -423,11 +457,14 @@ pub fn decode_binary_message(data: BitArray) -> Result(Inbound, DecodeError) {
   }
 }
 
-fn optional_utf8(bytes: BitArray) -> Result(Option(String), DecodeError) {
+fn optional_utf8(
+  bytes: BitArray,
+  name: String,
+) -> Result(Option(String), DecodeError) {
   case bit_array.byte_size(bytes) {
     0 -> Ok(None)
     _ ->
-      required_utf8(bytes, "ref")
+      required_utf8(bytes, name)
       |> result.map(Some)
   }
 }
@@ -441,12 +478,15 @@ fn required_utf8(bytes: BitArray, name: String) -> Result(String, DecodeError) {
 pub type BinaryEncodeError {
   /// A metadata component is too large for the protocol's one-byte length.
   MetadataTooLong(component: String, byte_size: Int)
+  /// The payload contains a partial byte.
+  PayloadNotByteAligned
 }
 
 /// Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
 ///
 /// Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
-/// component exceeds the framing's 255-byte limit.
+/// component exceeds the framing's 255-byte limit, or
+/// `Error(PayloadNotByteAligned)` when the payload contains a partial byte.
 pub fn binary_push(
   join_ref join_ref: Option(String),
   topic topic: String,
@@ -459,6 +499,7 @@ pub fn binary_push(
   ))
   use #(topic_size, topic) <- result.try(u8_component(topic, "topic"))
   use #(event_size, event) <- result.try(u8_component(event, "event"))
+  use _ <- result.try(validate_binary_payload(payload))
   Ok(
     codec.BinaryFrame(<<
       binary_push_kind,
@@ -476,7 +517,8 @@ pub fn binary_push(
 /// Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
 ///
 /// Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
-/// component exceeds the framing's 255-byte limit.
+/// component exceeds the framing's 255-byte limit, or
+/// `Error(PayloadNotByteAligned)` when the payload contains a partial byte.
 pub fn binary_reply(
   join_ref join_ref: Option(String),
   ref ref: Option(String),
@@ -495,6 +537,7 @@ pub fn binary_reply(
   use #(ref_size, ref) <- result.try(u8_component(option.unwrap(ref, ""), "ref"))
   use #(topic_size, topic) <- result.try(u8_component(topic, "topic"))
   use #(status_size, status) <- result.try(u8_component(status_string, "status"))
+  use _ <- result.try(validate_binary_payload(payload))
   Ok(
     codec.BinaryFrame(<<
       binary_reply_kind,
@@ -514,7 +557,8 @@ pub fn binary_reply(
 /// Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
 ///
 /// Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
-/// component exceeds the framing's 255-byte limit.
+/// component exceeds the framing's 255-byte limit, or
+/// `Error(PayloadNotByteAligned)` when the payload contains a partial byte.
 pub fn binary_broadcast(
   topic topic: String,
   event event: String,
@@ -522,6 +566,7 @@ pub fn binary_broadcast(
 ) -> Result(Frame, BinaryEncodeError) {
   use #(topic_size, topic) <- result.try(u8_component(topic, "topic"))
   use #(event_size, event) <- result.try(u8_component(event, "event"))
+  use _ <- result.try(validate_binary_payload(payload))
   Ok(
     codec.BinaryFrame(<<
       binary_broadcast_kind,
@@ -532,6 +577,15 @@ pub fn binary_broadcast(
       payload:bits,
     >>),
   )
+}
+
+fn validate_binary_payload(
+  payload: BitArray,
+) -> Result(Nil, BinaryEncodeError) {
+  case payload {
+    <<_:bytes>> -> Ok(Nil)
+    _ -> Error(PayloadNotByteAligned)
+  }
 }
 
 fn u8_component(

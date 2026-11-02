@@ -1,21 +1,37 @@
 ---
 name: gleam-review
-description: Review Gleam code against the official Gleam conventions, patterns, and anti-patterns guide. Identifies anti-patterns (check-then-assert, catch-all matches, panicking in libraries, abbreviations, fragmented modules), convention violations (unqualified imports, missing type annotations, fallible functions that don't return Result), and opportunities to apply recommended patterns (descriptive errors, invalid-states-impossible modelling, builder pattern). Invoke explicitly when the user requests a Gleam code review, optionally with files, directories, or package names as arguments.
+description: >-
+  Load this skill whenever a task targets Gleam source files (*.gleam), including
+  reading, writing, editing, debugging, refactoring, testing, and reviewing source,
+  tests, and examples. Apply the official Gleam conventions, patterns, and
+  anti-patterns guide. Do not wait for an explicit code-review request. Do not
+  trigger for unrelated files merely because the repository uses Gleam.
 ---
 
-# Gleam Code Review
+# Gleam Conventions and Code Review
 
-Review Gleam code against the official Gleam style guide. The full guide is in
-`references/conventions.md` — read it in its entirety before reviewing, every
-time. It is the authority for this review; do not substitute general
-functional-programming intuitions for what it actually says.
+Apply the official Gleam style guide to the requested task. The full guide is
+in `references/conventions.md` — read it in its entirety before working on
+in-scope Gleam code, every time. It is the authority for Gleam conventions;
+do not substitute general functional-programming intuitions for what it
+actually says.
 
-This is a review, not a refactor: report findings and stop. Only apply fixes
-if the user asks for them afterward.
+## Follow the requested task
+
+For implementation, debugging, refactoring, explanation, and test-writing
+tasks, use the guide as conventions guidance and continue the requested work.
+Do not turn these tasks into read-only reviews or make unrelated changes.
+
+For explicit code-review requests, report findings and stop. Only apply fixes
+if the user asks for them.
 
 ## Determine scope
 
-Use the first of these that applies:
+For non-review tasks, use the Gleam files targeted by the current request and
+the relevant callers and tests. New files do not require an existing diff.
+Do not expand the scope to unrelated changes or ask what to review.
+
+For code-review requests, use the first of these that applies:
 
 1. Arguments were given (file paths, directories, or package names) — review
    those. A bare name like `lattice_core` means that package's `src/` and
@@ -26,7 +42,7 @@ Use the first of these that applies:
    on the branch (`git diff main...HEAD --name-only`).
 4. Otherwise, ask the user what to review.
 
-Read each in-scope file completely, not just the changed hunks. Most findings
+Read each existing in-scope file completely, not just the changed hunks. Most findings
 in this guide (fragmented modules, error-type design, catch-all matches) only
 make sense with the whole module in view, and a diff-only reading produces
 false positives — e.g. flagging a "missing" annotation that is actually
@@ -34,7 +50,7 @@ present two lines above the hunk.
 
 ## How to classify findings
 
-The guide defines three tiers, and the report must keep them distinct because
+For review reports, the guide defines three tiers. Keep them distinct because
 they carry different weight:
 
 - **Conventions** and **anti-patterns** are always-rules. Deviations are
@@ -106,6 +122,9 @@ things you tripped over, not a second review dimension; if the user wants a
 correctness review, that is a different task.
 
 ## Report format
+
+Use this format only for code-review requests. For other tasks, return the
+implementation, explanation, or other result the user requested.
 
 Lead with a one-paragraph verdict: overall state of the code and the most
 important finding. Then:

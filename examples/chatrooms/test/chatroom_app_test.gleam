@@ -127,3 +127,32 @@ pub fn missing_room_is_rejected_test() -> Nil {
   session_presence.count(presence, "room:missing") |> should.equal(0)
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
+
+pub fn unavailable_groups_reject_join_as_service_failure_test() -> Nil {
+  let #(groups, _unstarted_specification) = group.child_spec()
+  let presence = session_presence.start()
+  let assert Ok(hub) = broadcast_hub.start()
+  let context = app.Context(presence: presence, groups: groups, hub: hub)
+  let assert Ok(#(sockets, specification)) =
+    channel.child_spec(
+      beryl.config(wire.phoenix_codec()),
+      handlers: app.handlers(context),
+    )
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(specification)
+    |> static_supervisor.start()
+  let frames = connect(sockets, "room-socket")
+  route(
+    sockets,
+    "room-socket",
+    "[\"jr-r\",\"r-r\",\"room:general\",\"phx_join\",{}]",
+  )
+
+  let reply = recv(frames)
+  reply |> string.contains("\"status\":\"error\"") |> should.be_true
+  reply |> string.contains("\"code\":503") |> should.be_true
+  reply |> string.contains("Room lookup unavailable") |> should.be_true
+  session_presence.count(presence, "room:general") |> should.equal(0)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
