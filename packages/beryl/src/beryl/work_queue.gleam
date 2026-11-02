@@ -86,6 +86,18 @@ pub fn call(
   request: fn(fn(reply) -> Nil) -> message,
 ) -> Result(reply, overload.CallError)
 
+/// Reserve completion work with a call. The caller must activate cleanup after
+/// the call returns; the owner must also do so when the caller dies.
+/// Timeout retains the request for owner-side cancellation and cleanup.
+@external(erlang, "beryl_work_queue_ffi", "call_with_cleanup")
+pub fn call_with_cleanup(
+  queue: Queue(message),
+  key: key,
+  timeout_ms: Int,
+  request: fn(fn(reply) -> Nil) -> message,
+  cleanup: message,
+) -> Result(reply, overload.CallError)
+
 /// Publish a pre-reserved request and wait on a one-shot reply alias.
 @external(erlang, "beryl_work_queue_ffi", "call_reserved")
 pub fn call_reserved(

@@ -182,7 +182,11 @@ Try to acquire a configured connection slot for a transport.
 
  Pass the real socket peer IP. Do not pass a client-supplied address such as
  `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
- per-system limit on this node is already reached.
+ per-system limit on this node is already reached, its per-IP rate is
+ exhausted, or bounded pending admission fails. The pending queue includes
+ reserved cancellation work; configure it with
+ `beryl.with_connection_queue_limits`. The call waits at most 100 ms after
+ publication. Full or oversized requests fail without entering the mailbox.
 
 <div class="api-entry-anchor" id="api-function-active_codec" aria-hidden="true"></div>
 
@@ -234,7 +238,8 @@ Transfer an acquired connection slot to the calling connection process.
  that monitor without leaving the reservation unowned, so either process
  dying reclaims the slot at the correct lifecycle stage. Returns
  `Error(Nil)` when the reservation was already reclaimed or the limiter
- cannot acknowledge the transfer. The connection must close on error.
+ cannot acknowledge the transfer. Failure cancels the permit; the connection
+ must close on error.
 
 <div class="api-entry-anchor" id="api-function-max_inbound_frame_bytes" aria-hidden="true"></div>
 
