@@ -356,7 +356,12 @@ fn handle_message(
     }
     Drain(subject) ->
       case work_queue.take(state.inbox) {
-        Error(Nil) -> actor.continue(State(..state, draining: False))
+        Error(work_queue.Empty) ->
+          actor.continue(State(..state, draining: False))
+        Error(work_queue.Yielded) -> {
+          process.send(subject, Drain(subject))
+          actor.continue(State(..state, draining: True))
+        }
         Ok(#(lease, work)) -> {
           let next = handle_message(State(..state, draining: True), work)
           work_queue.release(state.inbox, lease)
