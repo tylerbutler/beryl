@@ -57,8 +57,10 @@ let assert Ok(_root) =
   |> static_supervisor.start()
 ```
 
-Mutations return typed admission, owner-exit, or timeout errors. `update`
-wraps call failures in `RequestFailed`; it also reports `UnknownRef`.
+Mutations return typed admission, owner-exit, or timeout errors. `track`
+wraps call failures in `TrackRequestFailed`; `update` wraps them in
+`RequestFailed` and also reports `UnknownRef`. A failed CRDT clock lookup returns
+`TrackInvalidCrdtState` or `UpdateInvalidCrdtState` without changing entries.
 A timeout cancels pending work, but a running mutation may still complete.
 Reads bypass the mutation queue. See [overload handling](/guides/overload/).
 
