@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Fix compilation of the connection limiter after queue error types changed."

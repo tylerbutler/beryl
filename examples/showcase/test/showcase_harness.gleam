@@ -51,7 +51,7 @@ pub fn start(_replica: String) -> System {
 
 /// Start the deployed handlers with test-specific runtime limits.
 pub fn start_with_config(config: beryl.Config) -> System {
-  let presence_tracker = session_presence.start()
+  let assert Ok(presence_tracker) = session_presence.start()
   let #(groups, groups_specification) = group.child_spec()
   let assert Ok(store) = document_store.start()
   let assert Ok(broadcast_hub) = hub.start()
@@ -94,7 +94,7 @@ pub fn start_with_config(config: beryl.Config) -> System {
 /// Stop the socket runtime and test-only presence publisher.
 pub fn stop(system: System) -> Nil {
   let assert Ok(Nil) = beryl.stop(system.sockets)
-  session_presence.stop(system.presence)
+  let assert Ok(Nil) = session_presence.stop(system.presence)
   Nil
 }
 

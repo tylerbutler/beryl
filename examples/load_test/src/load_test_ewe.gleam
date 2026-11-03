@@ -7,7 +7,7 @@ import load_test/app
 import load_test/ewe as http
 
 pub fn main() -> Nil {
-  let app.App(channels:) = app.start()
+  let assert Ok(app.App(channels:)) = app.start()
   let interface = app.bind_address()
   let assert Ok(_) =
     beryl_ewe.handler(channels, server.default_config("/socket"), fn(request) {
