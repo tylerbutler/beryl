@@ -13,6 +13,17 @@
 //// [`handler`](#handler) or [`upgrade`](#upgrade). This module supplies only
 //// the Ewe-specific glue: the WebSocket upgrade call, frame sending, and
 //// peer IP extraction.
+////
+//// WebSocket compression is declined by default without rejecting the
+//// handshake. Opt in with `server.with_compression(config)` only after
+//// considering the memory and CPU cost of inflating untrusted messages.
+//// beryl's inbound limit applies after message assembly and inflation, not
+//// to transport buffering. Ewe's websocks dependency has separate frame,
+//// message, and inflation limits; these are not a total memory guarantee.
+////
+//// Ewe is pinned to 9.0.0 because declining HTTP/1 compression requires a
+//// narrow compatibility shim for its private cached upgrade layout.
+//// Unknown layouts fail closed with HTTP 500 and admission rollback.
 
 import beryl/transport.{type Sockets}
 import beryl/transport/server.{type ConnectionState, type SendRequest}
@@ -49,6 +60,9 @@ import gleam/result
 ///
 /// HTTP/2 extended CONNECT uses Ewe's parsed `:authority` for origin checks
 /// when there is no `Host` header.
+///
+/// Compression is declined unless `server.with_compression` is enabled.
+/// Authentication and connect metadata retain the original extension offers.
 pub fn upgrade(
   request: Request(Connection),
   channels: Sockets,
@@ -148,29 +162,41 @@ fn do_upgrade(
   telemetry: transport.Telemetry,
 ) -> Response(Body) {
   let seed = server.connect_seed(request, connect_metadata)
-  ewe.websocket(
-    request,
-    on_init: fn(_connection, base_selector: Selector(SendRequest)) {
-      // Extend the selector Ewe provides so the runtime can push outbound
-      // frames to this connection's process as `ewe.UserMessage(SendRequest)`
-      // messages.
-      let owner = process.self()
-      server.init_connection(
-        sockets: channels,
-        seed: seed,
-        connection_permit: connection_permit,
-        base_selector: base_selector,
-        config: config,
-        force_close: fn() { force_close(owner) },
-        logger_name: "beryl_ewe",
-        telemetry: telemetry,
-        codec: None,
+  let negotiation_request = server.prepare_websocket_request(request, config)
+  let connection = case server.compression_enabled(config) {
+    True -> Ok(negotiation_request.body)
+    False -> disable_cached_compression(negotiation_request.body)
+  }
+  case connection {
+    Error(Nil) -> reject(500)
+    Ok(connection) ->
+      ewe.websocket(
+        request.set_body(negotiation_request, connection),
+        on_init: fn(_connection, base_selector: Selector(SendRequest)) {
+          // Extend the selector Ewe provides so the runtime can push outbound
+          // frames to this connection's process as `ewe.UserMessage(SendRequest)`
+          // messages.
+          let owner = process.self()
+          server.init_connection(
+            sockets: channels,
+            seed: seed,
+            connection_permit: connection_permit,
+            base_selector: base_selector,
+            config: config,
+            force_close: fn() { force_close(owner) },
+            logger_name: "beryl_ewe",
+            telemetry: telemetry,
+            codec: None,
+          )
+        },
+        handler: on_message,
+        on_close: server.close_connection,
       )
-    },
-    handler: on_message,
-    on_close: server.close_connection,
-  )
+  }
 }
+
+@external(erlang, "beryl_ewe_compression_ffi", "disable_cached_compression")
+fn disable_cached_compression(connection: Connection) -> Result(Connection, Nil)
 
 fn force_close(owner: process.Pid) -> Result(Nil, server.ForceCloseError) {
   process.kill(owner)

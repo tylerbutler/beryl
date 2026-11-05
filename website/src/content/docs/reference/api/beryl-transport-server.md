@@ -47,6 +47,7 @@ Server-agnostic WebSocket transport infrastructure.
   <a class="api-symbol-index__section" href="#functions">Functions</a>
   <ul>
 <li><a href="#api-function-close_connection"><code>close_connection</code></a></li>
+<li><a href="#api-function-compression_enabled"><code>compression_enabled</code></a></li>
 <li><a href="#api-function-connect_seed"><code>connect_seed</code></a></li>
 <li><a href="#api-function-default_config"><code>default_config</code></a></li>
 <li><a href="#api-function-finish_outbound_write"><code>finish_outbound_write</code></a></li>
@@ -55,9 +56,11 @@ Server-agnostic WebSocket transport infrastructure.
 <li><a href="#api-function-handler"><code>handler</code></a></li>
 <li><a href="#api-function-init_connection"><code>init_connection</code></a></li>
 <li><a href="#api-function-is_websocket_request"><code>is_websocket_request</code></a></li>
+<li><a href="#api-function-prepare_websocket_request"><code>prepare_websocket_request</code></a></li>
 <li><a href="#api-function-upgrade"><code>upgrade</code></a></li>
 <li><a href="#api-function-with_allow_all_origins"><code>with_allow_all_origins</code></a></li>
 <li><a href="#api-function-with_allowed_origins"><code>with_allowed_origins</code></a></li>
+<li><a href="#api-function-with_compression"><code>with_compression</code></a></li>
 <li><a href="#api-function-with_on_connect"><code>with_on_connect</code></a></li>
 <li><a href="#api-function-with_outbound_limits"><code>with_outbound_limits</code></a></li>
   </ul>
@@ -252,6 +255,16 @@ Clean up a closed connection.
 
  Release the held connection slot and report the disconnect to the runtime.
 
+<div class="api-entry-anchor" id="api-function-compression_enabled" aria-hidden="true"></div>
+
+### `compression_enabled`
+
+```gleam
+pub fn compression_enabled(TransportConfig(a)) -> Bool
+```
+
+Whether the operator explicitly enabled WebSocket compression.
+
 <div class="api-entry-anchor" id="api-function-connect_seed" aria-hidden="true"></div>
 
 ### `connect_seed`
@@ -290,6 +303,9 @@ Create a default transport config with no connect hook.
  configuration. Each connection also has an outbound budget of 256 frames
  and 1 MiB of retained payload binaries. A connection that exceeds either
  limit is closed.
+
+ WebSocket compression is declined by default. Use `with_compression` only
+ after accepting the adapter-specific inflation and buffering risks.
 
  Add `with_on_connect` to authenticate connections and/or seed connect
  metadata. Use `with_allowed_origins` to set an explicit allow-list. Use
@@ -424,6 +440,24 @@ Determine whether a request is a WebSocket upgrade request.
  regard to case. Use it to distinguish WebSocket handshakes from regular
  HTTP traffic on the same listener.
 
+<div class="api-entry-anchor" id="api-function-prepare_websocket_request" aria-hidden="true"></div>
+
+### `prepare_websocket_request`
+
+```gleam
+pub fn prepare_websocket_request(
+  request.Request(a),
+  TransportConfig(a)
+) -> request.Request(a)
+```
+
+Prepare the request headers passed to a server's WebSocket handshake.
+
+ Capture authentication input and `ConnectSeed` from the original request
+ first. When compression is disabled, all extension offers are removed.
+ A server that caches upgrade metadata must also clear its cached offers;
+ changing these headers alone does not disable Ewe HTTP/1 compression.
+
 <div class="api-entry-anchor" id="api-function-upgrade" aria-hidden="true"></div>
 
 ### `upgrade`
@@ -526,6 +560,25 @@ Restrict WebSocket upgrades to requests whose `Origin` header exactly
  Prefer this over `with_allow_all_origins` when you know the exact origins
  that should be allowed (e.g. behind a reverse proxy that rewrites the
  `Host` header, where `SameOrigin` cannot see the public host).
+
+<div class="api-entry-anchor" id="api-function-with_compression" aria-hidden="true"></div>
+
+### `with_compression`
+
+```gleam
+pub fn with_compression(TransportConfig(a)) -> TransportConfig(a)
+```
+
+Allow the transport to negotiate WebSocket compression when offered.
+
+ Compression is disabled by default. This opt-in accepts the transport's
+ inflation risk: Mist 6.0.3 / gramps 6.0.1 inflate without an output cap
+ before beryl receives a message. Ewe 9.0.0 / websocks 4.0.1 apply their own
+ frame, message, and inflation limits, not beryl's configured inbound limit.
+
+ beryl checks inbound size after assembly and inflation. That check does
+ not bound transport memory. Disabling compression does not establish a
+ beryl memory bound for uncompressed streamed or fragmented messages.
 
 <div class="api-entry-anchor" id="api-function-with_on_connect" aria-hidden="true"></div>
 

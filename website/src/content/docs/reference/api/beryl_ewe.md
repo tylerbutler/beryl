@@ -30,6 +30,17 @@ Ewe WebSocket transport for beryl
  the Ewe-specific glue: the WebSocket upgrade call, frame sending, and
  peer IP extraction.
 
+ WebSocket compression is declined by default without rejecting the
+ handshake. Opt in with `server.with_compression(config)` only after
+ considering the memory and CPU cost of inflating untrusted messages.
+ beryl's inbound limit applies after message assembly and inflation, not
+ to transport buffering. Ewe's websocks dependency has separate frame,
+ message, and inflation limits; these are not a total memory guarantee.
+
+ Ewe is pinned to 9.0.0 because declining HTTP/1 compression requires a
+ narrow compatibility shim for its private cached upgrade layout.
+ Unknown layouts fail closed with HTTP 500 and admission rollback.
+
 <nav class="api-symbol-index" aria-label="Module contents">
 <section class="api-symbol-index__group">
   <a class="api-symbol-index__section" href="#functions">Functions</a>
@@ -110,3 +121,6 @@ Upgrade a request to WebSocket if it matches the configured path.
 
  HTTP/2 extended CONNECT uses Ewe's parsed `:authority` for origin checks
  when there is no `Host` header.
+
+ Compression is declined unless `server.with_compression` is enabled.
+ Authentication and connect metadata retain the original extension offers.
