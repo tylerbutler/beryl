@@ -178,7 +178,12 @@ pub fn resumed_work_allows_owner_monitor_test() -> Nil {
   let monitor = process.monitor(loop.pid)
   let owner = app_test_helper.runtime_pid(loop.sockets)
   process.kill(owner)
-  await_normal_exit(monitor)
+  let assert Ok(process.ProcessDown(reason:, ..)) =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(3000)
+  // Either cooperative cleanup or the external guardian can win this race.
+  should.be_true(reason == process.Normal || reason == process.Killed)
   socket.queue_snapshot(loop.sender)
   |> should.equal(Error(overload.Unavailable))
   test_helper.wait_until(
