@@ -171,6 +171,38 @@ includes it alongside the same-node tests, and CI runs it on Erlang 27 and 28.
 | Delayed old-incarnation reply | An older reply cannot displace a confirmed replacement |
 | Retirement and lagging peers | The 60-second policy revokes old requests; forwarded history cannot restore retired entries |
 
+## Dependency compatibility
+
+beryl temporarily uses the private Erlang representation of
+`lattice_presence.State` for two operations: removing one exact tracking tag and
+producing a snapshot with only the local owner's entries and causal clocks.
+The public leave operations can remove other registrations with the same
+session, topic, and key. The replica lifecycle operations retain foreign
+high-water clocks, so they cannot replace owner-only projection.
+
+The dependency requirement accepts `>= 2.0.0 and < 2.1.0`. Version **2.0.0** is
+the verified baseline and currently the only published release in this patch
+line. Accepting future 2.0 patches is a temporary compatibility policy, not
+evidence that their private representation has been checked.
+
+The FFI expects `{state, Replica, Context, Clouds, Values, Replicas}`, with
+map-backed dictionaries, `{tag, Owner, Clock}` value keys, and `up`/`down`
+replica statuses. Exact-tag removal preserves all fields except the selected
+value. Owner snapshots retain only the owner's context, cloud, and values,
+and set only that owner's status to `up`. Unsupported state shapes fail
+explicitly with `unsupported_lattice_presence_state`.
+
+Before merging a dependency update, inspect these assumptions in the resolved
+release and run both-operation compatibility tests and the presence recovery
+suite through `just test beryl`. These checks include stale-state merges,
+third-replica clocks, and incarnation retirement and recovery. CI runs them on
+Erlang 27 and 28. A future patch can still change opaque internals and break a
+consumer that resolves it before these checks run.
+
+[tylerbutler/lattice#199](https://github.com/tylerbutler/lattice/issues/199)
+tracks supported replacements for **both** operations. This is follow-up work;
+the bounded exception does not require an upstream release before beryl v1.
+
 ## Replica availability
 
 After a successful snapshot exchange, beryl associates the replica identity
@@ -250,8 +282,8 @@ unavailable history only for the retention window plus the next runnable
 check. A retired incarnation still leaves one high-water clock behind, so
 clock storage grows with the number of retired incarnations. It does not impose a global memory bound on peer count, entry count,
 metadata size, or work blocked in callbacks. Each reply copies the source's
-owned entries; projecting a snapshot with the dependency's lifecycle API also
-scans retained state. See [#400](https://github.com/tylerbutler/beryl/issues/400)
+owned entries; the private owner-only projection also scans retained state.
+See [#400](https://github.com/tylerbutler/beryl/issues/400)
 for broader replication-cost measurements.
 
 ## Request and sync flow

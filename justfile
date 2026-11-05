@@ -45,9 +45,9 @@ test *PACKAGES:
     @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) cd packages/beryl && gleam test -- --tag serial ;; esac
     @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) just test-distributed ;; esac
 
-# Real-node PubSub and presence recovery, including the 60-second retirement policy
+# Presence dependency compatibility and real-node recovery, including retirement
 test-distributed:
-    cd packages/beryl && gleam build && erl +S 4:4 -noshell -pa build/dev/erlang/*/ebin -eval 'case eunit:test(beryl_presence_distributed_test, [verbose]) of ok -> halt(0); _ -> halt(1) end.'
+    cd packages/beryl && gleam build && erl +S 4:4 -noshell -pa build/dev/erlang/*/ebin -eval 'case eunit:test([beryl_presence_state_compatibility_test, beryl_presence_distributed_test], [verbose]) of ok -> halt(0); _ -> halt(1) end.'
 
 # Build and run the same portable protocol cases on both targets
 protocol-test:
