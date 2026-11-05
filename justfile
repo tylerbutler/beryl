@@ -54,6 +54,10 @@ protocol-test:
     trellis run build --strict --target all beryl_protocol
     trellis run test --target all beryl_protocol
 
+# Check that consumers can own top-level heirloom Gleam and Erlang modules
+namespace-test:
+    cd scripts/fixtures/heirloom_namespace && gleam format --check src && gleam clean && gleam build --warnings-as-errors && gleam run
+
 # Test Phoenix framing and the Durable Object host in the Cloudflare runtime
 portable-host-test:
     pnpm -C examples/portable_channels test

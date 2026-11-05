@@ -1,10 +1,10 @@
+import beryl/heirloom
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
-import heirloom
 
 @external(erlang, "heirloom_test_ffi", "send_transfer")
 fn send_transfer(
