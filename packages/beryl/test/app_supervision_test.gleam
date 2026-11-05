@@ -10,6 +10,7 @@
 import app_test_helper
 import beryl
 import beryl/connection_limit
+import beryl/heirloom
 import beryl/snapshot
 import beryl/socket.{AcceptJoin, Broadcast, Join, Next}
 import beryl/transport
@@ -24,7 +25,6 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import gleeunit/should
-import heirloom
 import test_helper
 import unitest
 

@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Avoid collisions with downstream heirloom modules by placing the internal ETS helper in the beryl namespace."

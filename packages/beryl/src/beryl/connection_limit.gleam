@@ -23,6 +23,7 @@
 //// router and limiter-worker restarts, but not shutdown or replacement of
 //// that supervisor, or a node restart.
 
+import beryl/heirloom
 import beryl/log
 import beryl/overload
 import beryl/rate_limit
@@ -37,7 +38,6 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
-import heirloom
 import rasa/atomic
 import rasa/monotonic
 

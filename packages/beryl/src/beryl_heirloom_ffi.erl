@@ -1,4 +1,4 @@
--module(heirloom_ffi).
+-module(beryl_heirloom_ffi).
 -export([create/7, insert/3, lookup/2, delete/1, exists/1, owner/1, heir/1,
          set_heir/3, clear_heir/1, give_away/3, validate_transfer/1]).
 

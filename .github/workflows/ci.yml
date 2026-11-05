@@ -48,6 +48,7 @@ jobs:
               - 'scripts/prepare-gleam-deps*.mjs'
               - 'scripts/check-ffi-*.sh'
               - 'scripts/check-portable-deps*.mjs'
+              - 'scripts/fixtures/heirloom_namespace/**'
             docs:
               - '.github/workflows/ci.yml'
               - 'packages/**'
@@ -242,6 +243,10 @@ jobs:
       - name: Run tests
         if: needs.changes.outputs.source == 'true'
         run: just test
+
+      - name: Test downstream heirloom namespace
+        if: needs.changes.outputs.source == 'true'
+        run: just namespace-test
 
       - name: Test protocol on Erlang and JavaScript
         if: needs.changes.outputs.source == 'true'

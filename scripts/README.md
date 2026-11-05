@@ -67,6 +67,10 @@ From the repository root:
 - `just beam-check` builds packages and runs Dialyzer/Xref; install the root
   BEAM/Gleam toolchain and prepare dependencies first. The analysis writes
   build artifacts. [justfile:beam-check] [justfile:dialyzer] [justfile:xref]
+- `just namespace-test` clean-builds and runs the standalone
+  `fixtures/heirloom_namespace` consumer. Its own `heirloom` Gleam module and
+  `heirloom_ffi` Erlang helper must coexist with beryl. The fixture is outside
+  the workspace and release graph. [justfile:namespace-test]
 
 `just deps-gleam` is dependency setup, not an offline test; it can download
 packages and also prepares website snippets. [justfile:deps-gleam]
