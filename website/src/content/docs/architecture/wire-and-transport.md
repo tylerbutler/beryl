@@ -30,6 +30,60 @@ The public codec builders configure these behaviors:
 
 Build a custom text codec with `codec.new(...)`, then add optional behavior with builders such as `codec.with_binary_decoder`, `codec.with_close_encoder`, `codec.with_error_encoder`, and `codec.with_topicless_events`. The built-in `wire.phoenix_codec()` configures Phoenix text and V2 binary framing.
 
+### Return encoding results
+
+Outbound callbacks return `Result(Frame, codec.EncodeError)`. To migrate a
+custom codec with total encoders, wrap its existing frames in `Ok`:
+
+```gleam
+let codec =
+  codec.new(
+    decode_text: wire.decode_message,
+    encode_reply: fn(join_ref, ref, topic, status, response) {
+      Ok(wire.reply_json(join_ref, ref, topic, status, response))
+    },
+    encode_push: fn(topic, event, payload) {
+      Ok(wire.push(topic, event, payload))
+    },
+    encode_heartbeat_reply: fn(ref) { Ok(wire.heartbeat_reply(ref)) },
+  )
+```
+
+Return `Error(codec.EncodingRejected(reason))` for a codec-specific failure.
+For Phoenix binary helpers, map their structured errors with
+`wire.binary_encode_error_to_encode_error`:
+
+```gleam
+wire.binary_push(None, topic, event, bytes)
+|> result.map_error(wire.binary_encode_error_to_encode_error)
+```
+
+The mapping preserves `MetadataTooLong(component, byte_size)` and
+`PayloadNotByteAligned`. Phoenix binary metadata components permit at most
+255 bytes. Text helpers such as `wire.push` still return `Frame`; the built-in
+Phoenix codec wraps those frames in `Ok` and keeps the same wire format.
+
+Codec authors can call the public `apply_encode_*` operations to test their
+callbacks. Required encoders return `Result(Frame, EncodeError)`. Optional
+close/error encoders return `Option(Result(Frame, EncodeError))`: `None`
+means no encoder, while `Some(Error(error))` means the encoder rejected the
+output. These direct calls do not close runtime sockets.
+
+### Encoding failure closes the socket
+
+If an encoder returns `Error`, beryl closes only the affected socket with
+`socket.EncodingFailed(error)`. It stops later application effects, releases
+pending reply references, and completes worker and presence cleanup. It does
+not roll back earlier effects, retry the encoder, or send a fallback frame.
+It skips further codec calls, including terminal encoders, during cleanup.
+
+For broadcasts, beryl encodes a frame for each recipient. One recipient's
+encoding failure does not close healthy peers or undo broadcasts that beryl
+has already dispatched. An encoding failure occurs before transport enqueue;
+it is separate from queue rejection or a physical write error.
+
+## Configure a codec
+
 Each beryl `Config` requires a codec. There is no default:
 
 ```gleam

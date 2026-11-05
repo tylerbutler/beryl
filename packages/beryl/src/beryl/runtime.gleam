@@ -710,6 +710,7 @@ fn stop_reason_to_disconnect_reason(
     socket.HeartbeatTimeout -> telemetry.HeartbeatTimeout
     socket.Errored(_) -> telemetry.CallbackDisconnect
     socket.AdmissionRejected(_) -> telemetry.AdmissionDisconnect
+    socket.EncodingFailed(_) -> telemetry.EncodingDisconnect
   }
 }
 
@@ -1207,33 +1208,34 @@ fn handle_message(
           }
       }
     Broadcast(topic_name, event_name, payload, except) -> {
-      case state.role {
+      let after = case state.role {
         // In a socket actor this is a delivery, not an origination: the
         // router already resolved the recipients (decision 1's hop) and
         // this actor encodes and sends for its own socket.
         SocketActorRole(..) -> {
-          let _recipient_count =
+          let #(state, _recipient_count) =
             local_broadcast(state, topic_name, event_name, payload, except)
-          Nil
+          state
         }
         RouterRole(..) ->
           broadcast_with_pubsub(state, topic_name, event_name, payload, except)
       }
-      actor.continue(state)
+      after_socket_turn(state, after)
     }
     SocketBroadcast(topic_name, event_name, payload, except, inline_recipients) -> {
-      broadcast_from_router(
-        state,
-        topic_name,
-        event_name,
-        payload,
-        except,
-        inline_recipients,
-      )
+      let state =
+        broadcast_from_router(
+          state,
+          topic_name,
+          event_name,
+          payload,
+          except,
+          inline_recipients,
+        )
       actor.continue(state)
     }
     LocalBroadcast(topic_name, event_name, payload) -> {
-      broadcast_locally(state, topic_name, event_name, payload)
+      let state = broadcast_locally(state, topic_name, event_name, payload)
       actor.continue(state)
     }
     RemoteBroadcast(pubsub_message) ->
@@ -1692,6 +1694,24 @@ fn after_socket_turn(
   before: State(model, message),
   after: State(model, message),
 ) -> actor.Next(State(model, message), Message(message)) {
+  // Nested protocol runs share one suspension slot; finish their cleanup
+  // before starting an encoding-failure teardown.
+  let after =
+    list.fold(dict.keys(after.sockets), after, fn(state, socket_id) {
+      use <- bool.guard(
+        when: dict.has_key(state.suspended, socket_id),
+        return: state,
+      )
+      case encoding_failure(state, socket_id), state.role {
+        Some(error), SocketActorRole(phase: Active, ..)
+        | Some(error), SocketActorRole(phase: Booting, ..)
+        -> run(state, socket_id, [StepTeardown(socket.EncodingFailed(error))])
+        None, _
+        | Some(_), SocketActorRole(phase: Closing, ..)
+        | Some(_), RouterRole(..)
+        -> state
+      }
+    })
   case dict.size(before.suspended) > 0 && dict.size(after.suspended) == 0 {
     True -> process.send(after.self_subject, WorkAvailable)
     False -> Nil
@@ -2165,6 +2185,7 @@ fn protocol_reason(reason: StopReason) -> protocol.CloseReason {
     socket.HeartbeatTimeout -> protocol.HeartbeatTimeout
     socket.Errored(reason) -> protocol.Fault(reason)
     socket.AdmissionRejected(_) -> protocol.Fault("admission_rejected")
+    socket.EncodingFailed(_) -> protocol.Fault("encoding_failed")
   }
 }
 
@@ -2262,6 +2283,16 @@ fn execute_protocol_action(
   started_at: Int,
   kind: telemetry.MessageKind,
 ) -> Execution(model, message) {
+  let skip = case action {
+    protocol.CloseChannel(..) | protocol.CloseConnection(_) -> False
+    protocol.DeliverJoin(..)
+    | protocol.AdmitJoin(..)
+    | protocol.Joined(..)
+    | protocol.DeliverMessage(..)
+    | protocol.Send(_)
+    | protocol.Deadline(_) -> encoding_failure(state, socket_id) != None
+  }
+  use <- bool.guard(when: skip, return: Continue(state, []))
   case action {
     protocol.DeliverJoin(_, operation, topic_name, payload) -> {
       let metadata = {
@@ -2331,7 +2362,7 @@ fn execute_protocol_action(
       execute_close_topic(state, socket_id, topic_name, reason, ContinueDriving)
     }
     protocol.Send(outbound) -> {
-      send_protocol_frame(state, socket_id, outbound)
+      let state = send_protocol_frame(state, socket_id, outbound)
       Continue(state, [])
     }
     protocol.CloseConnection(reason) ->
@@ -2354,9 +2385,9 @@ fn send_protocol_frame(
   state: State(model, message),
   socket_id: String,
   outbound: protocol.Outbound,
-) -> Nil {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
-    Error(Nil) -> Nil
+    Error(Nil) -> state
     Ok(socket) ->
       case outbound {
         protocol.ReplyMessage(join_ref, ref, topic_name, status, payload) -> {
@@ -2374,12 +2405,8 @@ fn send_protocol_frame(
             payload,
           )
         }
-        protocol.PushMessage(topic_name, event_name, payload) -> {
-          let frame =
-            codec.encode_push(socket.codec)(topic_name, event_name, payload)
-          let _send_result = send_frame_logged(state, socket, topic_name, frame)
-          Nil
-        }
+        protocol.PushMessage(topic_name, event_name, payload) ->
+          send_push_frame(state, socket, topic_name, event_name, payload)
         protocol.TerminalMessage(join_ref, topic_name, reason) ->
           send_terminal_frame(
             state,
@@ -2389,10 +2416,9 @@ fn send_protocol_frame(
             host_reason(reason),
           )
         protocol.HeartbeatReply(ref) -> {
-          let frame = codec.encode_heartbeat_reply(socket.codec)(ref)
-          let _send_result =
-            send_frame_logged(state, socket, "__heartbeat__", frame)
-          Nil
+          send_encoded_frame(state, socket, "__heartbeat__", "heartbeat", fn() {
+            codec.encode_heartbeat_reply(socket.codec)(ref)
+          })
         }
       }
   }
@@ -3218,16 +3244,22 @@ fn reject_invalid_join(
       state
     }
     Ok(socket) -> {
-      let reply =
-        codec.encode_reply(socket.codec)(
-          codec.inbound_join_ref(message),
-          codec.inbound_ref(message),
+      let state =
+        send_encoded_frame(
+          state,
+          socket,
           codec.inbound_topic(message),
-          codec.StatusError,
-          error_reason("invalid_topic"),
+          "reply",
+          fn() {
+            codec.encode_reply(socket.codec)(
+              codec.inbound_join_ref(message),
+              codec.inbound_ref(message),
+              codec.inbound_topic(message),
+              codec.StatusError,
+              error_reason("invalid_topic"),
+            )
+          },
         )
-      let _send_result =
-        send_frame_logged(state, socket, codec.inbound_topic(message), reply)
       emit_join_stop(state, started_at, telemetry.JoinInvalidTopic)
       state
     }
@@ -3255,14 +3287,15 @@ fn handle_join(
           #("topic", topic_name),
         ]
       })
-      send_error_reply(
-        state,
-        socket_id,
-        topic_name,
-        join_ref,
-        ref,
-        error_reason("rate_limited"),
-      )
+      let state =
+        send_error_reply(
+          state,
+          socket_id,
+          topic_name,
+          join_ref,
+          ref,
+          error_reason("rate_limited"),
+        )
       emit_join_stop(state, started_at, telemetry.JoinRateLimited)
       state
     }
@@ -4191,6 +4224,10 @@ fn execute_input(
   source: Source,
   continuation: Continuation,
 ) -> Execution(model, message) {
+  use <- bool.guard(
+    when: encoding_failure(state, socket_id) != None && source != ClosedSource,
+    return: Continue(state, continuation_steps(continuation, [], None)),
+  )
   case dict.get(state.sockets, socket_id), state.role {
     Error(Nil), SocketActorRole(..) | Error(Nil), RouterRole(..) -> {
       emit_missing_socket_telemetry(state, source)
@@ -4714,6 +4751,10 @@ fn execute_close_topic(
   reason: StopReason,
   continuation: Continuation,
 ) -> Execution(model, message) {
+  let reason = case encoding_failure(state, socket_id) {
+    Some(error) -> socket.EncodingFailed(error)
+    None -> reason
+  }
   let state = case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) ->
@@ -4931,28 +4972,23 @@ fn send_terminal_frame(
   topic_name: String,
   close_join_ref: Option(String),
   reason: StopReason,
-) -> Nil {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
-    Error(Nil) -> Nil
+    Error(Nil) -> state
     Ok(socket) -> {
       let encoder = case reason {
-        socket.Errored(_) | socket.AdmissionRejected(_) ->
-          codec.encode_error(socket.codec)
+        socket.Errored(_)
+        | socket.AdmissionRejected(_)
+        | socket.EncodingFailed(_) -> codec.encode_error(socket.codec)
         socket.Normal | socket.Shutdown | socket.HeartbeatTimeout ->
           codec.encode_close(socket.codec)
       }
       case encoder {
-        Some(encode) -> {
-          let _send_result =
-            send_frame_logged(
-              state,
-              socket,
-              topic_name,
-              encode(close_join_ref, topic_name),
-            )
-          Nil
-        }
-        None -> Nil
+        Some(encode) ->
+          send_encoded_frame(state, socket, topic_name, "terminal", fn() {
+            encode(close_join_ref, topic_name)
+          })
+        None -> state
       }
     }
   }
@@ -4969,6 +5005,10 @@ fn execute_teardown(
   socket_id: String,
   reason: StopReason,
 ) -> Execution(model, message) {
+  let reason = case encoding_failure(state, socket_id) {
+    Some(error) -> socket.EncodingFailed(error)
+    None -> reason
+  }
   let state = case state.role {
     SocketActorRole(router:, workers:, ..) ->
       State(..state, role: SocketActorRole(router:, phase: Closing, workers:))
@@ -5018,6 +5058,10 @@ fn execute_teardown_finish(
   connected_at: Int,
   joined_channels: Int,
 ) -> Execution(model, message) {
+  let reason = case encoding_failure(state, socket_id) {
+    Some(error) -> socket.EncodingFailed(error)
+    None -> reason
+  }
   let state = remove_socket_rate_limits(state, socket_id)
   // Actively close the transport connection after the terminal frames
   // above have been queued, so evicted sockets do not linger as zombies.
@@ -5086,6 +5130,8 @@ fn socket_subscribed(
 ///
 /// When the list runs out, an unanswered pending join is rejected (fail
 /// closed) and the collected kicks are handed to `continuation`.
+/// An encoding failure skips the remaining effects but retains the
+/// continuation's resource releases and topic-close bookkeeping.
 fn run_effects(
   state: State(model, message),
   socket_id: String,
@@ -5094,6 +5140,10 @@ fn run_effects(
   kicks: List(String),
   continuation: Continuation,
 ) -> Execution(model, message) {
+  use <- bool.guard(
+    when: encoding_failure(state, socket_id) != None,
+    return: Continue(state, continuation_steps(continuation, [], None)),
+  )
   use <- bool.guard(
     when: !dict.has_key(state.sockets, socket_id),
     return: Continue(state, continuation_steps(continuation, [], None)),
@@ -5183,17 +5233,19 @@ fn apply_effect(
       #(state, pending, kicks)
     }
     socket.Broadcast(topic_name, event_name, payload) -> {
-      broadcast_with_pubsub(state, topic_name, event_name, payload, None)
+      let state =
+        broadcast_with_pubsub(state, topic_name, event_name, payload, None)
       #(state, pending, kicks)
     }
     socket.BroadcastFrom(topic_name, event_name, payload) -> {
-      broadcast_with_pubsub(
-        state,
-        topic_name,
-        event_name,
-        payload,
-        Some(socket_id),
-      )
+      let state =
+        broadcast_with_pubsub(
+          state,
+          topic_name,
+          event_name,
+          payload,
+          Some(socket_id),
+        )
       #(state, pending, kicks)
     }
     socket.PushPresence(topic_name, event_name, encode) -> {
@@ -5205,10 +5257,10 @@ fn apply_effect(
       #(state, pending, kicks)
     }
     socket.BroadcastPresence(topic_name, event_name, encode) -> {
-      case presence_snapshot(state, socket_id, topic_name, encode) {
+      let state = case presence_snapshot(state, socket_id, topic_name, encode) {
         Ok(payload) ->
           broadcast_with_pubsub(state, topic_name, event_name, payload, None)
-        Error(Nil) -> Nil
+        Error(Nil) -> state
       }
       #(state, pending, kicks)
     }
@@ -5852,16 +5904,14 @@ fn finish_presence_operation(
         [presence.PresenceEntry(session_id: socket_id, key: key, meta: meta)],
         replaced,
       )
-      state
     }
     TrackOperation(topic_name, _key, replaced, _), Error(PresenceStopping) -> {
       // Already logged (as a warning) where shutdown decided not to wait;
       // nothing more to log here.
       case replaced {
-        [] -> Nil
+        [] -> state
         _ -> broadcast_presence_diff(state, topic_name, [], replaced)
       }
-      state
     }
     TrackOperation(topic_name, key, replaced, _), Error(PresenceTimedOut) -> {
       let state = failed_track(state, socket_id, topic_name, key, replaced)
@@ -5899,7 +5949,6 @@ fn finish_presence_operation(
     | UntrackOperation(topic_name, leaves, _), Ok(presence.TrackFailed)
     -> {
       broadcast_presence_diff(state, topic_name, [], leaves)
-      state
     }
     UntrackOperation(topic_name, leaves, automatic), Error(PresenceStopping) -> {
       // The batch untrack was actually dispatched to the presence actor
@@ -5914,7 +5963,6 @@ fn finish_presence_operation(
         [#("socket_id", socket_id), #("topic", topic_name)],
       )
       broadcast_presence_diff(state, topic_name, [], leaves)
-      state
     }
     UntrackOperation(topic_name, leaves, automatic), Error(PresenceNotRunning)
     | UntrackOperation(topic_name, leaves, automatic), Error(PresenceRejected)
@@ -5929,7 +5977,6 @@ fn finish_presence_operation(
         [#("socket_id", socket_id), #("topic", topic_name)],
       )
       broadcast_presence_diff(state, topic_name, [], leaves)
-      state
     }
   }
 }
@@ -5952,10 +5999,9 @@ fn failed_track(
     #("key", key),
   ])
   case replaced {
-    [] -> Nil
+    [] -> state
     _ -> broadcast_presence_diff(state, topic_name, [], replaced)
   }
-  state
 }
 
 /// Record that a track the runtime gave up on may still be applied by the
@@ -6560,7 +6606,7 @@ fn broadcast_presence_diff(
   topic_name: String,
   joins: List(presence.PresenceEntry),
   leaves: List(presence.PresenceEntry),
-) -> Nil {
+) -> State(model, message) {
   let diff =
     presence.diff(joins: [#(topic_name, joins)], leaves: [#(topic_name, leaves)])
   broadcast_with_pubsub(
@@ -6583,7 +6629,7 @@ fn local_broadcast(
   event_name: String,
   payload: Json,
   except: Option(String),
-) -> Int {
+) -> #(State(model, message), Int) {
   let subscribers =
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
@@ -6604,16 +6650,15 @@ fn local_broadcast(
     // inline exactly as the shared runtime did. Send failures are logged
     // by `send_frame_logged` in this, the only process that sees them.
     SocketActorRole(..) ->
-      list.fold(recipients, 0, fn(count, socket_id) {
+      list.fold(recipients, #(state, 0), fn(accumulator, socket_id) {
+        let #(state, count) = accumulator
         case dict.get(state.sockets, socket_id) {
           Ok(socket) -> {
-            let frame =
-              codec.encode_push(socket.codec)(topic_name, event_name, payload)
-            let _send_result =
-              send_frame_logged(state, socket, topic_name, frame)
-            count + 1
+            let state =
+              send_push_frame(state, socket, topic_name, event_name, payload)
+            #(state, count + 1)
           }
-          Error(Nil) -> count
+          Error(Nil) -> #(state, count)
         }
       })
     // Decision 1: the router resolves recipients and hands each one to its
@@ -6628,7 +6673,7 @@ fn local_broadcast(
           Broadcast(topic_name, event_name, payload, except),
         )
       })
-      list.length(recipients)
+      #(state, list.length(recipients))
     }
   }
 }
@@ -6641,11 +6686,11 @@ fn emit_broadcast(
   except: Option(String),
   origin: telemetry.BroadcastOrigin,
   inline_recipients: Int,
-) -> Nil {
+) -> State(model, message) {
   let started_at = telemetry_start(state)
-  let recipients =
+  let #(state, recipients) =
     local_broadcast(state, topic_name, event_name, payload, except)
-  use <- bool.guard(when: !state.config.telemetry, return: Nil)
+  use <- bool.guard(when: !state.config.telemetry, return: state)
   telemetry.emit(
     True,
     telemetry.BroadcastStop(
@@ -6654,6 +6699,7 @@ fn emit_broadcast(
       origin: origin,
     ),
   )
+  state
 }
 
 /// Keep local delivery independent of pg recovery, and forward to other local
@@ -6663,16 +6709,17 @@ fn broadcast_locally(
   topic_name: String,
   event_name: String,
   payload: Json,
-) -> Nil {
-  emit_broadcast(
-    state,
-    topic_name,
-    event_name,
-    payload,
-    None,
-    telemetry.Local,
-    0,
-  )
+) -> State(model, message) {
+  let state =
+    emit_broadcast(
+      state,
+      topic_name,
+      event_name,
+      payload,
+      None,
+      telemetry.Local,
+      0,
+    )
   case state.pubsub {
     Some(pubsub_instance) ->
       forward_pubsub(state, topic_name, fn() {
@@ -6686,6 +6733,7 @@ fn broadcast_locally(
       })
     None -> Nil
   }
+  state
 }
 
 /// Local fan-out plus distributed forwarding when PubSub is configured.
@@ -6698,7 +6746,7 @@ fn broadcast_with_pubsub(
   event_name: String,
   payload: Json,
   except: Option(String),
-) -> Nil {
+) -> State(model, message) {
   // A socket actor owns neither the topic index nor the PubSub handle, so
   // everything it originates goes to the router, which fans out locally
   // (one hop per recipient) and forwards to other nodes.
@@ -6722,7 +6770,7 @@ fn broadcast_from_socket(
   event_name: String,
   payload: Json,
   except: Option(String),
-) -> Nil {
+) -> State(model, message) {
   case except, dict.keys(state.sockets) {
     None, [socket_id] -> {
       let inline_recipients = case
@@ -6746,16 +6794,16 @@ fn broadcast_from_socket(
             inline_recipients,
           ),
         ),
-        return: Nil,
+        return: state,
       )
-      let _recipient_count =
+      let #(state, _recipient_count) =
         local_broadcast(state, topic_name, event_name, payload, None)
-      Nil
+      state
     }
     None, [] | None, [_, _, ..] | Some(_), _ -> {
       let message = Broadcast(topic_name, event_name, payload, except)
       let _admitted = admit_router_broadcast(state, message)
-      Nil
+      state
     }
   }
 }
@@ -6767,16 +6815,17 @@ fn broadcast_from_router(
   payload: Json,
   except: Option(String),
   inline_recipients: Int,
-) -> Nil {
-  emit_broadcast(
-    state,
-    topic_name,
-    event_name,
-    payload,
-    except,
-    telemetry.Local,
-    inline_recipients,
-  )
+) -> State(model, message) {
+  let state =
+    emit_broadcast(
+      state,
+      topic_name,
+      event_name,
+      payload,
+      except,
+      telemetry.Local,
+      inline_recipients,
+    )
   case state.pubsub {
     Some(pubsub_instance) ->
       forward_pubsub(state, topic_name, fn() {
@@ -6790,6 +6839,7 @@ fn broadcast_from_router(
       })
     None -> Nil
   }
+  state
 }
 
 fn publish_broadcast(
@@ -6877,7 +6927,6 @@ fn handle_remote_broadcast(
     telemetry.Remote,
     0,
   )
-  state
 }
 
 // ── Rate limiting ───────────────────────────────────────────────────────────
@@ -7030,7 +7079,7 @@ fn send_error_reply(
   join_ref: Option(String),
   message_ref: Option(String),
   reason: Json,
-) -> Nil {
+) -> State(model, message) {
   send_status_reply(
     state,
     socket_id,
@@ -7050,11 +7099,11 @@ fn send_status_reply(
   message_ref: Option(String),
   status: codec.ReplyStatus,
   payload: Json,
-) -> Nil {
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
-    Error(Nil) -> Nil
-    Ok(socket) -> {
-      let frame =
+    Error(Nil) -> state
+    Ok(socket) ->
+      send_encoded_frame(state, socket, topic_name, "reply", fn() {
         codec.encode_reply(socket.codec)(
           join_ref,
           message_ref,
@@ -7062,8 +7111,68 @@ fn send_status_reply(
           status,
           payload,
         )
+      })
+  }
+}
+
+fn encoding_failure(
+  state: State(model, message),
+  socket_id: String,
+) -> Option(codec.EncodeError) {
+  case dict.get(state.sockets, socket_id) {
+    Ok(SocketState(teardown_reason: Some(socket.EncodingFailed(error)), ..)) ->
+      Some(error)
+    Ok(_) | Error(Nil) -> None
+  }
+}
+
+fn send_push_frame(
+  state: State(model, message),
+  socket: SocketState(model, message),
+  topic_name: String,
+  event_name: String,
+  payload: Json,
+) -> State(model, message) {
+  send_encoded_frame(state, socket, topic_name, "push", fn() {
+    codec.encode_push(socket.codec)(topic_name, event_name, payload)
+  })
+}
+
+fn send_encoded_frame(
+  state: State(model, message),
+  socket: SocketState(model, message),
+  topic_name: String,
+  operation: String,
+  encode: fn() -> Result(codec.Frame, codec.EncodeError),
+) -> State(model, message) {
+  use <- bool.guard(
+    when: encoding_failure(state, socket.id) != None,
+    return: state,
+  )
+  case encode() {
+    Ok(frame) -> {
       let _send_result = send_frame_logged(state, socket, topic_name, frame)
-      Nil
+      state
+    }
+    Error(error) -> {
+      state.logger
+      |> log.warn("Socket closing: outbound encoding rejected", [
+        #("socket_id", socket.id),
+        #("topic", topic_name),
+        #("operation", operation),
+        #("reason", codec.format_encode_error(error)),
+      ])
+      store_socket(
+        state,
+        SocketState(
+          ..socket,
+          teardown_reason: Some(socket.EncodingFailed(error)),
+          teardown_joined_channels: case socket.teardown_reason {
+            None -> set.size(socket.subscribed_topics)
+            Some(_) -> socket.teardown_joined_channels
+          },
+        ),
+      )
     }
   }
 }
@@ -7118,6 +7227,7 @@ fn stop_reason_to_string(reason: StopReason) -> String {
     socket.HeartbeatTimeout -> "heartbeat_timeout"
     socket.Errored(message) -> message
     socket.AdmissionRejected(error) -> overload.describe(error)
+    socket.EncodingFailed(_) -> "encoding_failed"
   }
 }
 

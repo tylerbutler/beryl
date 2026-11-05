@@ -730,8 +730,8 @@ fn start_mixed_outbound_system() -> beryl.Sockets {
       encode_reply: codec.encode_reply(phoenix),
       encode_push: fn(_topic, event, _payload) {
         case string.starts_with(event, "binary-") {
-          True -> codec.BinaryFrame(bit_array.from_string(event))
-          False -> codec.TextFrame(event)
+          True -> Ok(codec.BinaryFrame(bit_array.from_string(event)))
+          False -> Ok(codec.TextFrame(event))
         }
       },
       encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
@@ -746,6 +746,34 @@ fn start_mixed_outbound_system() -> beryl.Sockets {
       | socket.Info(_) -> socket.Next(model, [])
     }
   })
+}
+
+pub fn encoder_failure_closes_websocket_and_releases_connection_slot_test() -> Nil {
+  let phoenix = wire.phoenix_codec()
+  let fallible =
+    codec.new(
+      decode_text: wire.decode_message,
+      encode_reply: codec.encode_reply(phoenix),
+      encode_push: codec.encode_push(phoenix),
+      encode_heartbeat_reply: fn(_) {
+        Error(codec.EncodingRejected("heartbeat fixture"))
+      },
+    )
+  let channels =
+    start_app_system(
+      beryl.config(fallible)
+      |> beryl.with_max_connections(max_connections: 1)
+      |> beryl.with_max_connections_per_ip(max_connections: 1),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  let assert Ok(client) =
+    send_text(client, "[null,\"heartbeat\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(client, 1000) |> should.equal(Error(Nil))
+  let assert Ok(replacement) = connect_websocket(port, "/socket")
+  close(replacement)
+  stop_supervisor(server_pid)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
 }
 
 fn start_app_system_with_update(

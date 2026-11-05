@@ -6,10 +6,12 @@ import envoy
 import gleam/dict
 import gleam/dynamic
 import gleam/dynamic/decode
+import gleam/erlang/process
 import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import gleeunit/should
 import phoenix_channel_fixtures/frame as fixtures
@@ -21,7 +23,7 @@ const phoenix_codec_env = "BERYL_PHOENIX_CODEC"
 pub fn phoenix_codec_round_trip_test() -> Nil {
   let phoenix = wire.phoenix_codec()
   let encoded =
-    text_frame(codec.encode_push(phoenix)(
+    encoded_text_frame(codec.encode_push(phoenix)(
       "room:1",
       "message",
       json.string("hi"),
@@ -69,7 +71,7 @@ pub fn phoenix_codec_reply_accepts_missing_ref_test() -> Nil {
       json.object([]),
     )
 
-  let assert codec.TextFrame(encoded) = frame
+  let assert Ok(codec.TextFrame(encoded)) = frame
   encoded
   |> should.equal(
     "[null,null,\"room:1\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
@@ -110,7 +112,7 @@ pub fn phoenix_codec_preserves_missing_ref_reply_shape_test() -> Nil {
     codec.StatusOk,
     json.object([]),
   )
-  |> text_frame()
+  |> encoded_text_frame()
   |> should.equal(
     "[\"join-ref\",null,\"room:1\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
   )
@@ -156,11 +158,11 @@ pub fn public_codec_operations_apply_configured_behaviour_test() -> Nil {
           payload: dynamic.nil(),
         ))
       },
-      encode_reply: fn(_, _, _, _, _) { codec.TextFrame("reply") },
+      encode_reply: fn(_, _, _, _, _) { Ok(codec.TextFrame("reply")) },
       encode_push: fn(topic, event, _) {
-        codec.TextFrame(topic <> ":" <> event)
+        Ok(codec.TextFrame(topic <> ":" <> event))
       },
-      encode_heartbeat_reply: fn(_) { codec.TextFrame("heartbeat") },
+      encode_heartbeat_reply: fn(_) { Ok(codec.TextFrame("heartbeat")) },
     )
 
   let assert Ok(text_inbound) = codec.apply_decode_text(base, text: "decoded")
@@ -174,16 +176,16 @@ pub fn public_codec_operations_apply_configured_behaviour_test() -> Nil {
     status: codec.StatusOk,
     response: json.null(),
   )
-  |> should.equal(codec.TextFrame("reply"))
+  |> should.equal(Ok(codec.TextFrame("reply")))
   codec.apply_encode_push(
     base,
     topic: "room:1",
     event: "updated",
     payload: json.null(),
   )
-  |> should.equal(codec.TextFrame("room:1:updated"))
+  |> should.equal(Ok(codec.TextFrame("room:1:updated")))
   codec.apply_encode_heartbeat_reply(base, ref: None)
-  |> should.equal(codec.TextFrame("heartbeat"))
+  |> should.equal(Ok(codec.TextFrame("heartbeat")))
   codec.apply_encode_close(base, join_ref: None, topic: "room:1")
   |> should.equal(None)
   codec.apply_encode_error(base, join_ref: None, topic: "room:1")
@@ -202,10 +204,10 @@ pub fn public_codec_operations_apply_configured_behaviour_test() -> Nil {
       ))
     })
     |> codec.with_close_encoder(fn(_, topic) {
-      codec.TextFrame("close:" <> topic)
+      Ok(codec.TextFrame("close:" <> topic))
     })
     |> codec.with_error_encoder(fn(_, topic) {
-      codec.TextFrame("error:" <> topic)
+      Ok(codec.TextFrame("error:" <> topic))
     })
     |> codec.with_topicless_events()
 
@@ -213,10 +215,170 @@ pub fn public_codec_operations_apply_configured_behaviour_test() -> Nil {
     codec.apply_decode_binary(configured, data: <<1>>)
   codec.inbound_topic(binary_inbound) |> should.equal("binary")
   codec.apply_encode_close(configured, join_ref: None, topic: "room:1")
-  |> should.equal(Some(codec.TextFrame("close:room:1")))
+  |> should.equal(Some(Ok(codec.TextFrame("close:room:1"))))
   codec.apply_encode_error(configured, join_ref: None, topic: "room:1")
-  |> should.equal(Some(codec.TextFrame("error:room:1")))
+  |> should.equal(Some(Ok(codec.TextFrame("error:room:1"))))
   codec.uses_topicless_events(configured) |> should.be_true()
+}
+
+pub fn public_encode_operations_preserve_structured_errors_test() -> Nil {
+  [
+    codec.MetadataTooLong("topic", 256),
+    codec.PayloadNotByteAligned,
+    codec.EncodingRejected("unsupported response"),
+  ]
+  |> list.each(fn(error) {
+    let rejecting =
+      codec.new(
+        decode_text: wire.decode_message,
+        encode_reply: fn(_, _, _, _, _) { Error(error) },
+        encode_push: fn(_, _, _) { Error(error) },
+        encode_heartbeat_reply: fn(_) { Error(error) },
+      )
+
+    codec.apply_encode_reply(
+      rejecting,
+      join_ref: Some("join"),
+      ref: Some("ref"),
+      topic: "room:1",
+      status: codec.StatusOk,
+      response: json.null(),
+    )
+    |> should.equal(Error(error))
+    codec.apply_encode_push(
+      rejecting,
+      topic: "room:1",
+      event: "updated",
+      payload: json.null(),
+    )
+    |> should.equal(Error(error))
+    codec.apply_encode_heartbeat_reply(rejecting, ref: Some("ref"))
+    |> should.equal(Error(error))
+
+    // Missing optional callbacks and callbacks that failed are distinct states.
+    codec.apply_encode_close(rejecting, join_ref: None, topic: "room:1")
+    |> should.equal(None)
+    codec.apply_encode_error(rejecting, join_ref: None, topic: "room:1")
+    |> should.equal(None)
+
+    let configured =
+      rejecting
+      |> codec.with_close_encoder(fn(_, _) { Error(error) })
+      |> codec.with_error_encoder(fn(_, _) { Error(error) })
+    codec.apply_encode_close(configured, join_ref: None, topic: "room:1")
+    |> should.equal(Some(Error(error)))
+    codec.apply_encode_error(configured, join_ref: None, topic: "room:1")
+    |> should.equal(Some(Error(error)))
+  })
+}
+
+pub fn public_encode_operations_only_invoke_selected_callback_test() -> Nil {
+  // The subject is local to this test: it detects eager callbacks, retries,
+  // fallback encoders, and any invocation beyond the requested operation.
+  let calls = process.new_subject()
+  let error = codec.EncodingRejected("test rejection")
+  let rejecting =
+    codec.new(
+      decode_text: fn(_) {
+        process.send(calls, "decode")
+        Error(codec.InvalidFormat("unused"))
+      },
+      encode_reply: fn(_, _, _, _, _) {
+        process.send(calls, "reply")
+        Error(error)
+      },
+      encode_push: fn(_, _, _) {
+        process.send(calls, "push")
+        Error(error)
+      },
+      encode_heartbeat_reply: fn(_) {
+        process.send(calls, "heartbeat")
+        Error(error)
+      },
+    )
+    |> codec.with_close_encoder(fn(_, _) {
+      process.send(calls, "close")
+      Error(error)
+    })
+    |> codec.with_error_encoder(fn(_, _) {
+      process.send(calls, "error")
+      Error(error)
+    })
+
+  // Construction does not call any callback.
+  process.receive(calls, 0) |> should.equal(Error(Nil))
+
+  codec.apply_encode_reply(
+    rejecting,
+    join_ref: None,
+    ref: None,
+    topic: "room:1",
+    status: codec.StatusOk,
+    response: json.null(),
+  )
+  |> should.equal(Error(error))
+  process.receive(calls, 0) |> should.equal(Ok("reply"))
+  process.receive(calls, 0) |> should.equal(Error(Nil))
+
+  codec.apply_encode_push(
+    rejecting,
+    topic: "room:1",
+    event: "updated",
+    payload: json.null(),
+  )
+  |> should.equal(Error(error))
+  process.receive(calls, 0) |> should.equal(Ok("push"))
+  process.receive(calls, 0) |> should.equal(Error(Nil))
+
+  codec.apply_encode_heartbeat_reply(rejecting, ref: None)
+  |> should.equal(Error(error))
+  process.receive(calls, 0) |> should.equal(Ok("heartbeat"))
+  process.receive(calls, 0) |> should.equal(Error(Nil))
+
+  codec.apply_encode_close(rejecting, join_ref: None, topic: "room:1")
+  |> should.equal(Some(Error(error)))
+  process.receive(calls, 0) |> should.equal(Ok("close"))
+  process.receive(calls, 0) |> should.equal(Error(Nil))
+
+  codec.apply_encode_error(rejecting, join_ref: None, topic: "room:1")
+  |> should.equal(Some(Error(error)))
+  process.receive(calls, 0) |> should.equal(Ok("error"))
+  process.receive(calls, 0) |> should.equal(Error(Nil))
+}
+
+pub fn binary_encode_error_adapter_preserves_structured_variants_test() -> Nil {
+  [
+    #(
+      wire.MetadataTooLong("join_ref", 513),
+      codec.MetadataTooLong("join_ref", 513),
+    ),
+    #(wire.MetadataTooLong("topic", 256), codec.MetadataTooLong("topic", 256)),
+    #(wire.PayloadNotByteAligned, codec.PayloadNotByteAligned),
+  ]
+  |> list.each(fn(pair) {
+    wire.binary_encode_error_to_encode_error(pair.0)
+    |> should.equal(pair.1)
+  })
+
+  // A codec can adapt standalone helpers without changing their API.
+  wire.binary_push(None, string.repeat("é", 128), "event", <<>>)
+  |> result.map_error(wire.binary_encode_error_to_encode_error)
+  |> should.equal(Error(codec.MetadataTooLong("topic", 256)))
+  wire.binary_reply(None, None, "room:1", codec.StatusOk, <<1:size(1)>>)
+  |> result.map_error(wire.binary_encode_error_to_encode_error)
+  |> should.equal(Error(codec.PayloadNotByteAligned))
+  wire.binary_broadcast("room:1", "event", <<1:size(1)>>)
+  |> result.map_error(wire.binary_encode_error_to_encode_error)
+  |> should.equal(Error(codec.PayloadNotByteAligned))
+}
+
+pub fn format_encode_error_describes_each_variant_test() -> Nil {
+  codec.format_encode_error(codec.MetadataTooLong("topic", 256))
+  |> should.equal("Metadata too long: topic (256 bytes)")
+  codec.format_encode_error(codec.PayloadNotByteAligned)
+  |> should.equal("Payload is not byte-aligned")
+  codec.format_encode_error(codec.EncodingRejected("unsupported response"))
+  |> should.equal("Encoding rejected: unsupported response")
 }
 
 pub fn dynamic_to_json_decodes_nested_json_values_test() -> Nil {
@@ -348,7 +510,7 @@ pub fn reply_status_round_trips_through_phoenix_codec_test() -> Nil {
       json.object([#("k", json.string("v"))]),
     )
   // Sanity: it produced *something* recognisable as a Phoenix reply.
-  text_frame(s)
+  encoded_text_frame(s)
   |> wire.decode_message()
   |> should.be_ok()
   Nil
@@ -380,7 +542,7 @@ pub fn phoenix_codec_encodes_shared_server_push_fixtures_test() -> Nil {
         && event != fixtures.close_event
       ->
         codec.encode_push(phoenix)(case_.topic, event, case_.payload)
-        |> text_frame()
+        |> encoded_text_frame()
         |> should.equal(case_.encoded)
       Some(_), _, _ | None, _, _ -> Nil
     }
@@ -402,7 +564,7 @@ pub fn phoenix_codec_encodes_shared_reply_fixtures_test() -> Nil {
       status,
       case_.response,
     )
-    |> text_frame()
+    |> encoded_text_frame()
     |> should.equal(case_.encoded)
   })
 }
@@ -416,11 +578,11 @@ pub fn phoenix_codec_encodes_shared_terminal_event_fixtures_test() -> Nil {
     case case_.event {
       "phx_error" ->
         encode_error(case_.join_ref, case_.topic)
-        |> text_frame()
+        |> encoded_text_frame()
         |> should.equal(case_.encoded)
       "phx_close" ->
         encode_close(case_.join_ref, case_.topic)
-        |> text_frame()
+        |> encoded_text_frame()
         |> should.equal(case_.encoded)
       _ -> Nil
     }
@@ -472,6 +634,13 @@ pub fn phoenix_codec_rejects_excessively_nested_payload_test() -> Nil {
 fn text_frame(frame: codec.Frame) -> String {
   let assert codec.TextFrame(text) = frame
   text
+}
+
+fn encoded_text_frame(
+  encoded: Result(codec.Frame, codec.EncodeError),
+) -> String {
+  let assert Ok(frame) = encoded
+  text_frame(frame)
 }
 
 fn with_env_value(name: String, value: Option(String), run: fn() -> a) -> a {
