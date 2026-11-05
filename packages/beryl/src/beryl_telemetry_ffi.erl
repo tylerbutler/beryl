@@ -86,7 +86,8 @@ mailbox_length() ->
     Length.
 
 transport(mist) -> mist;
-transport(ewe) -> ewe.
+transport(ewe) -> ewe;
+transport(custom) -> custom.
 
 queue_outcome(queue_changed) -> changed;
 queue_outcome(queue_rejected) -> rejected.
