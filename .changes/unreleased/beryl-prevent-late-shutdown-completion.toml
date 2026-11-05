@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Prevent late shutdown completion messages from remaining in the caller mailbox after stop returns."

@@ -78,9 +78,13 @@ pub fn max_inbound_frame_bytes(sockets: Sockets) -> Int {
 // --- Telemetry ---
 
 /// WebSocket transport implementations in beryl's telemetry schema.
+///
+/// The fixed labels are `mist`, `ewe`, and `custom`. All third-party
+/// transports use `Custom`; implementation names cannot become metric labels.
 pub type TelemetryTransport {
   Mist
   Ewe
+  Custom
 }
 
 /// Closed terminal outcomes for a matched WebSocket upgrade.
@@ -111,12 +115,18 @@ pub type FrameOutcome {
 /// A low-cost transport telemetry context.
 ///
 /// When telemetry is disabled, operations avoid VM clock calls and event
-/// construction.
+/// construction. All transport identities use the socket system's telemetry
+/// setting.
 pub opaque type Telemetry {
   Telemetry(enabled: Bool, transport: telemetry.Transport)
 }
 
 /// Create a telemetry context from the channels configuration.
+///
+/// Third-party transports use `telemetry(channels, Custom)` with the public
+/// shared server pipeline. Enabled events use the fixed `custom` transport
+/// label. Disabled contexts still support shared setup and frame routing
+/// without emitting transport events.
 pub fn telemetry(
   channels: Sockets,
   transport: TelemetryTransport,
@@ -126,6 +136,7 @@ pub fn telemetry(
     transport: case transport {
       Mist -> telemetry.Mist
       Ewe -> telemetry.Ewe
+      Custom -> telemetry.Custom
     },
   )
 }

@@ -11,6 +11,7 @@ import app_test_helper
 import beryl
 import beryl/connection_limit
 import beryl/heirloom
+import beryl/internal
 import beryl/snapshot
 import beryl/socket.{AcceptJoin, Broadcast, Join, Next}
 import beryl/transport
@@ -188,6 +189,88 @@ pub fn stop_waits_for_socket_factory_and_lifecycle_owner_test() -> Nil {
     process.is_alive(supervisor) |> should.be_false
     process.is_alive(owner) |> should.be_false
   })
+}
+
+pub fn timed_out_stop_drops_late_completion_and_monitors_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each([False, True], fn(with_limiter) {
+    let config = beryl.config(wire.phoenix_codec())
+    let config = case with_limiter {
+      True -> beryl.with_max_connections(config, 5)
+      False -> config
+    }
+    let assert Ok(#(sockets, specification)) =
+      beryl.child_spec(
+        config,
+        init: app_test_helper.accepting_init,
+        update: app_test_helper.accepting_update,
+      )
+    let assert Ok(root) =
+      static_supervisor.new(static_supervisor.OneForOne)
+      |> static_supervisor.add(specification)
+      |> static_supervisor.start()
+    let runtime = app_test_helper.runtime_pid(sockets)
+    let assert Ok(factory) = beryl.app_socket_factory_pid(sockets)
+    let caller = process.self()
+    let monitors = test_helper.monitor_count(caller)
+    let messages = test_helper.mailbox_length(caller)
+    let #(supervisor, owner, monitor) =
+      with_suspended_subtree(factory, fn(supervisor, owner) {
+        beryl.stop(sockets) |> should.equal(Error(beryl.StopTimeout))
+        test_helper.monitor_count(caller) |> should.equal(monitors)
+        test_helper.mailbox_length(caller) |> should.equal(messages)
+        process.is_alive(runtime) |> should.be_false
+        process.is_alive(factory) |> should.be_true
+        process.is_alive(owner) |> should.be_true
+
+        // A second caller must not replace the first stop's completion.
+        beryl.stop(sockets) |> should.equal(Error(beryl.NotRunning))
+        test_helper.monitor_count(caller) |> should.equal(monitors)
+        test_helper.mailbox_length(caller) |> should.equal(messages)
+        #(supervisor, owner, process.monitor(owner))
+      })
+    let assert Ok(_) =
+      process.new_selector()
+      |> process.select_specific_monitor(monitor, fn(down) { down })
+      |> process.selector_receive(2000)
+    process.is_alive(factory) |> should.be_false
+    process.is_alive(supervisor) |> should.be_false
+    process.is_alive(owner) |> should.be_false
+    process.is_alive(root.pid) |> should.be_true
+    beryl.app_runtime_pid(sockets) |> should.be_error
+    beryl.app_socket_factory_pid(sockets) |> should.be_error
+    beryl.app_limiter_pid(sockets) |> should.be_error
+    test_helper.monitor_count(caller) |> should.equal(monitors)
+    test_helper.mailbox_length(caller) |> should.equal(messages)
+  })
+}
+
+pub fn stop_acceptance_timeout_cleans_up_and_allows_later_stop_test() -> Nil {
+  use <- unitest.tag("serial")
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
+    )
+  let assert Ok(factory) = beryl.app_socket_factory_pid(sockets)
+  let caller = process.self()
+  let monitors = test_helper.monitor_count(caller)
+  let messages = test_helper.mailbox_length(caller)
+  with_suspended_subtree(factory, fn(_supervisor, owner) {
+    test_helper.suspend_process(owner)
+    let outcome =
+      internal.rescue(fn() {
+        beryl.stop(sockets) |> should.equal(Error(beryl.StopTimeout))
+        test_helper.monitor_count(caller) |> should.equal(monitors)
+        test_helper.mailbox_length(caller) |> should.equal(messages)
+      })
+    test_helper.resume_process(owner)
+    outcome |> should.equal(Ok(Nil))
+  })
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  test_helper.monitor_count(caller) |> should.equal(monitors)
+  test_helper.mailbox_length(caller) |> should.equal(messages)
 }
 
 // ── the limiter survives a runtime crash but stops with the subtree ─────────
@@ -429,7 +512,14 @@ pub fn unresponsive_socket_stop_returns_timeout_test() -> Nil {
   |> should.equal(Ok(Nil))
 
   let _stopper =
-    process.spawn(fn() { process.send(stop_result, beryl.stop(sockets)) })
+    process.spawn(fn() {
+      let monitors = test_helper.monitor_count(process.self())
+      let messages = test_helper.mailbox_length(process.self())
+      let outcome = beryl.stop(sockets)
+      test_helper.monitor_count(process.self()) |> should.equal(monitors)
+      test_helper.mailbox_length(process.self()) |> should.equal(messages)
+      process.send(stop_result, outcome)
+    })
 
   process.receive(stop_entered, 1000) |> should.equal(Ok(Nil))
   process.receive(stop_result, 4000)
@@ -502,7 +592,14 @@ fn crash_runtime_during_stop(sockets: beryl.Sockets) -> process.Pid {
   |> should.equal(Ok(Nil))
 
   let _stopper =
-    process.spawn(fn() { process.send(stop_result, beryl.stop(sockets)) })
+    process.spawn(fn() {
+      let monitors = test_helper.monitor_count(process.self())
+      let messages = test_helper.mailbox_length(process.self())
+      let outcome = beryl.stop(sockets)
+      test_helper.monitor_count(process.self()) |> should.equal(monitors)
+      test_helper.mailbox_length(process.self()) |> should.equal(messages)
+      process.send(stop_result, outcome)
+    })
 
   process.receive(stop_entered, 1000) |> should.equal(Ok(Nil))
   process.kill(old_runtime)

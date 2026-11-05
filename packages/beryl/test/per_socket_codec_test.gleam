@@ -16,21 +16,21 @@ fn tagged_codec() -> codec.Codec {
   codec.new(
     decode_text: wire.decode_message,
     encode_reply: fn(_join_ref, _ref, topic, _status, payload) {
-      codec.TextFrame(
+      Ok(codec.TextFrame(
         "TAGGED-REPLY|" <> topic <> "|" <> json.to_string(payload),
-      )
+      ))
     },
     encode_push: fn(topic, event, payload) {
-      codec.TextFrame(
+      Ok(codec.TextFrame(
         "TAGGED-PUSH|"
         <> topic
         <> "|"
         <> event
         <> "|"
         <> json.to_string(payload),
-      )
+      ))
     },
-    encode_heartbeat_reply: fn(_ref) { codec.TextFrame("TAGGED-HB") },
+    encode_heartbeat_reply: fn(_ref) { Ok(codec.TextFrame("TAGGED-HB")) },
   )
 }
 

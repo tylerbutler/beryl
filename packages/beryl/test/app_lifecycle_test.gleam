@@ -11,6 +11,7 @@ import beryl/topic
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
+import gleam/erlang/process
 import gleam/list
 import gleam/otp/static_supervisor
 import gleam/string
@@ -234,10 +235,16 @@ pub fn stop_is_idempotent_test() -> Nil {
       update: app_test_helper.accepting_update,
     )
 
+  let monitors = test_helper.monitor_count(process.self())
+  let messages = test_helper.mailbox_length(process.self())
   beryl.stop(sockets) |> should.equal(Ok(Nil))
+  test_helper.monitor_count(process.self()) |> should.equal(monitors)
+  test_helper.mailbox_length(process.self()) |> should.equal(messages)
   // A second stop after the runtime is already down is safe and reports
   // NotRunning rather than crashing.
   beryl.stop(sockets) |> should.equal(Error(beryl.NotRunning))
+  test_helper.monitor_count(process.self()) |> should.equal(monitors)
+  test_helper.mailbox_length(process.self()) |> should.equal(messages)
 }
 
 pub fn stop_before_start_returns_not_running_test() -> Nil {
@@ -249,7 +256,11 @@ pub fn stop_before_start_returns_not_running_test() -> Nil {
     )
 
   // The subtree was never started, so stop is a safe no-op.
+  let monitors = test_helper.monitor_count(process.self())
+  let messages = test_helper.mailbox_length(process.self())
   beryl.stop(sockets) |> should.equal(Error(beryl.NotRunning))
+  test_helper.monitor_count(process.self()) |> should.equal(monitors)
+  test_helper.mailbox_length(process.self()) |> should.equal(messages)
 }
 
 pub fn child_spec_admission_fails_before_start_test() -> Nil {
