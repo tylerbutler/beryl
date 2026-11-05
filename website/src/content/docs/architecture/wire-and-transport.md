@@ -99,6 +99,22 @@ and peer-IP functions:
 
 ### Configure the server transport
 
+Third-party transports can use the same public shared setup without selecting
+a bundled transport's identity:
+
+```gleam
+import beryl/transport
+import beryl/transport/server
+
+let telemetry = transport.telemetry(sockets, transport.Custom)
+```
+
+Pass this opaque context as the `telemetry:` argument to `server.upgrade`
+and `server.init_connection`. It uses the system's telemetry setting. When
+enabled, all custom transports share the fixed `custom` label. When disabled,
+setup and routing still work without transport events. See
+[telemetry labels](/guides/observability/#enable-telemetry-events).
+
 **`server.default_config(path)`**: creates a `TransportConfig` with no connect hook and the default same-origin policy.
 
 **`server.with_on_connect(config, callback)`**: attaches a socket-level authentication callback. The callback receives the HTTP request before the WebSocket upgrade. Return `Ok(metadata)` to allow the connection and append ordered string pairs to `ConnectSeed.metadata`, or `Error(ConnectRejected)` to reject with 403.

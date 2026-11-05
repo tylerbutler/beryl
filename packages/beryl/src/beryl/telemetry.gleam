@@ -13,6 +13,7 @@ import rasa/monotonic
 pub type Transport {
   Mist
   Ewe
+  Custom
 }
 
 /// Terminal outcomes for a channel join.
