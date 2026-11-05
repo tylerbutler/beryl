@@ -49,6 +49,7 @@ jobs:
               - 'scripts/check-ffi-*.sh'
               - 'scripts/check-portable-deps*.mjs'
             docs:
+              - 'README.md'
               - '.github/workflows/ci.yml'
               - 'packages/**'
               - 'website/**'
@@ -311,7 +312,9 @@ jobs:
 
       - name: Type-check documentation snippets
         if: needs.changes.outputs.docs == 'true'
-        run: pnpm -C website check:snippets
+        run: |
+          just site-snippets-test
+          pnpm -C website check:snippets
 
       - name: Validate reference docs are up to date
         if: needs.changes.outputs.docs == 'true'

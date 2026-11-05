@@ -11,7 +11,8 @@ their commands and dependencies.
 - [check-snippets.mjs](./check-snippets.mjs) runs `main` as a CLI.
   `--deps-only` stops after project/dependency setup; `--keep` retains generated
   snippet sources. `collectSources` gathers Gleam fences from Markdown/MDX
-  and package `///` documentation comments.
+  and package `///` documentation comments. It also requires the complete
+  Quick start examples in the root README and core module's `////` comments.
 - [generate-reference.mjs](./generate-reference.mjs) exports
   `generateReference({ docsJsonPath, docsJsonPaths, outputDir, workspacePackages,
   workspaceRoot })`, returning `{ pageCount, moduleCount }`. `docsJsonPaths`
@@ -31,6 +32,11 @@ their commands and dependencies.
   with placeholders/import inference. It is not a runtime check of tutorial
   behavior. Placeholder resolution has a 12-round limit.
   (`check-snippets.mjs:assembleModule`, `check-snippets.mjs:MAX_PLACEHOLDER_ROUNDS`)
+- The two complete quick starts compile verbatim in separate modules, without
+  inferred imports, placeholders, or suppressed compiler errors. A missing or
+  duplicate Quick start section or Gleam block fails the check. Diagnostics map
+  back to the published source lines. (`check-snippets.mjs:quickStartSource`,
+  `check-snippets.mjs:assembleModule`, `check-snippets.mjs:checkSources`)
 - `readPackageInterface` checks the interface's name and modules fields;
   `generateReference` rejects module page collisions. Keep generated reference
   pages disposable: the default output is `src/content/docs/reference/api`,
@@ -65,7 +71,11 @@ their commands and dependencies.
 ## Verification
 
 From `website/`, `pnpm test:reference` runs the reference generator tests.
+`pnpm test:snippets` prepares the existing snippet project and runs extraction
+tests plus compiler-backed drift regressions against the published quick starts.
 `pnpm check:snippets` runs the snippet checker and requires Gleam, package
 dependencies, and package-interface metadata.
+From the repository root, `just site-snippets` builds metadata, runs the snippet
+tests, and checks the full documentation corpus.
 Use `pnpm generate:reference` or `pnpm generate:og` to regenerate their outputs,
 not as read-only checks. [package.json](../package.json) defines these commands.
