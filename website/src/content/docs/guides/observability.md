@@ -99,7 +99,7 @@ remain bounded:
 
 | Key | Values |
 |---|---|
-| `transport` | `mist`, `ewe` |
+| `transport` | `mist`, `ewe`, `custom` |
 | upgrade `outcome` | `success`, `origin_rejected`, `version_rejected`, `auth_rejected`, `capacity_rejected`, `handshake_failed` |
 | frame `outcome` | `routed`, `oversized`, `rate_limited`, `decode_failed` |
 | join `outcome` | `accepted`, `handler_rejected`, `no_handler`, `invalid_topic`, `topic_limit`, `rate_limited`, `callback_error`, `socket_missing` |
@@ -111,6 +111,18 @@ remain bounded:
 | broadcast `origin` | `local`, `remote` |
 
 Map future unknown values to an `"unknown"` label. Do not crash the handler.
+
+Third-party transports construct an opaque context with
+`transport.telemetry(sockets, transport.Custom)` and pass it to the shared
+server pipeline. All third-party implementations share the fixed `custom`
+label; the API does not accept transport-name strings. This keeps transport
+label cardinality bounded to three values and preserves the bundled `mist`
+and `ewe` labels.
+
+Custom contexts use the socket system's telemetry setting. With
+`beryl.with_telemetry`, they emit the same upgrade and inbound-frame events
+as bundled transports. Without it, shared setup and routing still work,
+but transport telemetry operations avoid clock calls and event construction.
 
 ## Export metrics to Prometheus or Grafana
 

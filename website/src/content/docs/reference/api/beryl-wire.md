@@ -38,6 +38,7 @@ Phoenix wire protocol: encoding and decoding helpers and the canonical
   <a class="api-symbol-index__section" href="#functions">Functions</a>
   <ul>
 <li><a href="#api-function-binary_broadcast"><code>binary_broadcast</code></a></li>
+<li><a href="#api-function-binary_encode_error_to_encode_error"><code>binary_encode_error_to_encode_error</code></a></li>
 <li><a href="#api-function-binary_push"><code>binary_push</code></a></li>
 <li><a href="#api-function-binary_reply"><code>binary_reply</code></a></li>
 <li><a href="#api-function-channel_close"><code>channel_close</code></a></li>
@@ -113,6 +114,20 @@ Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
  Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
  component exceeds the framing's 255-byte limit, or
  `Error(PayloadNotByteAligned)` when the payload contains a partial byte.
+
+<div class="api-entry-anchor" id="api-function-binary_encode_error_to_encode_error" aria-hidden="true"></div>
+
+### `binary_encode_error_to_encode_error`
+
+```gleam
+pub fn binary_encode_error_to_encode_error(BinaryEncodeError) -> codec.EncodeError
+```
+
+Adapt a standalone Phoenix binary encoding error for a codec callback.
+
+ Use with `result.map_error` when a custom codec calls `binary_push`,
+ `binary_reply`, or `binary_broadcast`. Component names and byte sizes are
+ preserved rather than flattened into a string.
 
 <div class="api-entry-anchor" id="api-function-binary_push" aria-hidden="true"></div>
 
@@ -279,6 +294,9 @@ Return the canonical Phoenix wire codec.
  `Message` events according to their event name. The app receives a
  `Binary` event only for an undecoded frame from a codec without a binary
  decoder.
+
+ All outbound callbacks wrap the standalone text encoders in `Ok`, preserving
+ their frame bytes. Standalone helpers retain their original return types.
 
 <div class="api-entry-anchor" id="api-function-push" aria-hidden="true"></div>
 

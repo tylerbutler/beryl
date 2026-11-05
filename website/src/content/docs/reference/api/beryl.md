@@ -515,8 +515,10 @@ Stop a beryl system.
  You can call `stop` more than once or use a handle whose system never
  started. In these cases, it returns `Error(NotRunning)` and does not crash.
  It returns `Error(StopTimeout)` if the runtime does not drain or the
- subtree does not terminate within the shutdown window. After a successful stop
- the handle should no longer be used.
+ subtree does not terminate within the shutdown window. A timeout does not
+ cancel shutdown, and no late completion message remains in the caller's
+ mailbox after `stop` returns. After a successful stop the handle should no
+ longer be used.
 
 <div class="api-entry-anchor" id="api-function-validate_config" aria-hidden="true"></div>
 

@@ -11,8 +11,16 @@
 ////
 //// All codecs must normalise inbound traffic to the `Inbound` shape so
 //// the runtime can stay framing-agnostic.
+////
+//// Outbound encoders return `Result(Frame, EncodeError)`. On failure the
+//// runtime closes the affected socket with `socket.EncodingFailed`, stops
+//// later effects, and releases pending reply references and resources.
+//// Earlier effects are not rolled back. The runtime skips further encoders,
+//// including terminal encoders, while completing cleanup. Direct `apply_*`
+//// calls only return the configured callback's result; they do not close sockets.
 
 import gleam/dynamic.{type Dynamic}
+import gleam/int
 import gleam/json
 import gleam/option.{type Option, None, Some}
 
@@ -106,6 +114,30 @@ pub type DecodeError {
   MissingField(name: String)
 }
 
+/// Errors a codec may emit when encoding an outbound frame.
+pub type EncodeError {
+  /// A metadata component exceeds the framing's byte limit.
+  MetadataTooLong(component: String, byte_size: Int)
+  /// The payload contains a partial byte.
+  PayloadNotByteAligned
+  /// The codec rejected the value for a codec-specific reason.
+  EncodingRejected(reason: String)
+}
+
+/// Format an `EncodeError` as human-readable text.
+pub fn format_encode_error(error: EncodeError) -> String {
+  case error {
+    MetadataTooLong(component, byte_size) ->
+      "Metadata too long: "
+      <> component
+      <> " ("
+      <> int.to_string(byte_size)
+      <> " bytes)"
+    PayloadNotByteAligned -> "Payload is not byte-aligned"
+    EncodingRejected(reason) -> "Encoding rejected: " <> reason
+  }
+}
+
 /// Status of a reply produced by the app.
 pub type ReplyStatus {
   /// The handler succeeded (`"ok"` in Phoenix framing).
@@ -139,11 +171,15 @@ pub opaque type Codec {
       String,
       ReplyStatus,
       json.Json,
-    ) -> Frame,
-    encode_push: fn(String, String, json.Json) -> Frame,
-    encode_heartbeat_reply: fn(Option(String)) -> Frame,
-    encode_close: Option(fn(Option(String), String) -> Frame),
-    encode_error: Option(fn(Option(String), String) -> Frame),
+    ) -> Result(Frame, EncodeError),
+    encode_push: fn(String, String, json.Json) -> Result(Frame, EncodeError),
+    encode_heartbeat_reply: fn(Option(String)) -> Result(Frame, EncodeError),
+    encode_close: Option(
+      fn(Option(String), String) -> Result(Frame, EncodeError),
+    ),
+    encode_error: Option(
+      fn(Option(String), String) -> Result(Frame, EncodeError),
+    ),
     topicless_events: Bool,
   )
 }
@@ -159,6 +195,10 @@ pub opaque type Codec {
 /// The resulting codec has no binary decoder; binary WebSocket frames are
 /// delivered to the app's `update` as a raw `Binary` event. Add a binary
 /// decoder with `with_binary_decoder`.
+///
+/// Every outbound callback returns `Ok(frame)` or a structured `EncodeError`.
+/// Callbacks should only encode values, not send frames or perform other side
+/// effects. The runtime owns frame delivery and handles encoding failures.
 pub fn new(
   decode_text decode_text: fn(String) -> Result(Inbound, DecodeError),
   encode_reply encode_reply: fn(
@@ -167,9 +207,11 @@ pub fn new(
     String,
     ReplyStatus,
     json.Json,
-  ) -> Frame,
-  encode_push encode_push: fn(String, String, json.Json) -> Frame,
-  encode_heartbeat_reply encode_heartbeat_reply: fn(Option(String)) -> Frame,
+  ) -> Result(Frame, EncodeError),
+  encode_push encode_push: fn(String, String, json.Json) ->
+    Result(Frame, EncodeError),
+  encode_heartbeat_reply encode_heartbeat_reply: fn(Option(String)) ->
+    Result(Frame, EncodeError),
 ) -> Codec {
   Codec(
     decode_text:,
@@ -201,9 +243,12 @@ pub fn with_binary_decoder(
 /// terminates gracefully (leave, server shutdown, heartbeat
 /// eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
 /// leave the joined state instead of waiting out push timeouts.
+///
+/// Return `Ok(frame)` on success or `Error(encode_error)` on failure. Leaving
+/// this callback unconfigured is different from a configured callback failing.
 pub fn with_close_encoder(
   codec: Codec,
-  encode_close: fn(Option(String), String) -> Frame,
+  encode_close: fn(Option(String), String) -> Result(Frame, EncodeError),
 ) -> Codec {
   Codec(..codec, encode_close: Some(encode_close))
 }
@@ -214,9 +259,12 @@ pub fn with_close_encoder(
 /// terminates abnormally (crashed or stopped with an error):
 /// `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
 /// automatic rejoin.
+///
+/// Return `Ok(frame)` on success or `Error(encode_error)` on failure. Leaving
+/// this callback unconfigured is different from a configured callback failing.
 pub fn with_error_encoder(
   codec: Codec,
-  encode_error: fn(Option(String), String) -> Frame,
+  encode_error: fn(Option(String), String) -> Result(Frame, EncodeError),
 ) -> Codec {
   Codec(..codec, encode_error: Some(encode_error))
 }
@@ -246,6 +294,8 @@ pub fn apply_decode_binary(
 }
 
 /// Encode a reply with a codec.
+///
+/// Returns the callback's result unchanged; does not send a frame.
 pub fn apply_encode_reply(
   codec: Codec,
   join_ref join_ref: Option(String),
@@ -253,37 +303,42 @@ pub fn apply_encode_reply(
   topic topic: String,
   status status: ReplyStatus,
   response response: json.Json,
-) -> Frame {
+) -> Result(Frame, EncodeError) {
   codec.encode_reply(join_ref, ref, topic, status, response)
 }
 
 /// Encode a server-initiated push with a codec.
+///
+/// Returns the callback's result unchanged; does not send a frame.
 pub fn apply_encode_push(
   codec: Codec,
   topic topic: String,
   event event: String,
   payload payload: json.Json,
-) -> Frame {
+) -> Result(Frame, EncodeError) {
   codec.encode_push(topic, event, payload)
 }
 
 /// Encode a heartbeat reply with a codec.
+///
+/// Returns the callback's result unchanged; does not send a frame.
 pub fn apply_encode_heartbeat_reply(
   codec: Codec,
   ref ref: Option(String),
-) -> Frame {
+) -> Result(Frame, EncodeError) {
   codec.encode_heartbeat_reply(ref)
 }
 
 /// Encode a graceful topic close with a codec, if it has a close encoder.
 ///
 /// Returns `None` when the codec has no encoder configured with
-/// `with_close_encoder`.
+/// `with_close_encoder`. A configured encoder's failure is `Some(Error(error))`,
+/// not `None`. Does not send a frame.
 pub fn apply_encode_close(
   codec: Codec,
   join_ref join_ref: Option(String),
   topic topic: String,
-) -> Option(Frame) {
+) -> Option(Result(Frame, EncodeError)) {
   case codec.encode_close {
     Some(encode) -> Some(encode(join_ref, topic))
     None -> None
@@ -294,12 +349,13 @@ pub fn apply_encode_close(
 /// encoder.
 ///
 /// Returns `None` when the codec has no encoder configured with
-/// `with_error_encoder`.
+/// `with_error_encoder`. A configured encoder's failure is `Some(Error(error))`,
+/// not `None`. Does not send a frame.
 pub fn apply_encode_error(
   codec: Codec,
   join_ref join_ref: Option(String),
   topic topic: String,
-) -> Option(Frame) {
+) -> Option(Result(Frame, EncodeError)) {
   case codec.encode_error {
     Some(encode) -> Some(encode(join_ref, topic))
     None -> None
@@ -324,19 +380,24 @@ pub fn decode_binary(
 @internal
 pub fn encode_reply(
   codec: Codec,
-) -> fn(Option(String), Option(String), String, ReplyStatus, json.Json) -> Frame {
+) -> fn(Option(String), Option(String), String, ReplyStatus, json.Json) ->
+  Result(Frame, EncodeError) {
   codec.encode_reply
 }
 
 /// Accessor for the codec's push encoder.
 @internal
-pub fn encode_push(codec: Codec) -> fn(String, String, json.Json) -> Frame {
+pub fn encode_push(
+  codec: Codec,
+) -> fn(String, String, json.Json) -> Result(Frame, EncodeError) {
   codec.encode_push
 }
 
 /// Accessor for the codec's heartbeat-reply encoder.
 @internal
-pub fn encode_heartbeat_reply(codec: Codec) -> fn(Option(String)) -> Frame {
+pub fn encode_heartbeat_reply(
+  codec: Codec,
+) -> fn(Option(String)) -> Result(Frame, EncodeError) {
   codec.encode_heartbeat_reply
 }
 
@@ -344,7 +405,7 @@ pub fn encode_heartbeat_reply(codec: Codec) -> fn(Option(String)) -> Frame {
 @internal
 pub fn encode_close(
   codec: Codec,
-) -> Option(fn(Option(String), String) -> Frame) {
+) -> Option(fn(Option(String), String) -> Result(Frame, EncodeError)) {
   codec.encode_close
 }
 
@@ -377,6 +438,6 @@ pub fn topicless_events(codec: Codec) -> Bool {
 @internal
 pub fn encode_error(
   codec: Codec,
-) -> Option(fn(Option(String), String) -> Frame) {
+) -> Option(fn(Option(String), String) -> Result(Frame, EncodeError)) {
   codec.encode_error
 }
