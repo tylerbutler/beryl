@@ -134,6 +134,7 @@ pub fn disconnect_reasons_preserve_public_mapping_test() -> Nil {
     #(telemetry.CallbackDisconnect, "callback_error"),
     #(telemetry.AdmissionDisconnect, "admission_rejected"),
     #(telemetry.SocketProcessDown, "socket_process_down"),
+    #(telemetry.EncodingDisconnect, "encoding_error"),
   ]
   |> list.each(fn(mapping) {
     let #(reason, expected) = mapping

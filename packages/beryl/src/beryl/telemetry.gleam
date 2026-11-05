@@ -13,6 +13,7 @@ import rasa/monotonic
 pub type Transport {
   Mist
   Ewe
+  Custom
 }
 
 /// Terminal outcomes for a channel join.
@@ -94,6 +95,7 @@ pub type DisconnectReason {
   CallbackDisconnect
   AdmissionDisconnect
   SocketProcessDown
+  EncodingDisconnect
 }
 
 /// Whether a broadcast originated on this node or a remote node.

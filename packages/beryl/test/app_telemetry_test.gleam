@@ -465,14 +465,19 @@ pub fn invalid_event_rate_limit_precedes_validation_and_disabled_is_silent_test(
 }
 
 fn raw_binary_codec() -> codec.Codec {
+  let phoenix = wire.phoenix_codec()
   codec.new(
     decode_text: wire.decode_message,
-    encode_reply: wire.reply_json,
-    encode_push: wire.push,
-    encode_heartbeat_reply: wire.heartbeat_reply,
+    encode_reply: codec.encode_reply(phoenix),
+    encode_push: codec.encode_push(phoenix),
+    encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
   )
-  |> codec.with_close_encoder(wire.channel_close)
-  |> codec.with_error_encoder(wire.channel_error)
+  |> codec.with_close_encoder(fn(join_ref, topic) {
+    Ok(wire.channel_close(join_ref, topic))
+  })
+  |> codec.with_error_encoder(fn(join_ref, topic) {
+    Ok(wire.channel_error(join_ref, topic))
+  })
 }
 
 pub fn binary_info_and_broadcast_counts_are_reported_test() -> Nil {
@@ -679,12 +684,13 @@ pub fn raising_sender_write_does_not_prevent_broadcast_fanout_test() -> Nil {
 
 pub fn raising_sender_codec_does_not_prevent_broadcast_fanout_test() -> Nil {
   use <- unitest.tag("serial")
+  let phoenix = wire.phoenix_codec()
   let faulty_codec =
     codec.new(
       decode_text: wire.decode_message,
-      encode_reply: wire.reply_json,
+      encode_reply: codec.encode_reply(phoenix),
       encode_push: fn(_, _, _) { panic as "expected sender codec failure" },
-      encode_heartbeat_reply: wire.heartbeat_reply,
+      encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
     )
   assert_faulty_sender_fanout(
     "telemetry-codec-fault",
