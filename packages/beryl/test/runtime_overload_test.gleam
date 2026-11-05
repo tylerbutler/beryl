@@ -226,6 +226,15 @@ fn rejected_index_closes(disconnect_first: Bool) -> Nil {
       socket.notify(sender, Nil) |> should.equal(Error(overload.Closed))
     }
   }
+  // The stats reply can arrive before its router reservation is released.
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(queue) = snapshot.queue(sockets)
+      queue.items == 0
+    },
+    1000,
+    5,
+  )
   with_suspended(owner, fn() {
     beryl.broadcast(sockets, "room:a", "queued", json.null())
     |> should.equal(Ok(Nil))
