@@ -129,12 +129,33 @@ socket.Closed(topic, reason) -> {
     socket.Shutdown -> Nil
     socket.Errored(_) -> Nil
     socket.AdmissionRejected(_) -> Nil
+    socket.EncodingFailed(_) -> Nil
   }
   socket.Next(prune(model, topic), [])
 }
 ```
 
 The client-visible effect is that the WebSocket connection is closed from the server side. Phoenix JS clients will attempt to reconnect automatically.
+
+## Outbound encoding errors
+
+Custom codec encoders return `Result(Frame, codec.EncodeError)`. If one returns
+`Error`, beryl closes that socket, stops later effects, and releases its pending
+reply references and resources. Your application receives
+`Closed(topic, socket.EncodingFailed(error))` for topics that still need their
+close callback. A failed reply reference cannot be reused.
+
+beryl does not undo earlier effects or generate a fallback reply. It skips
+further encoders while it completes cleanup. If an encoder fails during a
+topic's close, that topic may have received its `Closed` input before the
+failure; beryl does not deliver it twice.
+
+Match `codec.MetadataTooLong(component, byte_size)`,
+`codec.PayloadNotByteAligned`, or `codec.EncodingRejected(reason)` to inspect
+the cause. `codec.format_encode_error` provides log text. Keep secrets out of
+custom rejection reasons. See
+[Return encoding results](/architecture/wire-and-transport/#return-encoding-results)
+for callback migration and binary-helper examples.
 
 ## When `init` or `update` panics
 

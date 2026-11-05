@@ -212,12 +212,13 @@ pub fn codec_without_binary_decoder_delivers_raw_binary_events_test() -> Nil {
   // A text-only codec (no binary decoder): raw binary frames fan out to the
   // app as `Binary` events. The Phoenix codec now ships its own binary
   // decoder, so this path applies only to custom codecs that opt out.
+  let phoenix = wire.phoenix_codec()
   let text_only =
     codec.new(
       decode_text: wire.decode_message,
-      encode_reply: wire.reply_json,
-      encode_push: wire.push,
-      encode_heartbeat_reply: wire.heartbeat_reply,
+      encode_reply: codec.encode_reply(phoenix),
+      encode_push: codec.encode_push(phoenix),
+      encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
     )
   let assert Ok(channels) =
     app_test_helper.start_app(
