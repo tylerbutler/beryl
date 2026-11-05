@@ -28,12 +28,20 @@ Pluggable wire codec for beryl.
  All codecs must normalise inbound traffic to the `Inbound` shape so
  the runtime can stay framing-agnostic.
 
+ Outbound encoders return `Result(Frame, EncodeError)`. On failure the
+ runtime closes the affected socket with `socket.EncodingFailed`, stops
+ later effects, and releases pending reply references and resources.
+ Earlier effects are not rolled back. The runtime skips further encoders,
+ including terminal encoders, while completing cleanup. Direct `apply_*`
+ calls only return the configured callback's result; they do not close sockets.
+
 <nav class="api-symbol-index" aria-label="Module contents">
 <section class="api-symbol-index__group">
   <a class="api-symbol-index__section" href="#types">Types</a>
   <ul>
 <li><a href="#api-type-codec"><code>Codec</code></a></li>
 <li><a href="#api-type-decodeerror"><code>DecodeError</code></a></li>
+<li><a href="#api-type-encodeerror"><code>EncodeError</code></a></li>
 <li><a href="#api-type-frame"><code>Frame</code></a></li>
 <li><a href="#api-type-inbound"><code>Inbound</code></a></li>
 <li><a href="#api-type-inboundkind"><code>InboundKind</code></a></li>
@@ -51,6 +59,7 @@ Pluggable wire codec for beryl.
 <li><a href="#api-function-apply_encode_push"><code>apply_encode_push</code></a></li>
 <li><a href="#api-function-apply_encode_reply"><code>apply_encode_reply</code></a></li>
 <li><a href="#api-function-format_decode_error"><code>format_decode_error</code></a></li>
+<li><a href="#api-function-format_encode_error"><code>format_encode_error</code></a></li>
 <li><a href="#api-function-inbound"><code>inbound</code></a></li>
 <li><a href="#api-function-inbound_join_ref"><code>inbound_join_ref</code></a></li>
 <li><a href="#api-function-inbound_kind"><code>inbound_kind</code></a></li>
@@ -122,6 +131,52 @@ MissingField(name: String)
 ```
 
 A required field was absent; `name` is the missing field.
+
+<div class="api-entry-anchor" id="api-type-encodeerror" aria-hidden="true"></div>
+
+### `EncodeError`
+
+```gleam
+pub type EncodeError {
+  MetadataTooLong(
+    component: String,
+    byte_size: Int
+  )
+  PayloadNotByteAligned
+  EncodingRejected(reason: String)
+}
+```
+
+Errors a codec may emit when encoding an outbound frame.
+
+#### Constructors
+
+##### `MetadataTooLong`
+
+```gleam
+MetadataTooLong(
+  component: String,
+  byte_size: Int
+)
+```
+
+A metadata component exceeds the framing's byte limit.
+
+##### `PayloadNotByteAligned`
+
+```gleam
+PayloadNotByteAligned
+```
+
+The payload contains a partial byte.
+
+##### `EncodingRejected`
+
+```gleam
+EncodingRejected(reason: String)
+```
+
+The codec rejected the value for a codec-specific reason.
 
 <div class="api-entry-anchor" id="api-type-frame" aria-hidden="true"></div>
 
@@ -290,13 +345,14 @@ pub fn apply_encode_close(
   Codec,
   join_ref: option.Option(String),
   topic: String
-) -> option.Option(Frame)
+) -> option.Option(Result(Frame, EncodeError))
 ```
 
 Encode a graceful topic close with a codec, if it has a close encoder.
 
  Returns `None` when the codec has no encoder configured with
- `with_close_encoder`.
+ `with_close_encoder`. A configured encoder's failure is `Some(Error(error))`,
+ not `None`. Does not send a frame.
 
 <div class="api-entry-anchor" id="api-function-apply_encode_error" aria-hidden="true"></div>
 
@@ -307,14 +363,15 @@ pub fn apply_encode_error(
   Codec,
   join_ref: option.Option(String),
   topic: String
-) -> option.Option(Frame)
+) -> option.Option(Result(Frame, EncodeError))
 ```
 
 Encode an abnormal topic termination with a codec, if it has an error
  encoder.
 
  Returns `None` when the codec has no encoder configured with
- `with_error_encoder`.
+ `with_error_encoder`. A configured encoder's failure is `Some(Error(error))`,
+ not `None`. Does not send a frame.
 
 <div class="api-entry-anchor" id="api-function-apply_encode_heartbeat_reply" aria-hidden="true"></div>
 
@@ -324,10 +381,12 @@ Encode an abnormal topic termination with a codec, if it has an error
 pub fn apply_encode_heartbeat_reply(
   Codec,
   ref: option.Option(String)
-) -> Frame
+) -> Result(Frame, EncodeError)
 ```
 
 Encode a heartbeat reply with a codec.
+
+ Returns the callback's result unchanged; does not send a frame.
 
 <div class="api-entry-anchor" id="api-function-apply_encode_push" aria-hidden="true"></div>
 
@@ -339,10 +398,12 @@ pub fn apply_encode_push(
   topic: String,
   event: String,
   payload: json.Json
-) -> Frame
+) -> Result(Frame, EncodeError)
 ```
 
 Encode a server-initiated push with a codec.
+
+ Returns the callback's result unchanged; does not send a frame.
 
 <div class="api-entry-anchor" id="api-function-apply_encode_reply" aria-hidden="true"></div>
 
@@ -356,10 +417,12 @@ pub fn apply_encode_reply(
   topic: String,
   status: ReplyStatus,
   response: json.Json
-) -> Frame
+) -> Result(Frame, EncodeError)
 ```
 
 Encode a reply with a codec.
+
+ Returns the callback's result unchanged; does not send a frame.
 
 <div class="api-entry-anchor" id="api-function-format_decode_error" aria-hidden="true"></div>
 
@@ -372,6 +435,16 @@ pub fn format_decode_error(DecodeError) -> String
 Format a `DecodeError` as human-readable text.
 
  The runtime log messages and `wire.format_decode_error` use this text.
+
+<div class="api-entry-anchor" id="api-function-format_encode_error" aria-hidden="true"></div>
+
+### `format_encode_error`
+
+```gleam
+pub fn format_encode_error(EncodeError) -> String
+```
+
+Format an `EncodeError` as human-readable text.
 
 <div class="api-entry-anchor" id="api-function-inbound" aria-hidden="true"></div>
 
@@ -454,9 +527,9 @@ Return the inbound message's subscription topic.
 ```gleam
 pub fn new(
   decode_text: fn(String) -> Result(Inbound, DecodeError),
-  encode_reply: fn(option.Option(String), option.Option(String), String, ReplyStatus, json.Json) -> Frame,
-  encode_push: fn(String, String, json.Json) -> Frame,
-  encode_heartbeat_reply: fn(option.Option(String)) -> Frame
+  encode_reply: fn(option.Option(String), option.Option(String), String, ReplyStatus, json.Json) -> Result(Frame, EncodeError),
+  encode_push: fn(String, String, json.Json) -> Result(Frame, EncodeError),
+  encode_heartbeat_reply: fn(option.Option(String)) -> Result(Frame, EncodeError)
 ) -> Codec
 ```
 
@@ -471,6 +544,10 @@ Build a codec without an inbound binary decoder.
  The resulting codec has no binary decoder; binary WebSocket frames are
  delivered to the app's `update` as a raw `Binary` event. Add a binary
  decoder with `with_binary_decoder`.
+
+ Every outbound callback returns `Ok(frame)` or a structured `EncodeError`.
+ Callbacks should only encode values, not send frames or perform other side
+ effects. The runtime owns frame delivery and handles encoding failures.
 
 <div class="api-entry-anchor" id="api-function-uses_topicless_events" aria-hidden="true"></div>
 
@@ -508,7 +585,7 @@ Add a binary decoder to a codec.
 ```gleam
 pub fn with_close_encoder(
   Codec,
-  fn(option.Option(String), String) -> Frame
+  fn(option.Option(String), String) -> Result(Frame, EncodeError)
 ) -> Codec
 ```
 
@@ -519,6 +596,9 @@ Add a topic-close encoder to a codec.
  eviction): `(join_ref, topic)`. Phoenix clients rely on `phx_close` to
  leave the joined state instead of waiting out push timeouts.
 
+ Return `Ok(frame)` on success or `Error(encode_error)` on failure. Leaving
+ this callback unconfigured is different from a configured callback failing.
+
 <div class="api-entry-anchor" id="api-function-with_error_encoder" aria-hidden="true"></div>
 
 ### `with_error_encoder`
@@ -526,7 +606,7 @@ Add a topic-close encoder to a codec.
 ```gleam
 pub fn with_error_encoder(
   Codec,
-  fn(option.Option(String), String) -> Frame
+  fn(option.Option(String), String) -> Result(Frame, EncodeError)
 ) -> Codec
 ```
 
@@ -536,6 +616,9 @@ Add a topic-error encoder to a codec.
  terminates abnormally (crashed or stopped with an error):
  `(join_ref, topic)`. Phoenix clients rely on `phx_error` to schedule an
  automatic rejoin.
+
+ Return `Ok(frame)` on success or `Error(encode_error)` on failure. Leaving
+ this callback unconfigured is different from a configured callback failing.
 
 <div class="api-entry-anchor" id="api-function-with_topicless_events" aria-hidden="true"></div>
 

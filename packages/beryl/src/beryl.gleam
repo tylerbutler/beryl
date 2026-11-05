@@ -896,8 +896,10 @@ fn validate_topic_rate(
 /// You can call `stop` more than once or use a handle whose system never
 /// started. In these cases, it returns `Error(NotRunning)` and does not crash.
 /// It returns `Error(StopTimeout)` if the runtime does not drain or the
-/// subtree does not terminate within the shutdown window. After a successful stop
-/// the handle should no longer be used.
+/// subtree does not terminate within the shutdown window. A timeout does not
+/// cancel shutdown, and no late completion message remains in the caller's
+/// mailbox after `stop` returns. After a successful stop the handle should no
+/// longer be used.
 pub fn stop(sockets: Sockets) -> Result(Nil, StopError) {
   sockets.app.stop()
 }
@@ -1354,12 +1356,17 @@ fn app_handle(
   )
 }
 
+// The caller owns the reply alias only for the callback's duration. Receive
+// through a selector: process.receive requires a pid-owned subject.
+@external(erlang, "beryl_ffi", "with_reply_subject")
+fn with_reply_subject(action: fn(process.Subject(message)) -> value) -> value
+
 // Record the intentional stop before asking the runtime to drain, so
 // restart-intensity exhaustion remains distinguishable from shutdown.
 fn request_runtime_stop(
   supervisor: process.Name(app_supervisor.Message),
 ) -> Result(Nil, StopError) {
-  let finished = process.new_subject()
+  use finished <- with_reply_subject
 
   case app_supervisor.request_stop(supervisor, finished) {
     Ok(#(app_supervisor.StopRejected, _)) -> internal.result_error(NotRunning)
@@ -1368,7 +1375,8 @@ fn request_runtime_stop(
     Error(overload.RequestTimedOut) -> internal.result_error(StopTimeout)
     Ok(#(app_supervisor.StopAccepted, owner)) -> {
       let monitor = process.monitor(owner)
-      let completion = case process.receive(finished, 5000) {
+      let selector = process.new_selector() |> process.select(finished)
+      let completion = case process.selector_receive(selector, 5000) {
         Ok(app_supervisor.StopCompleted) ->
           await_down(monitor) |> result.replace_error(StopTimeout)
         Ok(app_supervisor.StopIncomplete) -> internal.result_error(StopTimeout)

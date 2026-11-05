@@ -2,7 +2,8 @@
 -export([identity/1,
          logging_debug_enabled/0,
          string_starts_with/2, stop_supervisor/1, rescue/1,
-         actor_call/3, connection_limit_call/3, connection_limit_send/2,
+         actor_call/3, with_reply_subject/1,
+         connection_limit_call/3, connection_limit_send/2,
          connection_limit_checkpoint_supervisor/0,
          connection_limit_checkpoint_registry_key/2,
          connection_limit_checkpoint_registry_get/1,
@@ -138,6 +139,19 @@ connection_limit_call(Subject, Timeout, Request) ->
                 erlang:unalias(Alias),
                 receive {Tag, _} -> ok after 0 -> ok end
             end
+    end.
+
+%% Scope a single completion reply without cancelling the work producing it.
+%% Deactivate before draining so a timeout race cannot leave a late reply.
+with_reply_subject(Action) ->
+    Alias = erlang:alias([reply]),
+    Tag = make_ref(),
+    Subject = {subject, Alias, Tag},
+    try
+        Action(Subject)
+    after
+        erlang:unalias(Alias),
+        receive {Tag, _} -> ok after 0 -> ok end
     end.
 
 actor_call(Subject, Timeout, Request) ->

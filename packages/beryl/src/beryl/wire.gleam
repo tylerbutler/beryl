@@ -44,15 +44,24 @@ const max_decode_error_length = 256
 /// `Message` events according to their event name. The app receives a
 /// `Binary` event only for an undecoded frame from a codec without a binary
 /// decoder.
+///
+/// All outbound callbacks wrap the standalone text encoders in `Ok`, preserving
+/// their frame bytes. Standalone helpers retain their original return types.
 pub fn phoenix_codec() -> Codec {
   codec.new(
     decode_text: decode_message,
-    encode_reply: reply_json,
-    encode_push: push,
-    encode_heartbeat_reply: heartbeat_reply,
+    encode_reply: fn(join_ref, ref, topic, status, response) {
+      Ok(reply_json(join_ref, ref, topic, status, response))
+    },
+    encode_push: fn(topic, event, payload) { Ok(push(topic, event, payload)) },
+    encode_heartbeat_reply: fn(ref) { Ok(heartbeat_reply(ref)) },
   )
-  |> codec.with_close_encoder(channel_close)
-  |> codec.with_error_encoder(channel_error)
+  |> codec.with_close_encoder(fn(join_ref, topic) {
+    Ok(channel_close(join_ref, topic))
+  })
+  |> codec.with_error_encoder(fn(join_ref, topic) {
+    Ok(channel_error(join_ref, topic))
+  })
   |> codec.with_binary_decoder(decode_binary_message)
 }
 
@@ -481,6 +490,21 @@ pub type BinaryEncodeError {
   MetadataTooLong(component: String, byte_size: Int)
   /// The payload contains a partial byte.
   PayloadNotByteAligned
+}
+
+/// Adapt a standalone Phoenix binary encoding error for a codec callback.
+///
+/// Use with `result.map_error` when a custom codec calls `binary_push`,
+/// `binary_reply`, or `binary_broadcast`. Component names and byte sizes are
+/// preserved rather than flattened into a string.
+pub fn binary_encode_error_to_encode_error(
+  error: BinaryEncodeError,
+) -> codec.EncodeError {
+  case error {
+    MetadataTooLong(component, byte_size) ->
+      codec.MetadataTooLong(component, byte_size)
+    PayloadNotByteAligned -> codec.PayloadNotByteAligned
+  }
 }
 
 /// Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.

@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Added"
+body = "Support the fixed Custom telemetry identity for third-party transports; exhaustive TelemetryTransport matches must handle Custom."
