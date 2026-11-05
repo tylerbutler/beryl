@@ -16,11 +16,12 @@ into a callback or a suspended effect list does not release its capacity.
 | Each topic worker | 256 | 8 MiB |
 | Each presence actor | 4096 | 32 MiB |
 | Each callback result | 256 effects | 8 MiB |
+| Connection limiter | 256 | 8 MiB |
 
 The socket limit includes input, pending worker reports, active effect lists,
-and unanswered reply refs. Callback completion does not release an unanswered
-ref, and reply refs do not expire. `socket.DiscardReply` or
-`channel.discard_reply` releases a ref without sending a wire reply. A reply,
+and unanswered reply references. Callback completion does not release an unanswered
+reference, and reply references do not expire. `socket.DiscardReply` or
+`channel.discard_reply` releases a reference without sending a wire reply. A reply,
 explicit discard, topic close, or socket close releases its capacity. When the
 socket budget is full, the runtime rejects new work and closes client input
 that it cannot safely retain.
@@ -40,6 +41,11 @@ Idle cleanup reservations consume capacity until the session ends.
 The supervisor admits one stop request at a time. Repeated disconnects and
 terminal stop requests do not create repeated socket control work. A timeout
 or caller exit stops a connection initializer that has not committed.
+
+The connection limiter has a separate pending-work budget. An acquire reserves
+two items: its request and its completion or cancellation. A bind uses one
+item. Pending, executing, and reserved cleanup work all count. Saturation does
+not prevent the caller or limiter from activating reserved cleanup.
 
 ## Configure limits
 
@@ -64,11 +70,32 @@ let config =
   |> beryl.with_socket_queue_limits(socket_limit)
   |> beryl.with_worker_queue_limits(worker_limit)
   |> beryl.with_effect_limits(worker_limit)
+  |> beryl.with_connection_queue_limits(worker_limit)
 ```
 
 Use `presence.with_queue_limits(config, limit)` for a presence actor. These
 limits are safety defaults, not measured throughput recommendations. Keep room
-for input, results, reply refs, and cleanup at the same time.
+for input, results, reply references, and cleanup at the same time.
+
+Connection queue limits apply only when you enable a connection ceiling or
+per-IP connection rate. Use at least two items to admit an acquire. Full or
+oversized requests fail before publication. `transport.acquire_connection_slot`
+returns `Error(Nil)` on rejection, timeout, or limiter unavailability; Mist
+and Ewe return HTTP 429 for the upgrade. A failed bind cancels its permit and
+requires the connection to close.
+
+The limiter waits up to 100 ms after publishing a request. Timed-out queued
+requests cannot acquire a slot later. Cleanup reclaims a slot if the limiter
+already started the request. Caller death also reclaims pending work and
+holders when the limiter resumes. Every 100 ms, the limiter checks holder
+tokens to reclaim cancelled permits, even if a failed-bind caller dies before
+sending its release notification. The original owner need not exit or retry.
+Before rejecting an acquire at a connection ceiling, it also checks holder
+tokens so released capacity can be reused before the release notification is
+processed. These checks take time proportional to the number of live holders.
+After a worker restart, acknowledged live holders survive; pending requests
+and unacknowledged grants do not. The queue does not limit live-holder state
+or per-IP rate history.
 
 ## Handle send results
 
@@ -113,14 +140,15 @@ before sending its own copy.
 
 `group.broadcast` returns `GroupLookupFailed(error)` for a missing group, or
 `BroadcastRejected(admitted_topics, reason)` after partial admission. Earlier
-topics stay admitted. Group actor lookup retains its existing call timeout
-and panic behavior if that actor is unavailable.
+topics stay admitted. If the group actor is unavailable, exits during lookup,
+or exceeds its call timeout, the lookup returns
+`GroupLookupFailed(GroupCallFailed(reason))`.
 
 ## Client and callback overload
 
 Mist and Ewe close the connection when the shared frame pipeline cannot admit
 a text or binary frame. Worker input or callback-result rejection closes the
-affected topic with `phx_error`. Socket input, report, reply-ref, or index
+affected topic with `phx_error`. Socket input, report, reply-reference, or index
 admission failure closes the socket. An oversized join result cannot send
 join success or apply a prefix of its actions.
 

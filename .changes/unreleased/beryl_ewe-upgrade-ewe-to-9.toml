@@ -1,0 +1,3 @@
+package = "beryl_ewe"
+kind = "Changed"
+body = "Upgrade Ewe to 9.0.0. Handler responses now use ewe.Body instead of ewe.ResponseBody; applications must also update Ewe body constructors and server builder labels. Route HTTP/2 extended CONNECT through the same admission checks as HTTP/1 WebSockets, using the parsed authority for same-origin checks."

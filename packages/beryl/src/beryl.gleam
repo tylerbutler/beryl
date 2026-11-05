@@ -30,7 +30,7 @@
 ////
 //// pub fn main() -> Nil {
 ////   // Optional: start PubSub for distributed messaging
-////   let pubsub_handle = pubsub.start(pubsub.default_config())
+////   let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 ////
 ////   // Build the supervised system. The app supplies `init` (the per-socket
 ////   // model) and `update` (which routes every event by topic).
@@ -43,11 +43,20 @@
 ////       init: fn(_info) { #(Nil, []) },
 ////       update: fn(model, event) {
 ////         case event {
-////           Join("room:" <> _, _payload, ref) ->
-////             Next(model, [AcceptJoin(ref, option.None)])
-////           Message(topic, "new_msg", payload, _ref) ->
-////             Next(model, [Broadcast(topic, "new_msg", payload)])
-////           Join(..) | Message(..) | Binary(..) | Closed(..) | Info(..) ->
+////           Join("room:" <> _, _payload, reference) ->
+////             Next(model, [AcceptJoin(reference, option.None)])
+////           Message(topic, "new_msg", payload, reference) ->
+////             Next(model, [
+////               Broadcast(topic, "new_msg", payload),
+////               ..case reference {
+////                 option.Some(reference) -> [socket.DiscardReply(reference)]
+////                 option.None -> []
+////               }
+////             ])
+////           Message(_, _, _, option.Some(reference)) ->
+////             Next(model, [socket.DiscardReply(reference)])
+////           Message(_, _, _, option.None)
+////           | Join(..) | Binary(..) | Closed(..) | Info(..) ->
 ////             Next(model, [])
 ////         }
 ////       },
@@ -200,6 +209,7 @@ pub opaque type Config {
     /// before the runtime gives up on it (app-dispatch systems only).
     presence_op_timeout_ms: Int,
     router_queue_limits: overload.Limits,
+    connection_queue_limits: overload.Limits,
     socket_queue_limits: overload.Limits,
     worker_queue_limits: overload.Limits,
     effect_limits: overload.Limits,
@@ -259,6 +269,7 @@ pub fn config(codec: codec.Codec) -> Config {
     presence: None,
     presence_op_timeout_ms: 5000,
     router_queue_limits: overload.shared_limits(),
+    connection_queue_limits: overload.worker_limits(),
     socket_queue_limits: overload.socket_limits(),
     worker_queue_limits: overload.worker_limits(),
     effect_limits: overload.worker_limits(),
@@ -271,6 +282,24 @@ pub fn with_router_queue_limits(
   limits: overload.Limits,
 ) -> Config {
   Config(..config, router_queue_limits: limits)
+}
+
+/// Bound pending connection-limiter work independently of live connections.
+///
+/// Defaults to 256 items and 8 MiB of accounted payload, including executing
+/// work. Each acquire reserves two items: its request and its completion or
+/// cancellation. Binds reserve one item. Use at least two items to admit an
+/// acquire. Cleanup uses its reserved capacity even when the queue is full.
+///
+/// This applies when a connection ceiling or per-IP connection rate is enabled.
+/// Saturation, an oversized peer IP, timeout, or limiter unavailability returns
+/// `Error(Nil)` from `transport.acquire_connection_slot`; transports reject the
+/// upgrade with HTTP 429. Byte accounting is structural, not a BEAM heap limit.
+pub fn with_connection_queue_limits(
+  config: Config,
+  limits: overload.Limits,
+) -> Config {
+  Config(..config, connection_queue_limits: limits)
 }
 
 /// Bound outstanding socket work, including presence-suspended continuations.
@@ -1131,6 +1160,7 @@ fn child_spec_supervisor(
             config.max_connections,
             config.connection_rate_per_ip,
             config.connection_burst_per_ip,
+            config.connection_queue_limits,
             name,
           )
         }),

@@ -40,9 +40,9 @@ Distributed PubSub with Erlang `pg`
  Give incompatible payload types distinct, fixed configuration scopes:
 
  ```gleam
- let numbers: pubsub.PubSub(Int) =
+ let assert Ok(numbers): Result(pubsub.PubSub(Int), _) =
    pubsub.start(pubsub.config_with_scope("my_app_numbers"))
- let text: pubsub.PubSub(String) =
+ let assert Ok(text): Result(pubsub.PubSub(String), _) =
    pubsub.start(pubsub.config_with_scope("my_app_text"))
  ```
 
@@ -60,11 +60,15 @@ Distributed PubSub with Erlang `pg`
  handles remain valid, and repeated joins still create one membership.
 
  Broadcasts are best-effort. During recovery, broadcasts and subscriber
- queries can see empty or partial membership. Broadcasts are not buffered
- or replayed, and a `Nil` return does not confirm delivery. Each node must
+ queries return `Error(ScopeRecovering)` until local replay restores the
+ memberships of live owners. Queries do not wait for the membership actor:
+ they read a readiness marker tied to its exact reconciled pg generation.
+ After local replay they may still see partial remote membership.
+ Broadcasts are not buffered
+ or replayed, and `Ok(Nil)` does not confirm delivery. Each node must
  start its own scope; local recovery is not a cluster-wide readiness barrier.
 
- Startup and membership operations can exit with an OTP error during
+ Startup and membership operations return typed errors during
  service failure or recovery. A failed or timed-out join or leave may have
  recorded its intent; failure does not roll it back. Retrying is idempotent.
  See `start` for startup conflicts and loss of the membership registry.
@@ -72,7 +76,7 @@ Distributed PubSub with Erlang `pg`
  ## Quick start
 
  ```gleam
- let pubsub_handle = pubsub.start(pubsub.default_config())
+ let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
 
  // Sending: broadcast to all subscribers of a topic
  pubsub.broadcast(pubsub_handle, "room:lobby", "new_msg", "hello")
@@ -95,6 +99,7 @@ Distributed PubSub with Erlang `pg`
 <li><a href="#api-type-message"><code>Message</code></a></li>
 <li><a href="#api-type-pubsub"><code>PubSub</code></a></li>
 <li><a href="#api-type-pubsubconfig"><code>PubSubConfig</code></a></li>
+<li><a href="#api-type-pubsuberror"><code>PubSubError</code></a></li>
 <li><a href="#api-type-pubsubfrom"><code>PubSubFrom</code></a></li>
 <li><a href="#api-type-subscriber"><code>Subscriber</code></a></li>
   </ul>
@@ -107,6 +112,7 @@ Distributed PubSub with Erlang `pg`
 <li><a href="#api-function-broadcast_from_socket"><code>broadcast_from_socket</code></a></li>
 <li><a href="#api-function-config_with_scope"><code>config_with_scope</code></a></li>
 <li><a href="#api-function-default_config"><code>default_config</code></a></li>
+<li><a href="#api-function-describe_error"><code>describe_error</code></a></li>
 <li><a href="#api-function-join"><code>join</code></a></li>
 <li><a href="#api-function-leave"><code>leave</code></a></li>
 <li><a href="#api-function-local_broadcast"><code>local_broadcast</code></a></li>
@@ -186,6 +192,25 @@ PubSub configuration.
  Build with `default_config` or `config_with_scope` so the underlying pg
  scope representation can evolve without exposing record fields.
 
+<div class="api-entry-anchor" id="api-type-pubsuberror" aria-hidden="true"></div>
+
+### `PubSubError`
+
+```gleam
+pub type PubSubError {
+  StartupFailed(error.OperationFailure)
+  MembershipCallFailed(error.CallError)
+  ScopeRecovering
+  PgUnavailable(error.OperationFailure)
+  OwnerNotLocal
+}
+```
+
+A PubSub operation could not complete.
+
+ Failed or timed-out mutations may already have recorded their intent.
+ Retrying join and leave is idempotent; errors do not roll intent back.
+
 <div class="api-entry-anchor" id="api-type-pubsubfrom" aria-hidden="true"></div>
 
 ### `PubSubFrom`
@@ -264,10 +289,15 @@ pub fn broadcast(
   String,
   String,
   a
-) -> Nil
+) -> Result(Nil, PubSubError)
 ```
 
 Broadcast a message to all topic subscribers on all nodes.
+
+ Registry and scope failures are returned before sending. Success means
+ best-effort dispatch, not confirmed delivery.
+ This does not wait for the registry actor; local recovery returns
+ `ScopeRecovering` until memberships have been replayed.
 
 <div class="api-entry-anchor" id="api-function-broadcast_from" aria-hidden="true"></div>
 
@@ -280,7 +310,7 @@ pub fn broadcast_from(
   String,
   String,
   a
-) -> Nil
+) -> Result(Nil, PubSubError)
 ```
 
 Broadcast a message to all subscribers except a specific PID.
@@ -297,7 +327,7 @@ pub fn broadcast_from_socket(
   String,
   String,
   a
-) -> Nil
+) -> Result(Nil, PubSubError)
 ```
 
 Broadcast a message to all subscribers except a process.
@@ -345,6 +375,16 @@ pub fn default_config() -> PubSubConfig
 
 Create a default PubSub configuration with scope `beryl_pubsub`.
 
+<div class="api-entry-anchor" id="api-function-describe_error" aria-hidden="true"></div>
+
+### `describe_error`
+
+```gleam
+pub fn describe_error(PubSubError) -> String
+```
+
+Describe an operation failure, preserving bounded underlying diagnostics.
+
 <div class="api-entry-anchor" id="api-function-join" aria-hidden="true"></div>
 
 ### `join`
@@ -353,7 +393,7 @@ Create a default PubSub configuration with scope `beryl_pubsub`.
 pub fn join(
   Subscriber(a),
   String
-) -> Nil
+) -> Result(Nil, PubSubError)
 ```
 
 Join a topic so this subscriber receives broadcasts sent to it.
@@ -365,7 +405,8 @@ Join a topic so this subscriber receives broadcasts sent to it.
  it once.
 
  The registry retains the membership through `pg` restarts and removes it
- when its owner exits. During recovery this call can exit with an OTP error.
+ when its owner exits. During recovery this call can return `ScopeRecovering`
+ or `PgUnavailable`. Actor-call failures return `MembershipCallFailed`.
  The call uses a five-second registry timeout; an error or timeout does not
  roll back intent already recorded by the registry. Retrying is idempotent.
 
@@ -377,7 +418,7 @@ Join a topic so this subscriber receives broadcasts sent to it.
 pub fn leave(
   Subscriber(a),
   String
-) -> Nil
+) -> Result(Nil, PubSubError)
 ```
 
 Leave a topic previously joined with `join`.
@@ -387,7 +428,7 @@ Leave a topic previously joined with `join`.
  harmless. Other owners, scopes, and topics are unaffected.
 
  A leave removes recovery intent as well as live membership. Like `join`,
- it can exit during recovery or after a five-second registry timeout.
+ it returns a typed error during recovery or after a five-second timeout.
  A failed call may still take effect; retrying is idempotent.
 
 <div class="api-entry-anchor" id="api-function-local_broadcast" aria-hidden="true"></div>
@@ -400,7 +441,7 @@ pub fn local_broadcast(
   String,
   String,
   a
-) -> Nil
+) -> Result(Nil, PubSubError)
 ```
 
 Broadcast a message only to subscribers on the current node.
@@ -444,7 +485,7 @@ Add a subscriber's PubSub message delivery to a `Selector`, alongside a
 ### `start`
 
 ```gleam
-pub fn start(PubSubConfig) -> PubSub(a)
+pub fn start(PubSubConfig) -> Result(PubSub(a), PubSubError)
 ```
 
 Start a PubSub instance.
@@ -454,19 +495,21 @@ Start a PubSub instance.
  The registry restores live local subscriptions after a `pg` process restart.
  Each participating node must start the same scope.
 
- Startup errors cause an OTP exit instead of returning a handle. A scope
+ Startup errors return `StartupFailed` with the native reason. A scope
  already owned by an external `pg` process is a startup conflict; beryl does
  not adopt or stop it. Startup waits for supervision and local membership
  reconciliation, but can fail if the service is recovering.
 
  Loss of the registry itself, including supervisor restart-intensity
  exhaustion, invalidates existing handles. Their membership, broadcast, and
- subscriber-query calls exit rather than silently using an empty replacement.
+ subscriber-query calls return `MembershipCallFailed` rather than silently
+ using an empty replacement.
  Call `start` again, create new subscribers, and rejoin their topics.
  This is not persistent storage across service or node failure.
 
  `payload` is fixed by how the returned value is used or annotated at the
- call site. For example: `pubsub.start(config) : PubSub(MySyncPayload)`.
+ call site. For example, annotate the successful handle as
+ `PubSub(MySyncPayload)`.
  Starting the same scope again returns another handle to the same runtime
  instance, so every use of that scope must choose the same payload type.
  These calls do not create isolated instances or check payload compatibility.
@@ -498,7 +541,7 @@ Create a subscription handle owned by the current process.
 pub fn subscriber_count(
   PubSub(a),
   String
-) -> Int
+) -> Result(Int, PubSubError)
 ```
 
 Return the number of topic subscribers on all nodes.
@@ -511,7 +554,12 @@ Return the number of topic subscribers on all nodes.
 pub fn subscribers(
   PubSub(a),
   String
-) -> List(process.Pid)
+) -> Result(List(process.Pid), PubSubError)
 ```
 
 Return all topic subscribers on all nodes.
+
+ Recovery and registry failures are errors, not empty subscriber lists.
+ The query does not message or wait for the registry actor. Local recovery
+ returns `ScopeRecovering` until the original registry has reconciled the
+ current pg generation; remote membership may still be partial afterwards.

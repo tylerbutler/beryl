@@ -34,11 +34,14 @@ import gleam/option.{type Option, None, Some}
 
 /// A pending join correlation handle.
 ///
-/// Pass it back in `AcceptJoin` or `RejectJoin`. A join ref is valid only for
-/// its pending join. It carries a unique runtime token. A delayed completion
+/// Pass it back in `AcceptJoin` or `RejectJoin`. A join reference is valid only
+/// for its pending join. It carries a unique runtime token. A delayed completion
 /// for an older same-topic join cannot answer a replacement or retry.
-pub opaque type JoinRef {
-  JoinRef(
+///
+/// The runtime links this handle to Phoenix's `join_ref` and message `ref`.
+/// Return the exact handle from `Join`; do not reconstruct it from wire values.
+pub opaque type JoinReference {
+  JoinReference(
     topic: String,
     join_ref: Option(String),
     message_ref: Option(String),
@@ -49,12 +52,15 @@ pub opaque type JoinRef {
 /// A client message reply correlation handle.
 ///
 /// Pass it back in `ReplyOk`, `ReplyError`, or `DiscardReply`. You can store
-/// reply refs in the model and answer them in a later `update` turn, for
+/// reply references in the model and answer them in a later `update` turn, for
 /// example after an asynchronous lookup. They do not expire. They are
 /// single-use and remain valid only while the topic instance that received
 /// the message stays open.
-pub opaque type ReplyRef {
-  ReplyRef(
+///
+/// The runtime links this handle to Phoenix's per-message `ref` and channel
+/// `join_ref`. The handle also carries a unique runtime token.
+pub opaque type ReplyReference {
+  ReplyReference(
     topic: String,
     join_ref: Option(String),
     message_ref: Option(String),
@@ -63,12 +69,12 @@ pub opaque type ReplyRef {
 }
 
 @internal
-pub fn make_join_ref(
+pub fn make_join_reference(
   topic topic: String,
   join_ref join_ref: Option(String),
   message_ref message_ref: Option(String),
-) -> JoinRef {
-  JoinRef(
+) -> JoinReference {
+  JoinReference(
     topic: topic,
     join_ref: join_ref,
     message_ref: message_ref,
@@ -77,12 +83,12 @@ pub fn make_join_ref(
 }
 
 @internal
-pub fn make_message_ref(
+pub fn make_reply_reference(
   topic topic: String,
   join_ref join_ref: Option(String),
   message_ref message_ref: Option(String),
-) -> ReplyRef {
-  ReplyRef(
+) -> ReplyReference {
+  ReplyReference(
     topic: topic,
     join_ref: join_ref,
     message_ref: message_ref,
@@ -91,35 +97,40 @@ pub fn make_message_ref(
 }
 
 @internal
-pub fn join_refs_match(first: JoinRef, second: JoinRef) -> Bool {
+pub fn join_references_match(
+  first: JoinReference,
+  second: JoinReference,
+) -> Bool {
   first == second
 }
 
 @internal
-pub fn join_ref_topic(ref: JoinRef) -> String {
-  ref.topic
+pub fn join_reference_topic(reference: JoinReference) -> String {
+  reference.topic
 }
 
 @internal
-pub fn reply_ref_topic(ref: ReplyRef) -> String {
-  ref.topic
+pub fn reply_reference_topic(reference: ReplyReference) -> String {
+  reference.topic
 }
 
 @internal
-pub fn reply_ref_join_ref(ref: ReplyRef) -> Option(String) {
-  ref.join_ref
+pub fn reply_reference_join_ref(reference: ReplyReference) -> Option(String) {
+  reference.join_ref
 }
 
 @internal
-pub fn reply_ref_message_ref(ref: ReplyRef) -> Option(String) {
-  ref.message_ref
+pub fn reply_reference_message_ref(
+  reference: ReplyReference,
+) -> Option(String) {
+  reference.message_ref
 }
 
 @internal
-pub fn reply_ref_wire_key(
-  ref: ReplyRef,
+pub fn reply_reference_wire_key(
+  reference: ReplyReference,
 ) -> #(String, Option(String), Option(String)) {
-  #(ref.topic, ref.join_ref, ref.message_ref)
+  #(reference.topic, reference.join_ref, reference.message_ref)
 }
 
 /// Why a socket or topic is stopping.
@@ -147,10 +158,15 @@ pub type Input(message) {
   /// A client asked to join a topic. Return an `AcceptJoin` or `RejectJoin`
   /// effect. The runtime rejects a `Join` that is unanswered at the end of
   /// the update turn.
-  Join(topic: String, payload: Dynamic, ref: JoinRef)
-  /// A client message on a joined topic. `ref` is present for messages
+  Join(topic: String, payload: Dynamic, reference: JoinReference)
+  /// A client message on a joined topic. `reference` is present for messages
   /// that expect a reply.
-  Message(topic: String, event: String, payload: Dynamic, ref: Option(ReplyRef))
+  Message(
+    topic: String,
+    event: String,
+    payload: Dynamic,
+    reference: Option(ReplyReference),
+  )
   /// A binary frame on a joined topic (codecs without a binary decoder
   /// deliver the raw frame once per joined topic).
   Binary(topic: String, data: BitArray)
@@ -182,20 +198,20 @@ pub type Next(model) {
 pub type Effect {
   /// Accept a pending join. This subscribes the socket to the topic and sends
   /// the join acknowledgment with an optional reply payload. The effect is
-  /// valid only while the `Join` input's ref is pending.
-  AcceptJoin(ref: JoinRef, reply: Option(Json))
+  /// valid only while the `Join` input's reference is pending.
+  AcceptJoin(reference: JoinReference, reply: Option(Json))
   /// Reject a pending join with an error payload.
-  RejectJoin(ref: JoinRef, reason: Json)
-  /// Reply successfully to a client message ref.
-  ReplyOk(ref: ReplyRef, payload: Json)
-  /// Reply with an error to a client message ref.
-  ReplyError(ref: ReplyRef, payload: Json)
-  /// Discard a client message ref without sending a reply.
+  RejectJoin(reference: JoinReference, reason: Json)
+  /// Reply successfully to a client message reference.
+  ReplyOk(reference: ReplyReference, payload: Json)
+  /// Reply with an error to a client message reference.
+  ReplyError(reference: ReplyReference, payload: Json)
+  /// Discard a client message reference without sending a reply.
   ///
   /// Use this when the application intentionally will not answer a referenced
   /// message. It releases the retained socket capacity and permits later reuse
-  /// of the same wire ref. A completed or stale ref has no effect.
-  DiscardReply(ref: ReplyRef)
+  /// of the same wire `ref`. A completed or stale reference has no effect.
+  DiscardReply(reference: ReplyReference)
   /// Push a server-initiated message to this socket on a joined topic.
   /// The runtime drops pushes to topics that this socket has not joined and
   /// logs a warning. Put a `Push` after its topic's `AcceptJoin`.
@@ -253,16 +269,16 @@ pub type Effect {
   KickTopic(topic: String)
 }
 
-// nolint: unused_exports -- public socket helper used by downstream applications
-/// Return a `ReplyOk` effect when the client supplied a ref.
+/// Return a `ReplyOk` effect when the client requested a reply.
 ///
-/// `Message` inputs carry `Option(ReplyRef)` (refless messages expect no
-/// reply) while the `ReplyOk` effect demands a `ReplyRef`, so every handler
-/// that replies conditionally needs this check. This function returns no
-/// effects when the client did not supply a ref.
-pub fn reply_ok(ref: Option(ReplyRef), payload: Json) -> List(Effect) {
-  case ref {
-    Some(reply_ref) -> [ReplyOk(reply_ref, payload)]
+/// `Message` inputs carry `Option(ReplyReference)`, while `ReplyOk` requires
+/// a `ReplyReference`. This helper returns no effects for `None`.
+pub fn reply_ok(
+  reference: Option(ReplyReference),
+  payload: Json,
+) -> List(Effect) {
+  case reference {
+    Some(reply_reference) -> [ReplyOk(reply_reference, payload)]
     None -> []
   }
 }
@@ -386,7 +402,7 @@ pub type WorkerContext {
 @internal
 pub type Worker {
   Worker(
-    on_message: fn(String, Dynamic, Option(ReplyRef)) -> WorkerStep,
+    on_message: fn(String, Dynamic, Option(ReplyReference)) -> WorkerStep,
     on_info: fn(Mail) -> WorkerStep,
     on_presence: Option(fn(presence.Event) -> WorkerStep),
     on_terminate: fn(StopReason) -> List(Effect),

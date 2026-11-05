@@ -1,5 +1,7 @@
 # beryl examples showcase
 
+## Overview
+
 A single Gleam app that bundles the three example demos behind a landing
 page so they can be deployed together as one Fly.io or Railway service:
 
@@ -21,9 +23,10 @@ close to the handler that owns the topic, and each channel keeps its own
 private state per joined topic. There is no socket-wide model, no message
 union, and no hand-written router.
 
-The standalone `cursors`, `chatrooms`, and `collab_docs` servers stay on
-raw `beryl.child_spec` dispatch on purpose: each serves a single topic
-namespace, which the core API already handles directly.
+The standalone cursors server uses raw socket dispatch through
+`cursor/app.cursor_rooms_update`. Chat rooms and collaborative documents
+expose their own handler factories through `chatroom/app.handlers` and
+`collab_document/app.handler`.
 
 Session presence uses the same example-local ETS tracker as the standalone
 apps. Join and leave callbacks mutate it in their runtime turn, while its
@@ -167,3 +170,37 @@ your Railway bill.
 Keep Railway running until the Fly health check and two-tab demos work.
 After switching any links or custom domain to Fly, remove the old Railway
 service if you no longer need it, so it does not keep billing.
+
+## Subdirectories and boundaries
+
+- [Source](./src/README.md): startup composition, router, channel handlers,
+  and timestamp FFI.
+
+## Interface
+
+`src/showcase.gleam:Dependencies`, `handlers`, and `main` expose dependency
+assembly, handler composition, and startup. `gleam.toml` declares sibling
+example packages and shared helpers as path dependencies; they own the
+reused routers, stores, and utilities.
+
+## Invariants
+
+- `src/showcase/router.gleam:handle_request` leaves `/docs` disabled even
+  though `src/showcase/channel/document.gleam:channel` exists.
+- `src/showcase/channel/room.gleam:channel` uses the atomic 20-user cap;
+  `document.gleam:channel` validates tenant tokens and bounds state to 65,536 bytes.
+- `src/showcase.gleam:main` sets frame/message/join rates to 35/30/5 per second
+  and cursor/room/document topic rates to 30/10/10.
+
+## Side effects
+
+`src/showcase.gleam:main` starts presence, document storage, the broadcast hub,
+groups, supervision, and the listener. Channel callbacks change shared
+example state and broadcast events. State remains local to the demo process.
+
+## Verification
+
+From the repository root: `cd examples/showcase && gleam build`.
+The commands in Tests cover Gleam behavior and Playwright; the Playwright
+configuration starts the server on port 8010, independent of the interactive
+port 8000 default.

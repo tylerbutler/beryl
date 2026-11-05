@@ -67,6 +67,7 @@ pub type BinaryEncodeError {
     component: String,
     byte_size: Int
   )
+  PayloadNotByteAligned
 }
 ```
 
@@ -85,6 +86,14 @@ MetadataTooLong(
 
 A metadata component is too large for the protocol's one-byte length.
 
+##### `PayloadNotByteAligned`
+
+```gleam
+PayloadNotByteAligned
+```
+
+The payload contains a partial byte.
+
 ## Functions
 
 <div class="api-entry-anchor" id="api-function-binary_broadcast" aria-hidden="true"></div>
@@ -102,7 +111,8 @@ pub fn binary_broadcast(
 Encode a Phoenix V2 binary broadcast: `(topic, event, payload)`.
 
  Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
- component exceeds the framing's 255-byte limit.
+ component exceeds the framing's 255-byte limit, or
+ `Error(PayloadNotByteAligned)` when the payload contains a partial byte.
 
 <div class="api-entry-anchor" id="api-function-binary_push" aria-hidden="true"></div>
 
@@ -120,7 +130,8 @@ pub fn binary_push(
 Encode a Phoenix V2 binary server push: `(join_ref, topic, event, payload)`.
 
  Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
- component exceeds the framing's 255-byte limit.
+ component exceeds the framing's 255-byte limit, or
+ `Error(PayloadNotByteAligned)` when the payload contains a partial byte.
 
 <div class="api-entry-anchor" id="api-function-binary_reply" aria-hidden="true"></div>
 
@@ -139,7 +150,8 @@ pub fn binary_reply(
 Encode a Phoenix V2 binary reply: `(join_ref, ref, topic, status, payload)`.
 
  Returns `Error(MetadataTooLong(component, byte_size))` when a metadata
- component exceeds the framing's 255-byte limit.
+ component exceeds the framing's 255-byte limit, or
+ `Error(PayloadNotByteAligned)` when the payload contains a partial byte.
 
 <div class="api-entry-anchor" id="api-function-channel_close" aria-hidden="true"></div>
 

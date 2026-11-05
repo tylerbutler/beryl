@@ -5,6 +5,7 @@
     with_capture/1,
     with_race_runtime/5,
     with_actor_monitor/2,
+    inject_router_message/2,
     catch_injected_assertion/1,
     cleanup_baseline/1,
     expect_connected/1,
@@ -86,6 +87,14 @@ with_actor_monitor(Actor, Action) ->
     try Action(Monitor)
     after erlang:demonitor(Monitor, [flush])
     end.
+
+%% Test-only modeled boundary: Gleam constructs a typed runtime.Message.
+%% gleam@erlang@process:send/2 wraps named-subject messages as {Name, Message}.
+%% Send to the exact PID, never a possibly re-registered replacement router.
+inject_router_message(Router, Message) ->
+    {registered_name, Name} = process_info(Router, registered_name),
+    Router ! {Name, Message},
+    nil.
 
 %% Catch only the deliberate should.equal failure, not scenario/cleanup bugs.
 catch_injected_assertion(Action) ->
