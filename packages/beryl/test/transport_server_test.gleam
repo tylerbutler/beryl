@@ -335,9 +335,9 @@ fn with_outbound_frame(
   let codec =
     codec.new(
       decode_text: wire.decode_message,
-      encode_reply: fn(_, _, _, _, _) { frame },
-      encode_push: fn(_, _, _) { frame },
-      encode_heartbeat_reply: fn(_) { frame },
+      encode_reply: fn(_, _, _, _, _) { Ok(frame) },
+      encode_push: fn(_, _, _) { Ok(frame) },
+      encode_heartbeat_reply: fn(_) { Ok(frame) },
     )
   let assert Ok(sockets) =
     app_test_helper.start_app(
