@@ -41,6 +41,7 @@ Server-agnostic WebSocket transport infrastructure.
 <li><a href="#api-type-outboundconfigerror"><code>OutboundConfigError</code></a></li>
 <li><a href="#api-type-sendrequest"><code>SendRequest</code></a></li>
 <li><a href="#api-type-transportconfig"><code>TransportConfig</code></a></li>
+<li><a href="#api-type-writeerror"><code>WriteError</code></a></li>
   </ul>
 </section>
 <section class="api-symbol-index__group">
@@ -238,6 +239,31 @@ Configuration for a WebSocket transport.
  The `body` parameter is the server's request body type. The same
  configuration works with any transport built on `gleam/http` requests.
 
+<div class="api-entry-anchor" id="api-type-writeerror" aria-hidden="true"></div>
+
+### `WriteError`
+
+```gleam
+pub type WriteError {
+  WriteFailed(reason: String)
+}
+```
+
+An error from writing an outbound WebSocket frame.
+
+#### Constructors
+
+##### `WriteFailed`
+
+```gleam
+WriteFailed(reason: String)
+```
+
+A safe description of the transport's write error.
+
+ This reason is logged. Use a socket-error formatter that returns only
+ error descriptions, never frame contents or connection metadata.
+
 ## Functions
 
 <div class="api-entry-anchor" id="api-function-close_connection" aria-hidden="true"></div>
@@ -303,7 +329,7 @@ Create a default transport config with no connect hook.
 pub fn finish_outbound_write(
   ConnectionState,
   Int,
-  Bool
+  Result(Nil, WriteError)
 ) -> FrameDisposition
 ```
 
@@ -314,6 +340,10 @@ Complete one outbound write.
  connection as closed, logs the failure, and tells the transport to stop.
  Pass the `bytes` from the corresponding `SendRequest` unchanged; do not
  recompute it from the logical frame size.
+
+ Pass `Ok(Nil)` for a successful write, or map the native transport error
+ to `Error(WriteFailed(reason))`. The reason must contain only a safe error
+ description; it is logged even when payload logging is disabled.
 
 <div class="api-entry-anchor" id="api-function-handle_binary_frame" aria-hidden="true"></div>
 
