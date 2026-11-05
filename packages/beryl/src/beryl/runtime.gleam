@@ -183,10 +183,8 @@ pub type Message(message) {
   /// A socket actor finished its teardown and is about to stop; the
   /// router drops it from the index and the actor table.
   SocketClosed(socket_id: String, actor: Pid)
-  /// The router died. Every socket actor monitors the router and stops on
-  /// its `Down`, so router death takes the whole socket population with it
-  /// (and the transports, which monitor the same pid, close the
-  /// connections).
+  /// The router died. The socket actor stops between callback turns; its
+  /// guardian also enforces router ownership when a callback blocks.
   RouterDown
   /// A socket actor exited without reporting `SocketClosed` first — it
   /// crashed, or was killed. The router sweeps its index and actor-table
@@ -915,6 +913,7 @@ fn start_socket_actor(
   admission_reservation admission_reservation: work_queue.Reservation,
 ) -> Result(actor.Started(Inbox(message)), actor.StartError) {
   actor.new_with_initialiser(5000, fn(subject) {
+    guard_socket_owner(router_pid, process.self())
     use _ <- result.try(
       work_queue.attach_cleanup(router_inbox, admission_reservation, fn() {
         process.send(subject, StopSocketActor)
@@ -986,10 +985,8 @@ fn start_socket_actor(
         stopping: False,
         role: SocketActorRole(router:, phase: Booting, workers:),
       )
-    // Router death must take its socket actors with it: each actor
-    // monitors the router and stops on its `Down`, while a socket crash
-    // reaches the router through the router's own monitor instead of a
-    // link.
+    // Keep cooperative cleanup between turns; the guardian can kill this
+    // actor even while an application callback blocks.
     let monitor = process.monitor(router_pid)
     schedule_heartbeat_check(subject, config)
     schedule_boot_check(subject)
@@ -1009,6 +1006,33 @@ fn start_socket_actor(
   })
   |> actor.on_message(handle_message)
   |> actor.start
+}
+
+type SocketOwnerExit {
+  SocketOwnerRouterExited
+  SocketOwnerActorExited
+}
+
+fn guard_socket_owner(router_pid: Pid, socket_pid: Pid) -> Nil {
+  let _guardian =
+    process.spawn_unlinked(fn() {
+      let router_monitor = process.monitor(router_pid)
+      let socket_monitor = process.monitor(socket_pid)
+      let exited =
+        process.new_selector()
+        |> process.select_specific_monitor(router_monitor, fn(_) {
+          SocketOwnerRouterExited
+        })
+        |> process.select_specific_monitor(socket_monitor, fn(_) {
+          SocketOwnerActorExited
+        })
+        |> process.selector_receive_forever
+      case exited {
+        SocketOwnerRouterExited -> process.kill(socket_pid)
+        SocketOwnerActorExited -> Nil
+      }
+    })
+  Nil
 }
 
 /// Check at half the staleness window; `beryl.validate_config` guarantees the
