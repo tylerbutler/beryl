@@ -142,7 +142,8 @@ disconnect_reason(normal_disconnect) -> normal;
 disconnect_reason(heartbeat_timeout) -> heartbeat_timeout;
 disconnect_reason(shutdown_disconnect) -> shutdown;
 disconnect_reason(callback_disconnect) -> callback_error;
-disconnect_reason(admission_disconnect) -> admission_rejected.
+disconnect_reason(admission_disconnect) -> admission_rejected;
+disconnect_reason(encoding_disconnect) -> encoding_error.
 
 broadcast_origin(local) -> local;
 broadcast_origin(remote) -> remote.

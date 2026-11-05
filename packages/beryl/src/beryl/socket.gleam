@@ -27,6 +27,7 @@
 
 import beryl/overload.{type AdmissionError}
 import beryl/presence.{type PresenceEntry}
+import beryl/wire/codec
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/reference.{type Reference}
 import gleam/json.{type Json}
@@ -151,6 +152,9 @@ pub type StopReason {
   Errored(String)
   /// A local queue or callback result exceeded its admission budget.
   AdmissionRejected(AdmissionError)
+  /// An outbound codec callback could not encode a frame. The runtime closes
+  /// the socket rather than sending a replacement frame or retrying the codec.
+  EncodingFailed(codec.EncodeError)
 }
 
 /// Everything the runtime delivers to the app's `update` function.
