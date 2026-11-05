@@ -173,8 +173,8 @@ fn with_server(
       encode_reply: codec.encode_reply(phoenix),
       encode_push: fn(_, event, _) {
         case event {
-          "binary" -> codec.BinaryFrame(binary)
-          _ -> codec.TextFrame("text reply")
+          "binary" -> Ok(codec.BinaryFrame(binary))
+          _ -> Ok(codec.TextFrame("text reply"))
         }
       },
       encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
