@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Dependencies"
+body = "Constrain lattice_presence to the 2.0 patch line and verify exact-tag removal and owner-only snapshot compatibility."

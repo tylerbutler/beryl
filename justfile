@@ -23,9 +23,9 @@ deps-gleam:
     node scripts/prepare-gleam-deps.mjs
     node website/scripts/check-snippets.mjs --deps-only
 
-# Check dependency preparation and cache reuse
+# Check dependency preparation, cache reuse, and artifact transfer
 deps-test:
-    node --test scripts/prepare-gleam-deps.test.mjs
+    node --test scripts/prepare-gleam-deps.test.mjs scripts/archive-gleam-deps.test.mjs
 
 # === BUILD ===
 
@@ -45,14 +45,18 @@ test *PACKAGES:
     @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) cd packages/beryl && gleam test -- --tag serial ;; esac
     @packages='{{ PACKAGES }}'; case " $packages " in "  "|*" beryl "*) just test-distributed ;; esac
 
-# Real-node PubSub and presence recovery, including the 60-second retirement policy
+# Presence dependency compatibility and real-node recovery, including retirement
 test-distributed:
-    cd packages/beryl && gleam build && erl +S 4:4 -noshell -pa build/dev/erlang/*/ebin -eval 'case eunit:test(beryl_presence_distributed_test, [verbose]) of ok -> halt(0); _ -> halt(1) end.'
+    cd packages/beryl && gleam build && erl +S 4:4 -noshell -pa build/dev/erlang/*/ebin -eval 'case eunit:test([beryl_presence_state_compatibility_test, beryl_presence_distributed_test], [verbose]) of ok -> halt(0); _ -> halt(1) end.'
 
 # Build and run the same portable protocol cases on both targets
 protocol-test:
     trellis run build --strict --target all beryl_protocol
     trellis run test --target all beryl_protocol
+
+# Check that consumers can own top-level heirloom Gleam and Erlang modules
+namespace-test:
+    cd scripts/fixtures/heirloom_namespace && gleam format --check src && gleam clean && gleam build --warnings-as-errors && gleam run
 
 # Test Phoenix framing and the Durable Object host in the Cloudflare runtime
 portable-host-test:
@@ -152,8 +156,12 @@ site-reference: docs
 site-reference-test:
     pnpm -C website test:reference
 
-# Type-check every Gleam snippet in the docs against the real packages
-site-snippets: gleam-docs
+# Test snippet extraction and strict compilation regressions
+site-snippets-test:
+    pnpm -C website test:snippets
+
+# Type-check documentation fragments and complete published quick starts
+site-snippets: gleam-docs site-snippets-test
     pnpm -C website check:snippets
 
 # Build website

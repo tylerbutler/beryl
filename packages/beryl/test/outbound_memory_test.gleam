@@ -56,9 +56,9 @@ fn start_app(
   let codec =
     codec.new(
       decode_text: wire.decode_message,
-      encode_reply: fn(_, _, _, _, _) { frame(kind) },
-      encode_push: fn(_, _, _) { frame(kind) },
-      encode_heartbeat_reply: fn(_) { frame(kind) },
+      encode_reply: fn(_, _, _, _, _) { Ok(frame(kind)) },
+      encode_push: fn(_, _, _) { Ok(frame(kind)) },
+      encode_heartbeat_reply: fn(_) { Ok(frame(kind)) },
     )
   let assert Ok(sockets) =
     app_test_helper.start_app(

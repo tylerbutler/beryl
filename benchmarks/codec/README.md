@@ -5,6 +5,64 @@ Measure the cost of beryl's Phoenix codec without sockets or actors.
 Benchee. Use the [k6 suite](../../load/README.md) for end-to-end latency,
 contention, and capacity.
 
+## Overview
+
+This optional Erlang-target package keeps codec measurement dependencies out
+of released packages. The [development runner](./dev/README.md) owns the
+measurement matrix; its [fixture module](./dev/beryl_codec_bench/README.md)
+owns input construction and correctness checks. The runner and fixtures use
+Gleam; Elixir enters through the external Glychee/Benchee toolchain.
+[gleam.toml:name] [gleam.toml:dev-dependencies]
+[dev/beryl_codec_bench.gleam:main] [manifest.toml:benchee]
+
+## Subdirectories and boundaries
+
+- [Development code](./dev/README.md) contains the measurement entry point
+  and delegates fixture construction/validation to its child module.
+  [dev/beryl_codec_bench.gleam:main]
+  [dev/beryl_codec_bench/fixture.gleam:preflight]
+
+## Interface
+
+- Package `beryl_codec_bench` depends on the local beryl package,
+  `gleam_stdlib`, and `gleam_json`; Glychee and the test runners are
+  development dependencies. [gleam.toml:dependencies]
+  [gleam.toml:dev-dependencies]
+- `beryl_codec_bench.main()` is the measurement entry point.
+  See the [runner contract](./dev/README.md) for its boundary.
+  [dev/beryl_codec_bench.gleam:main]
+
+## Invariants
+
+- Preflight checks precede timed measurements; comparisons must use matching
+  operations and input labels. The runner supplies one worker and the fixed
+  measurement phases described below. [dev/beryl_codec_bench.gleam:main]
+- Default workspace build, check, dependency preparation, test, lint, docs,
+  and release exclude benchmarks. Formatting and cleanup still include them.
+  Use the dedicated recipes for this package.
+  [../../gleam.toml:tools.trellis.exclude] [justfile:bench-codec-check]
+
+## Side effects
+
+- `just bench-codec-deps` installs the optional Elixir toolchain and Hex,
+  downloads dependencies, and updates local dependency/build state.
+  [justfile:bench-codec-deps]
+- `just bench-codec-check` writes build outputs and runs fixture tests;
+  `just bench-codec` prints provenance and consumes CPU and memory while
+  measuring codec operations. Neither recipe starts a load-test server.
+  [justfile:bench-codec-check] [justfile:bench-codec]
+  [dev/beryl_codec_bench.gleam:main]
+
+## Verification
+
+From the repository root, use `just bench-codec-check` after
+`just bench-codec-deps`. This optional check runs formatting validation,
+a warnings-as-errors build, and fixture tests without measurements.
+It is separate from root `just test` and CI. Setup downloads packages;
+the measurement recipe is not a documentation check.
+[justfile:bench-codec-deps] [justfile:bench-codec-check]
+[../../gleam.toml:tools.trellis.exclude.test]
+
 ## Setup and commands
 
 Install the root mise toolchain first. The dependency-preparation script

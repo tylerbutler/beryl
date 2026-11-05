@@ -99,7 +99,7 @@ remain bounded:
 
 | Key | Values |
 |---|---|
-| `transport` | `mist`, `ewe` |
+| `transport` | `mist`, `ewe`, `custom` |
 | upgrade `outcome` | `success`, `origin_rejected`, `version_rejected`, `auth_rejected`, `capacity_rejected`, `handshake_failed` |
 | frame `outcome` | `routed`, `oversized`, `rate_limited`, `decode_failed` |
 | join `outcome` | `accepted`, `handler_rejected`, `no_handler`, `invalid_topic`, `topic_limit`, `rate_limited`, `callback_error`, `socket_missing` |
@@ -107,10 +107,42 @@ remain bounded:
 | `frame_type` | `text`, `binary` |
 | message `kind` | `text`, `binary`, `info`, `presence`, `heartbeat` |
 | `callback_result` | `not_applicable`, `no_reply`, `reply`, `reply_error`, `push`, `stop`, `failed` |
-| disconnect `reason` | `normal`, `heartbeat_timeout`, `shutdown`, `callback_error` |
+| disconnect `reason` | `normal`, `heartbeat_timeout`, `shutdown`, `callback_error`, `admission_rejected`, `socket_process_down`, `encoding_error` |
 | broadcast `origin` | `local`, `remote` |
 
 Map future unknown values to an `"unknown"` label. Do not crash the handler.
+
+Third-party transports construct an opaque context with
+`transport.telemetry(sockets, transport.Custom)` and pass it to the shared
+server pipeline. All third-party implementations share the fixed `custom`
+label; the API does not accept transport-name strings. This keeps transport
+label cardinality bounded to three values and preserves the bundled `mist`
+and `ewe` labels.
+
+Custom contexts use the socket system's telemetry setting. With
+`beryl.with_telemetry`, they emit the same upgrade and inbound-frame events
+as bundled transports. Without it, shared setup and routing still work,
+but transport telemetry operations avoid clock calls and event construction.
+
+### Socket lifetimes
+
+The router emits both socket lifecycle events. After it emits `connected`,
+it emits one `disconnected` for an orderly close, socket actor failure, or
+forced shutdown drain. Failed or abandoned admission before `connected`
+produces neither event. Disabling telemetry suppresses both events.
+
+For orderly teardown, `duration` covers admission through teardown completion,
+and `joined_channels` counts memberships at the start of teardown. For a socket
+actor failure (`socket_process_down`) or forced drain (`shutdown`), `duration`
+covers admission through the router's cleanup observation. In those two cases,
+`joined_channels` counts memberships in the router's index at that observation.
+In-flight index changes can lag the actor, and partial teardown can have removed
+memberships. These measurements keep the same numeric keys and native duration
+unit; they do not substitute zero for missing actor state.
+
+Use snapshots for current-count gauges. Whole-node or router failure, or a
+failing telemetry handler, can prevent lifecycle event delivery, so subtracting
+disconnect counts from connect counts cannot provide a reliable current count.
 
 ## Export metrics to Prometheus or Grafana
 

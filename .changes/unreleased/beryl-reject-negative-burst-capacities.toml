@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Reject negative burst capacities for enabled rate limits with ConfigError.InvalidRateLimitBurst instead of silently dropping all traffic. Zero bursts still default to the rate; disabled limits still ignore bursts. Add a beryl.InvalidRateLimitBurst(burst) branch to exhaustive matches on beryl.ConfigError."

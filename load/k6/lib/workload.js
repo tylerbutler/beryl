@@ -19,13 +19,12 @@ export function broadcastGroupTopic(
   return `${baseTopic}:generator-${loadGeneratorIndex}:group-${group}`;
 }
 
-export function presenceDiffContains(payload, kind, key) {
-  const entries = kind === "join" ? payload?.joins : payload?.leaves;
-  return (
-    entries !== null &&
-    typeof entries === "object" &&
-    Object.prototype.hasOwnProperty.call(entries, key)
-  );
+export function presenceSnapshotMatches(payload, kind, key) {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+  const present = Object.prototype.hasOwnProperty.call(payload, key);
+  return kind === "join" ? present : kind === "leave" && !present;
 }
 
 export function replyContainsMarker(response, marker) {

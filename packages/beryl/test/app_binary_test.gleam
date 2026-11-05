@@ -15,14 +15,19 @@ import gleeunit/should
 /// The Phoenix framing minus its binary decoder, so raw binary frames use
 /// the per-topic fan-out path.
 fn text_only_codec() -> codec.Codec {
+  let phoenix = wire.phoenix_codec()
   codec.new(
     decode_text: wire.decode_message,
-    encode_reply: wire.reply_json,
-    encode_push: wire.push,
-    encode_heartbeat_reply: wire.heartbeat_reply,
+    encode_reply: codec.encode_reply(phoenix),
+    encode_push: codec.encode_push(phoenix),
+    encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
   )
-  |> codec.with_close_encoder(wire.channel_close)
-  |> codec.with_error_encoder(wire.channel_error)
+  |> codec.with_close_encoder(fn(join_ref, topic) {
+    Ok(wire.channel_close(join_ref, topic))
+  })
+  |> codec.with_error_encoder(fn(join_ref, topic) {
+    Ok(wire.channel_error(join_ref, topic))
+  })
 }
 
 fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {

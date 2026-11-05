@@ -1,10 +1,5 @@
-//// Compiles the channel quick-start from `packages/beryl/README.md` so the
-//// first code a new user copies
-//// cannot drift from the real API.
-////
-//// One deliberate deviation from the published text: the README's entry
-//// point is `pub fn main()`, which is the unitest runner's name here, so
-//// its body lives in the test function below instead.
+//// Exercises a standalone counter channel and its supervision tree.
+//// The documentation snippet checker compiles the actual published quick starts.
 
 import beryl
 import beryl/channel
@@ -30,7 +25,7 @@ pub fn room() -> channel.Handler {
   })
 }
 
-/// The README's `main`, compiled and run.
+/// Start and stop a supervised counter channel.
 pub fn readme_quick_start_compiles_and_starts_test() -> Nil {
   let assert Ok(#(sockets, child_specification)) =
     channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [

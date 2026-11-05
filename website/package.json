@@ -31,7 +31,8 @@
 		"test:interactive": "cd interactive && gleam test --target javascript",
 		"test:e2e": "playwright test --config playwright.config.js",
 		"test:demos": "playwright test --config playwright.config.ts",
-		"test:reference": "node --test scripts/generate-reference.test.mjs"
+		"test:reference": "node --test scripts/generate-reference.test.mjs",
+		"test:snippets": "node scripts/check-snippets.mjs --deps-only && node --test scripts/check-snippets.test.mjs"
 	},
 	"dependencies": {
 		"@astrojs/check": "^0.9.12",

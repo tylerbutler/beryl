@@ -37,7 +37,11 @@ pub opaque type ConnectionPermit {
 ///
 /// Pass the real socket peer IP. Do not pass a client-supplied address such as
 /// `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
-/// per-system limit on this node is already reached.
+/// per-system limit on this node is already reached, its per-IP rate is
+/// exhausted, or bounded pending admission fails. The pending queue includes
+/// reserved cancellation work; configure it with
+/// `beryl.with_connection_queue_limits`. The call waits at most 100 ms after
+/// publication. Full or oversized requests fail without entering the mailbox.
 pub fn acquire_connection_slot(
   sockets: Sockets,
   ip: String,
@@ -55,7 +59,8 @@ pub fn acquire_connection_slot(
 /// that monitor without leaving the reservation unowned, so either process
 /// dying reclaims the slot at the correct lifecycle stage. Returns
 /// `Error(Nil)` when the reservation was already reclaimed or the limiter
-/// cannot acknowledge the transfer. The connection must close on error.
+/// cannot acknowledge the transfer. Failure cancels the permit; the connection
+/// must close on error.
 pub fn bind_connection_slot(permit: ConnectionPermit) -> Result(Nil, Nil) {
   connection_limit.bind_optional(permit.inner)
 }
@@ -73,9 +78,13 @@ pub fn max_inbound_frame_bytes(sockets: Sockets) -> Int {
 // --- Telemetry ---
 
 /// WebSocket transport implementations in beryl's telemetry schema.
+///
+/// The fixed labels are `mist`, `ewe`, and `custom`. All third-party
+/// transports use `Custom`; implementation names cannot become metric labels.
 pub type TelemetryTransport {
   Mist
   Ewe
+  Custom
 }
 
 /// Closed terminal outcomes for a matched WebSocket upgrade.
@@ -106,12 +115,18 @@ pub type FrameOutcome {
 /// A low-cost transport telemetry context.
 ///
 /// When telemetry is disabled, operations avoid VM clock calls and event
-/// construction.
+/// construction. All transport identities use the socket system's telemetry
+/// setting.
 pub opaque type Telemetry {
   Telemetry(enabled: Bool, transport: telemetry.Transport)
 }
 
 /// Create a telemetry context from the channels configuration.
+///
+/// Third-party transports use `telemetry(channels, Custom)` with the public
+/// shared server pipeline. Enabled events use the fixed `custom` transport
+/// label. Disabled contexts still support shared setup and frame routing
+/// without emitting transport events.
 pub fn telemetry(
   channels: Sockets,
   transport: TelemetryTransport,
@@ -121,6 +136,7 @@ pub fn telemetry(
     transport: case transport {
       Mist -> telemetry.Mist
       Ewe -> telemetry.Ewe
+      Custom -> telemetry.Custom
     },
   )
 }
@@ -188,6 +204,10 @@ pub fn telemetry_frame_stop(
 }
 
 /// Announce that a socket's connection has closed.
+///
+/// Previously admitted inbound work drains before `Closed`, including work
+/// waiting in the router. Existing limits, faults, timeouts, and shutdown still
+/// apply. This does not confirm delivery of replies to the closed connection.
 pub fn socket_disconnected(
   sockets sockets: Sockets,
   socket_id socket_id: String,

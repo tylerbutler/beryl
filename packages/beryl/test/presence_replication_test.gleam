@@ -477,6 +477,7 @@ pub fn remote_callback_panic_is_reported_and_merge_is_published_test() -> Nil {
   |> should.equal(Ok(owner_before))
 
   test_helper.stop_capture()
+  // The serial lane reuses the caller: unlink each actor before killing it.
   test_helper.kill_presence(tracker1)
   test_helper.kill_presence(tracker2)
 }

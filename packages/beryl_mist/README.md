@@ -8,6 +8,45 @@ real-time sockets.
 > beryl is not yet 1.0. The API is unstable, features may be removed in minor
 > releases, and quality should not be considered production-ready.
 
+## Overview
+
+The adapter exposes Mist request handlers and delegates shared admission,
+configuration, and frame policy to beryl's public transport server
+(`src/beryl_mist.gleam:upgrade`, `src/beryl_mist.gleam:handler`).
+
+## Interface
+
+- `upgrade(request, channels, config, next)` attempts a WebSocket upgrade
+  (`src/beryl_mist.gleam:upgrade`).
+- `handler(channels, config, http_fallback)` combines WebSocket and HTTP
+  handling (`src/beryl_mist.gleam:handler`).
+- Callers use the imported `beryl/transport/server.TransportConfig`.
+  [Source contract](./src/README.md) describes Mist callbacks and lifecycle.
+- Runtime dependencies include beryl, Mist, and glisten
+  (`gleam.toml:dependencies`).
+
+## Invariants
+
+- Upgrade/fallback routing and frame handling delegate to the shared server.
+  Connection initialization uses its configured codec
+  (`src/beryl_mist.gleam:handler`, `src/beryl_mist.gleam:do_upgrade`,
+  `src/beryl_mist.gleam:on_message`).
+- `Closed`, `Shutdown`, and server close requests stop the connection; outbound
+  send results pass through shared write accounting
+  (`src/beryl_mist.gleam:on_message`).
+
+## Side effects
+
+Mist manages WebSocket lifecycle and writes frames. Shared server calls
+admit/register/route/clean up the connection. Force-close closes the glisten
+transport; an already-closed or not-connected result counts as success
+(`src/beryl_mist.gleam:do_upgrade`, `src/beryl_mist.gleam:on_message`,
+`src/beryl_mist.gleam:force_close`).
+
+## Verification
+
+From the repository root: `just test beryl_mist`.
+
 ## Installation
 
 beryl packages are currently distributed from GitHub, not Hex:

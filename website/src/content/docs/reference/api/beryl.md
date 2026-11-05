@@ -62,13 +62,29 @@ beryl: type-safe real-time communication
            Join("room:" <> _, _payload, reference) ->
              Next(model, [AcceptJoin(reference, option.None)])
            Message(topic, "new_msg", payload, reference) ->
-             Next(model, [
-               Broadcast(topic, "new_msg", payload),
-               ..case reference {
-                 option.Some(reference) -> [socket.DiscardReply(reference)]
-                 option.None -> []
+             case wire.dynamic_to_json(payload) {
+               Ok(payload) -> {
+                 let effects = [Broadcast(topic, "new_msg", payload)]
+                 let effects = case reference {
+                   option.Some(reference) ->
+                     [socket.DiscardReply(reference), ..effects]
+                   option.None -> effects
+                 }
+                 Next(model, effects)
                }
-             ])
+               Error(Nil) -> {
+                 let effects = case reference {
+                   option.Some(reference) -> [
+                     socket.ReplyError(
+                       reference,
+                       json.string("Invalid JSON payload"),
+                     ),
+                   ]
+                   option.None -> []
+                 }
+                 Next(model, effects)
+               }
+             }
            Message(_, _, _, option.Some(reference)) ->
              Next(model, [socket.DiscardReply(reference)])
            Message(_, _, _, option.None)
@@ -83,7 +99,9 @@ beryl: type-safe real-time communication
      |> static_supervisor.start()
 
    // Broadcast to all subscribers of a topic
-   beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
+   let assert Ok(Nil) =
+     beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
+   Nil
  }
  ```
 
@@ -112,6 +130,7 @@ beryl: type-safe real-time communication
 <li><a href="#api-function-validate_config"><code>validate_config</code></a></li>
 <li><a href="#api-function-with_channel_rate"><code>with_channel_rate</code></a></li>
 <li><a href="#api-function-with_channel_rate_max_keys_per_socket"><code>with_channel_rate_max_keys_per_socket</code></a></li>
+<li><a href="#api-function-with_connection_queue_limits"><code>with_connection_queue_limits</code></a></li>
 <li><a href="#api-function-with_connection_rate_per_ip"><code>with_connection_rate_per_ip</code></a></li>
 <li><a href="#api-function-with_effect_limits"><code>with_effect_limits</code></a></li>
 <li><a href="#api-function-with_frame_rate"><code>with_frame_rate</code></a></li>
@@ -161,6 +180,7 @@ Configuration for an app-side socket runtime.
 pub type ConfigError {
   HeartbeatTimeoutTooLow(minimum: Int)
   RateLimitTooHigh(maximum: Int)
+  InvalidRateLimitBurst(burst: Int)
   InvalidTopicPattern(
     pattern: String,
     reason: topic.TopicError
@@ -197,6 +217,16 @@ RateLimitTooHigh(maximum: Int)
 A configured per-second rate was above the largest value that can still
  consume at least one token. The wrapped `Int` is the maximum accepted
  rate.
+
+##### `InvalidRateLimitBurst`
+
+```gleam
+InvalidRateLimitBurst(burst: Int)
+```
+
+An enabled rate limit had a negative burst capacity. Use 0 to default
+ to its per-second rate, or a positive capacity. `burst` is the rejected
+ value. Disabled limits ignore their burst capacity.
 
 ##### `InvalidTopicPattern`
 
@@ -503,8 +533,10 @@ Stop a beryl system.
  You can call `stop` more than once or use a handle whose system never
  started. In these cases, it returns `Error(NotRunning)` and does not crash.
  It returns `Error(StopTimeout)` if the runtime does not drain or the
- subtree does not terminate within the shutdown window. After a successful stop
- the handle should no longer be used.
+ subtree does not terminate within the shutdown window. A timeout does not
+ cancel shutdown, and no late completion message remains in the caller's
+ mailbox after `stop` returns. After a successful stop the handle should no
+ longer be used.
 
 <div class="api-entry-anchor" id="api-function-validate_config" aria-hidden="true"></div>
 
@@ -517,8 +549,10 @@ pub fn validate_config(Config) -> Result(Nil, ConfigError)
 Validate a [`Config`](#config) without starting any process.
 
  This checks that `heartbeat_timeout_ms` is at least 2, that every
- configured rate limit is representable, and that every per-topic
- rate-limit pattern is valid.
+ enabled rate limit is representable and has a non-negative burst, and
+ that every per-topic rate-limit pattern is valid. A burst of 0 defaults
+ to the per-second rate. Non-positive rates disable limiting and ignore
+ their bursts.
 
 <div class="api-entry-anchor" id="api-function-with_channel_rate" aria-hidden="true"></div>
 
@@ -534,9 +568,14 @@ pub fn with_channel_rate(
 
 Configure per-channel message rate limiting.
 
- The limiter applies only after a socket has joined a topic. Active
- per-socket channel buckets are capped by default; use
+ The limiter applies only after a socket has joined a topic. Buckets remain
+ until socket teardown; leaving or rejoining does not reset their allowance.
+ Per-socket channel buckets are capped by default; use
  `with_channel_rate_max_keys_per_socket` to adjust the cap.
+
+ A non-positive `per_second` disables the limit and ignores `burst`.
+ When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+ by `validate_config` with `InvalidRateLimitBurst`.
 
 <div class="api-entry-anchor" id="api-function-with_channel_rate_max_keys_per_socket" aria-hidden="true"></div>
 
@@ -549,9 +588,34 @@ pub fn with_channel_rate_max_keys_per_socket(
 ) -> Config
 ```
 
-Configure the maximum active per-channel rate-limit buckets per socket.
+Configure the maximum retained per-channel rate-limit buckets per socket.
 
- Values <= 0 disable the cap. The default is 1000.
+ Buckets for previously joined topics count toward this cap until socket
+ teardown. A message that needs a new bucket after the cap is reached is
+ dropped. Values <= 0 disable the cap. The default is 1000.
+
+<div class="api-entry-anchor" id="api-function-with_connection_queue_limits" aria-hidden="true"></div>
+
+### `with_connection_queue_limits`
+
+```gleam
+pub fn with_connection_queue_limits(
+  Config,
+  overload.Limits
+) -> Config
+```
+
+Bound pending connection-limiter work independently of live connections.
+
+ Defaults to 256 items and 8 MiB of accounted payload, including executing
+ work. Each acquire reserves two items: its request and its completion or
+ cancellation. Binds reserve one item. Use at least two items to admit an
+ acquire. Cleanup uses its reserved capacity even when the queue is full.
+
+ This applies when a connection ceiling or per-IP connection rate is enabled.
+ Saturation, an oversized peer IP, timeout, or limiter unavailability returns
+ `Error(Nil)` from `transport.acquire_connection_slot`; transports reject the
+ upgrade with HTTP 429. Byte accounting is structural, not a BEAM heap limit.
 
 <div class="api-entry-anchor" id="api-function-with_connection_rate_per_ip" aria-hidden="true"></div>
 
@@ -570,7 +634,9 @@ Configure a per-IP connection-attempt rate limit.
  Each WebSocket upgrade attempt that passes the concurrent connection
  ceilings consumes one token before authentication and handshake setup. A
  non-positive `per_second` disables the limit. A `burst` of 0 uses
- `per_second` as the burst capacity.
+ `per_second` as the burst capacity. When enabled, a negative burst is
+ rejected by `validate_config` with `InvalidRateLimitBurst`.
+ Disabled limits ignore `burst`.
 
  Unlike per-connection frame and message buckets, this allowance is keyed by
  the real socket peer IP and lives in beryl's supervised connection limiter.
@@ -613,6 +679,10 @@ Configure per-connection frame-rate limiting at the transport edge.
  An over-rate heartbeat is shed before it can refresh the socket's heartbeat
  deadline, so a sustained flood is eventually closed by heartbeat eviction.
 
+ A non-positive `per_second` disables the limit and ignores `burst`.
+ When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+ by `validate_config` with `InvalidRateLimitBurst`.
+
 <div class="api-entry-anchor" id="api-function-with_heartbeat" aria-hidden="true"></div>
 
 ### `with_heartbeat`
@@ -643,6 +713,10 @@ pub fn with_join_rate(
 ```
 
 Configure per-socket join rate limiting.
+
+ A non-positive `per_second` disables the limit and ignores `burst`.
+ When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+ by `validate_config` with `InvalidRateLimitBurst`.
 
 <div class="api-entry-anchor" id="api-function-with_logging" aria-hidden="true"></div>
 
@@ -839,6 +913,10 @@ Configure per-socket decoded message-rate limiting in the runtime.
  heartbeat deadline, so a sustained flood is eventually closed by heartbeat
  eviction. Leave enough rate and burst headroom for legitimate heartbeats.
 
+ A non-positive `per_second` disables the limit and ignores `burst`.
+ When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+ by `validate_config` with `InvalidRateLimitBurst`.
+
 <div class="api-entry-anchor" id="api-function-with_payload_preview_bytes" aria-hidden="true"></div>
 
 ### `with_payload_preview_bytes`
@@ -949,7 +1027,12 @@ Configure a per-topic-pattern message rate limit for an app-dispatch
  use the global `with_channel_rate` limit. The limiter applies
  only after a socket has joined the topic. A non-positive `per_second`
  explicitly disables limiting for matching topics, including any global
- channel limit, and allocates no bucket.
+ channel limit, and allocates no bucket. When enabled, a `burst` of 0 uses
+ `per_second`; a negative burst is rejected by `validate_config` with
+ `InvalidRateLimitBurst`. Disabled limits ignore `burst`.
+
+ Buckets remain until socket teardown. Leaving or rejoining a topic does not
+ reset its allowance.
 
 <div class="api-entry-anchor" id="api-function-with_worker_queue_limits" aria-hidden="true"></div>
 

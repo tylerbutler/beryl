@@ -21,9 +21,13 @@ import gleam/string
 pub fn new() -> codec.Codec {
   codec.new(
     decode_text: fn(_) { Error(codec.InvalidFormat("text unsupported")) },
-    encode_reply: encode_reply,
-    encode_push: encode_push,
-    encode_heartbeat_reply: encode_heartbeat_reply,
+    encode_reply: fn(join_ref, ref, topic, status, response) {
+      Ok(encode_reply(join_ref, ref, topic, status, response))
+    },
+    encode_push: fn(topic, event, payload) {
+      Ok(encode_push(topic, event, payload))
+    },
+    encode_heartbeat_reply: fn(ref) { Ok(encode_heartbeat_reply(ref)) },
   )
   |> codec.with_binary_decoder(decode_binary_frame)
 }

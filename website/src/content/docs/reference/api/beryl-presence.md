@@ -83,6 +83,7 @@ Distributed presence tracking with a CRDT
 <li><a href="#api-type-message"><code>Message</code></a></li>
 <li><a href="#api-type-presence"><code>Presence</code></a></li>
 <li><a href="#api-type-presenceentry"><code>PresenceEntry</code></a></li>
+<li><a href="#api-type-presencetrackerror"><code>PresenceTrackError</code></a></li>
 <li><a href="#api-type-presenceupdateerror"><code>PresenceUpdateError</code></a></li>
   </ul>
 </section>
@@ -220,13 +221,30 @@ A running Presence instance.
  the runtime representation. It contains the actor's stable registered
  subject and the name of its actor-owned ETS read model.
 
+ #### Mutation errors
+
+ Synchronous mutations return `overload.CallError` values:
+
+ - `AdmissionRejected(reason)` when queue lookup or admission fails. The
+   reason is `Unavailable`, `Closed`, `Overloaded(boundary)`, or
+   `ItemTooLarge(boundary)`.
+ - `RequestTimedOut` when the actor does not reply within the configured
+   timeout. Pending work is cancelled, but a running mutation may complete.
+ - `OwnerUnavailable` when the queue owner exits while the caller waits.
+
+ An actor that is already unavailable can cause
+ `AdmissionRejected(Unavailable)` during queue lookup.
+ `track` wraps call errors in `TrackRequestFailed`, and `update` wraps them
+ in `RequestFailed`. `untrack` and `untrack_all` return call errors directly.
+ `track` and `update` also return their documented mutation-specific errors.
+
  #### Node affinity
 
  The stable registered subject and ETS read model are resolved on the
  caller's node. Keep a `Presence` handle on the node where its child
  specification runs. From another BEAM node, synchronous mutations
  (`track`, `update`, `untrack`, and `untrack_all`) cannot reach the owning
- actor and panic as unavailable, while `list`, `get_by_key`, and `count`
+ actor and return typed call errors, while `list`, `get_by_key`, and `count`
  return `Error(Nil)` because the read model is unavailable. Use PubSub
  replication (`with_pubsub`) to share presence state across nodes instead of
  moving the handle itself.
@@ -250,6 +268,37 @@ A presence entry returned from queries and diff accessors.
  This type is transparent. Callers can inspect query results and construct
  entries for `diff`.
 
+<div class="api-entry-anchor" id="api-type-presencetrackerror" aria-hidden="true"></div>
+
+### `PresenceTrackError`
+
+```gleam
+pub type PresenceTrackError {
+  TrackRequestFailed(overload.CallError)
+  TrackInvalidCrdtState
+}
+```
+
+Errors from tracking a presence.
+
+#### Constructors
+
+##### `TrackRequestFailed`
+
+```gleam
+TrackRequestFailed(overload.CallError)
+```
+
+Admission failed, the actor exited, or the request timed out.
+
+##### `TrackInvalidCrdtState`
+
+```gleam
+TrackInvalidCrdtState
+```
+
+The CRDT did not expose its local clock after joining. Nothing changed.
+
 <div class="api-entry-anchor" id="api-type-presenceupdateerror" aria-hidden="true"></div>
 
 ### `PresenceUpdateError`
@@ -258,6 +307,7 @@ A presence entry returned from queries and diff accessors.
 pub type PresenceUpdateError {
   UnknownRef(ref: String)
   RequestFailed(overload.CallError)
+  UpdateInvalidCrdtState
 }
 ```
 
@@ -272,6 +322,22 @@ UnknownRef(ref: String)
 ```
 
 The ref is unknown, already removed, or was not returned by `track`.
+
+##### `RequestFailed`
+
+```gleam
+RequestFailed(overload.CallError)
+```
+
+Queue lookup or admission failed, the actor exited, or the request timed out.
+
+##### `UpdateInvalidCrdtState`
+
+```gleam
+UpdateInvalidCrdtState
+```
+
+The CRDT did not expose its local clock after joining. The old ref remains valid.
 
 ## Functions
 
@@ -472,7 +538,7 @@ pub fn track(
   String,
   String,
   json.Json
-) -> Result(String, overload.CallError)
+) -> Result(String, PresenceTrackError)
 ```
 
 Track a presence in a topic.
@@ -486,9 +552,13 @@ Track a presence in a topic.
  to that actor. The ref is also merged into object metas as `phx_ref` for
  Phoenix client compatibility.
 
- Returns a typed call error on admission failure, owner exit, or timeout
- (5 seconds by default). A timeout cancels pending work, but a running
- mutation may still complete.
+ Returns `TrackRequestFailed` with `AdmissionRejected`, `OwnerUnavailable`,
+ or `RequestTimedOut`. See **Mutation errors** on `Presence` for details.
+ The timeout is 5 seconds by default. A timeout cancels pending work, but a
+ running mutation may still complete.
+
+ `TrackInvalidCrdtState` means the CRDT local-clock lookup failed; no entry,
+ diff, or read-model change was made.
 
 <div class="api-entry-anchor" id="api-function-untrack" aria-hidden="true"></div>
 
@@ -505,7 +575,8 @@ Untrack a specific presence using the ref returned by `track`.
 
  Removing an unknown or already-removed ref is a harmless no-op.
 
- Returns a typed call error on admission failure, owner exit, or timeout.
+ Returns `AdmissionRejected`, `OwnerUnavailable`, or `RequestTimedOut`
+ directly. See **Mutation errors** on `Presence` for details.
  A timeout cancels pending work, but a running mutation may still complete.
 
 <div class="api-entry-anchor" id="api-function-untrack_all" aria-hidden="true"></div>
@@ -525,7 +596,8 @@ Untrack all presences locally tracked for a session, such as when a socket
  Replicated entries owned by another presence actor are not removed, even
  when they use the same session ID.
 
- Returns a typed call error on admission failure, owner exit, or timeout.
+ Returns `AdmissionRejected`, `OwnerUnavailable`, or `RequestTimedOut`
+ directly. See **Mutation errors** on `Presence` for details.
  A timeout cancels pending work, but a running mutation may still complete.
 
 <div class="api-entry-anchor" id="api-function-update" aria-hidden="true"></div>
@@ -550,8 +622,11 @@ Replace the meta of a presence created by `track`.
  or `untrack` calls. Returns `Error(UnknownRef(ref))` when `ref` is
  unknown, already removed, or belongs to the internal runtime.
 
- `RequestFailed` wraps admission, owner-exit, and timeout errors. A timeout
- cancels pending work, but a running mutation may still complete.
+ `RequestFailed` wraps `AdmissionRejected`, `OwnerUnavailable`, or
+ `RequestTimedOut`. See **Mutation errors** on `Presence` for details.
+ A timeout cancels pending work, but a running mutation may still complete.
+ `UpdateInvalidCrdtState` means the CRDT local-clock lookup failed. The old
+ entry and ref remain unchanged, and no diff is emitted.
 
 <div class="api-entry-anchor" id="api-function-with_broadcast_interval" aria-hidden="true"></div>
 
@@ -588,8 +663,10 @@ pub fn with_call_timeout(
 Set the timeout for synchronous presence mutations, in milliseconds.
 
  This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
- functions panic if the actor does not reply before the timeout. The default
- is 5000 ms.
+ functions return `RequestTimedOut` if the actor does not reply in time.
+ `track` wraps it in `TrackRequestFailed`, and `update` in `RequestFailed`.
+ Pending work is cancelled, but running mutations may still complete.
+ The default is 5000 ms.
 
 <div class="api-entry-anchor" id="api-function-with_on_diff" aria-hidden="true"></div>
 

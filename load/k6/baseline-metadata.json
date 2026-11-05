@@ -39,7 +39,7 @@
     "broadcast_ack_event": "broadcast_ack",
     "presence_track_event": "presence_track",
     "presence_untrack_event": "presence_untrack",
-    "presence_delivery_event": "presence_diff"
+    "presence_delivery_event": "presence_list"
   },
   "session": {
     "duration_ms": 10000,

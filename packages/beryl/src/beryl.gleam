@@ -46,13 +46,29 @@
 ////           Join("room:" <> _, _payload, reference) ->
 ////             Next(model, [AcceptJoin(reference, option.None)])
 ////           Message(topic, "new_msg", payload, reference) ->
-////             Next(model, [
-////               Broadcast(topic, "new_msg", payload),
-////               ..case reference {
-////                 option.Some(reference) -> [socket.DiscardReply(reference)]
-////                 option.None -> []
+////             case wire.dynamic_to_json(payload) {
+////               Ok(payload) -> {
+////                 let effects = [Broadcast(topic, "new_msg", payload)]
+////                 let effects = case reference {
+////                   option.Some(reference) ->
+////                     [socket.DiscardReply(reference), ..effects]
+////                   option.None -> effects
+////                 }
+////                 Next(model, effects)
 ////               }
-////             ])
+////               Error(Nil) -> {
+////                 let effects = case reference {
+////                   option.Some(reference) -> [
+////                     socket.ReplyError(
+////                       reference,
+////                       json.string("Invalid JSON payload"),
+////                     ),
+////                   ]
+////                   option.None -> []
+////                 }
+////                 Next(model, effects)
+////               }
+////             }
 ////           Message(_, _, _, option.Some(reference)) ->
 ////             Next(model, [socket.DiscardReply(reference)])
 ////           Message(_, _, _, option.None)
@@ -67,7 +83,9 @@
 ////     |> static_supervisor.start()
 ////
 ////   // Broadcast to all subscribers of a topic
-////   beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
+////   let assert Ok(Nil) =
+////     beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
+////   Nil
 //// }
 //// ```
 
@@ -178,8 +196,8 @@ pub opaque type Config {
     channel_rate: Int,
     /// Per-channel message burst capacity (0 = defaults to channel_rate)
     channel_burst: Int,
-    /// Maximum active per-channel rate-limit buckets per socket.
-    /// Values <= 0 disable the cap.
+    /// Maximum retained per-channel rate-limit buckets per socket.
+    /// Buckets remain until socket teardown. Values <= 0 disable the cap.
     channel_rate_max_keys_per_socket: Int,
     /// Maximum byte length for client-supplied topic strings (default: 256).
     /// Topics exceeding this limit are rejected with a `phx_reply` error before
@@ -209,6 +227,7 @@ pub opaque type Config {
     /// before the runtime gives up on it (app-dispatch systems only).
     presence_op_timeout_ms: Int,
     router_queue_limits: overload.Limits,
+    connection_queue_limits: overload.Limits,
     socket_queue_limits: overload.Limits,
     worker_queue_limits: overload.Limits,
     effect_limits: overload.Limits,
@@ -268,6 +287,7 @@ pub fn config(codec: codec.Codec) -> Config {
     presence: None,
     presence_op_timeout_ms: 5000,
     router_queue_limits: overload.shared_limits(),
+    connection_queue_limits: overload.worker_limits(),
     socket_queue_limits: overload.socket_limits(),
     worker_queue_limits: overload.worker_limits(),
     effect_limits: overload.worker_limits(),
@@ -280,6 +300,24 @@ pub fn with_router_queue_limits(
   limits: overload.Limits,
 ) -> Config {
   Config(..config, router_queue_limits: limits)
+}
+
+/// Bound pending connection-limiter work independently of live connections.
+///
+/// Defaults to 256 items and 8 MiB of accounted payload, including executing
+/// work. Each acquire reserves two items: its request and its completion or
+/// cancellation. Binds reserve one item. Use at least two items to admit an
+/// acquire. Cleanup uses its reserved capacity even when the queue is full.
+///
+/// This applies when a connection ceiling or per-IP connection rate is enabled.
+/// Saturation, an oversized peer IP, timeout, or limiter unavailability returns
+/// `Error(Nil)` from `transport.acquire_connection_slot`; transports reject the
+/// upgrade with HTTP 429. Byte accounting is structural, not a BEAM heap limit.
+pub fn with_connection_queue_limits(
+  config: Config,
+  limits: overload.Limits,
+) -> Config {
+  Config(..config, connection_queue_limits: limits)
 }
 
 /// Bound outstanding socket work, including presence-suspended continuations.
@@ -312,7 +350,12 @@ pub fn with_effect_limits(config: Config, limits: overload.Limits) -> Config {
 /// use the global `with_channel_rate` limit. The limiter applies
 /// only after a socket has joined the topic. A non-positive `per_second`
 /// explicitly disables limiting for matching topics, including any global
-/// channel limit, and allocates no bucket.
+/// channel limit, and allocates no bucket. When enabled, a `burst` of 0 uses
+/// `per_second`; a negative burst is rejected by `validate_config` with
+/// `InvalidRateLimitBurst`. Disabled limits ignore `burst`.
+///
+/// Buckets remain until socket teardown. Leaving or rejoining a topic does not
+/// reset its allowance.
 pub fn with_topic_rate(
   config: Config,
   pattern pattern: String,
@@ -407,7 +450,9 @@ pub fn with_max_connections_per_ip(
 /// Each WebSocket upgrade attempt that passes the concurrent connection
 /// ceilings consumes one token before authentication and handshake setup. A
 /// non-positive `per_second` disables the limit. A `burst` of 0 uses
-/// `per_second` as the burst capacity.
+/// `per_second` as the burst capacity. When enabled, a negative burst is
+/// rejected by `validate_config` with `InvalidRateLimitBurst`.
+/// Disabled limits ignore `burst`.
 ///
 /// Unlike per-connection frame and message buckets, this allowance is keyed by
 /// the real socket peer IP and lives in beryl's supervised connection limiter.
@@ -493,6 +538,10 @@ pub fn with_payload_preview_bytes(
 /// combine edge shedding with a runtime cap on decoded non-join traffic.
 /// An over-rate heartbeat is shed before it can refresh the socket's heartbeat
 /// deadline, so a sustained flood is eventually closed by heartbeat eviction.
+///
+/// A non-positive `per_second` disables the limit and ignores `burst`.
+/// When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+/// by `validate_config` with `InvalidRateLimitBurst`.
 pub fn with_frame_rate(
   config: Config,
   per_second rate: Int,
@@ -508,6 +557,10 @@ pub fn with_frame_rate(
 /// `with_frame_rate`. An over-rate heartbeat does not refresh the socket's
 /// heartbeat deadline, so a sustained flood is eventually closed by heartbeat
 /// eviction. Leave enough rate and burst headroom for legitimate heartbeats.
+///
+/// A non-positive `per_second` disables the limit and ignores `burst`.
+/// When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+/// by `validate_config` with `InvalidRateLimitBurst`.
 pub fn with_message_rate(
   config: Config,
   per_second rate: Int,
@@ -517,6 +570,10 @@ pub fn with_message_rate(
 }
 
 /// Configure per-socket join rate limiting.
+///
+/// A non-positive `per_second` disables the limit and ignores `burst`.
+/// When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+/// by `validate_config` with `InvalidRateLimitBurst`.
 pub fn with_join_rate(
   config: Config,
   per_second rate: Int,
@@ -527,9 +584,14 @@ pub fn with_join_rate(
 
 /// Configure per-channel message rate limiting.
 ///
-/// The limiter applies only after a socket has joined a topic. Active
-/// per-socket channel buckets are capped by default; use
+/// The limiter applies only after a socket has joined a topic. Buckets remain
+/// until socket teardown; leaving or rejoining does not reset their allowance.
+/// Per-socket channel buckets are capped by default; use
 /// `with_channel_rate_max_keys_per_socket` to adjust the cap.
+///
+/// A non-positive `per_second` disables the limit and ignores `burst`.
+/// When enabled, a `burst` of 0 uses `per_second`; a negative burst is rejected
+/// by `validate_config` with `InvalidRateLimitBurst`.
 pub fn with_channel_rate(
   config: Config,
   per_second rate: Int,
@@ -538,9 +600,11 @@ pub fn with_channel_rate(
   Config(..config, channel_rate: rate, channel_burst: burst)
 }
 
-/// Configure the maximum active per-channel rate-limit buckets per socket.
+/// Configure the maximum retained per-channel rate-limit buckets per socket.
 ///
-/// Values <= 0 disable the cap. The default is 1000.
+/// Buckets for previously joined topics count toward this cap until socket
+/// teardown. A message that needs a new bucket after the cap is reached is
+/// dropped. Values <= 0 disable the cap. The default is 1000.
 pub fn with_channel_rate_max_keys_per_socket(
   config: Config,
   max_keys max_keys: Int,
@@ -757,6 +821,10 @@ pub type ConfigError {
   /// consume at least one token. The wrapped `Int` is the maximum accepted
   /// rate.
   RateLimitTooHigh(maximum: Int)
+  /// An enabled rate limit had a negative burst capacity. Use 0 to default
+  /// to its per-second rate, or a positive capacity. `burst` is the rejected
+  /// value. Disabled limits ignore their burst capacity.
+  InvalidRateLimitBurst(burst: Int)
   /// A per-topic-pattern rate limit used a pattern string that is not a valid
   /// topic pattern. `pattern` is the offending pattern and `reason` is the
   /// [`beryl/topic`](https://beryl.tylerbutler.com/reference/api/beryl-topic/)
@@ -784,25 +852,40 @@ pub type StopError {
 /// Validate a [`Config`](#config) without starting any process.
 ///
 /// This checks that `heartbeat_timeout_ms` is at least 2, that every
-/// configured rate limit is representable, and that every per-topic
-/// rate-limit pattern is valid.
+/// enabled rate limit is representable and has a non-negative burst, and
+/// that every per-topic rate-limit pattern is valid. A burst of 0 defaults
+/// to the per-second rate. Non-positive rates disable limiting and ignore
+/// their bursts.
 pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
   use <- bool.guard(
     when: config.heartbeat_timeout_ms < 2,
     return: internal.result_error(HeartbeatTimeoutTooLow(2)),
   )
-  use _ <- result.try(validate_rate_limit(config.connection_rate_per_ip))
-  use _ <- result.try(validate_rate_limit(config.frame_rate))
-  use _ <- result.try(validate_rate_limit(config.message_rate))
-  use _ <- result.try(validate_rate_limit(config.join_rate))
-  use _ <- result.try(validate_rate_limit(config.channel_rate))
+  use _ <- result.try(validate_rate_limit(
+    config.connection_rate_per_ip,
+    config.connection_burst_per_ip,
+  ))
+  use _ <- result.try(validate_rate_limit(config.frame_rate, config.frame_burst))
+  use _ <- result.try(validate_rate_limit(
+    config.message_rate,
+    config.message_burst,
+  ))
+  use _ <- result.try(validate_rate_limit(config.join_rate, config.join_burst))
+  use _ <- result.try(validate_rate_limit(
+    config.channel_rate,
+    config.channel_burst,
+  ))
   list.try_each(config.topic_rates, validate_topic_rate)
 }
 
-fn validate_rate_limit(rate: Int) -> Result(Nil, ConfigError) {
+fn validate_rate_limit(rate: Int, burst: Int) -> Result(Nil, ConfigError) {
   use <- bool.guard(
     when: rate > 1_000_000_000,
     return: internal.result_error(RateLimitTooHigh(1_000_000_000)),
+  )
+  use <- bool.guard(
+    when: rate > 0 && burst < 0,
+    return: internal.result_error(InvalidRateLimitBurst(burst)),
   )
   Ok(Nil)
 }
@@ -813,7 +896,7 @@ fn validate_topic_rate(
   let #(pattern, limits) = entry
   use _ <- result.try(case limits {
     None -> Ok(Nil)
-    Some(limit) -> validate_rate_limit(limit.per_second)
+    Some(limit) -> validate_rate_limit(limit.per_second, limit.burst)
   })
   topic.validate_pattern(pattern)
   |> result.map_error(fn(error) { InvalidTopicPattern(pattern, error) })
@@ -831,8 +914,10 @@ fn validate_topic_rate(
 /// You can call `stop` more than once or use a handle whose system never
 /// started. In these cases, it returns `Error(NotRunning)` and does not crash.
 /// It returns `Error(StopTimeout)` if the runtime does not drain or the
-/// subtree does not terminate within the shutdown window. After a successful stop
-/// the handle should no longer be used.
+/// subtree does not terminate within the shutdown window. A timeout does not
+/// cancel shutdown, and no late completion message remains in the caller's
+/// mailbox after `stop` returns. After a successful stop the handle should no
+/// longer be used.
 pub fn stop(sockets: Sockets) -> Result(Nil, StopError) {
   sockets.app.stop()
 }
@@ -1095,6 +1180,7 @@ fn child_spec_supervisor(
             config.max_connections,
             config.connection_rate_per_ip,
             config.connection_burst_per_ip,
+            config.connection_queue_limits,
             name,
           )
         }),
@@ -1288,12 +1374,17 @@ fn app_handle(
   )
 }
 
+// The caller owns the reply alias only for the callback's duration. Receive
+// through a selector: process.receive requires a pid-owned subject.
+@external(erlang, "beryl_ffi", "with_reply_subject")
+fn with_reply_subject(action: fn(process.Subject(message)) -> value) -> value
+
 // Record the intentional stop before asking the runtime to drain, so
 // restart-intensity exhaustion remains distinguishable from shutdown.
 fn request_runtime_stop(
   supervisor: process.Name(app_supervisor.Message),
 ) -> Result(Nil, StopError) {
-  let finished = process.new_subject()
+  use finished <- with_reply_subject
 
   case app_supervisor.request_stop(supervisor, finished) {
     Ok(#(app_supervisor.StopRejected, _)) -> internal.result_error(NotRunning)
@@ -1302,7 +1393,8 @@ fn request_runtime_stop(
     Error(overload.RequestTimedOut) -> internal.result_error(StopTimeout)
     Ok(#(app_supervisor.StopAccepted, owner)) -> {
       let monitor = process.monitor(owner)
-      let completion = case process.receive(finished, 5000) {
+      let selector = process.new_selector() |> process.select(finished)
+      let completion = case process.selector_receive(selector, 5000) {
         Ok(app_supervisor.StopCompleted) ->
           await_down(monitor) |> result.replace_error(StopTimeout)
         Ok(app_supervisor.StopIncomplete) -> internal.result_error(StopTimeout)

@@ -46,9 +46,12 @@ jobs:
               - '.mise.toml'
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
+              - 'scripts/archive-gleam-deps*'
               - 'scripts/check-ffi-*.sh'
               - 'scripts/check-portable-deps*.mjs'
+              - 'scripts/fixtures/heirloom_namespace/**'
             docs:
+              - 'README.md'
               - '.github/workflows/ci.yml'
               - 'packages/**'
               - 'website/**'
@@ -57,6 +60,7 @@ jobs:
               - '.mise.toml'
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
+              - 'scripts/archive-gleam-deps*'
             examples:
               - '.github/workflows/ci.yml'
               - 'examples/**'
@@ -66,6 +70,7 @@ jobs:
               - '.mise.toml'
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
+              - 'scripts/archive-gleam-deps*'
               - 'scripts/check-portable-deps*.mjs'
             load:
               - 'load/**'
@@ -76,14 +81,14 @@ jobs:
               - '.mise.toml'
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
+              - 'scripts/archive-gleam-deps*'
 
   dependencies:
     needs: changes
     runs-on: ubuntu-latest
     name: Dependencies
     outputs:
-      cache-key: ${{ steps.cache.outputs.cache-primary-key }}
-      prepared-cache-key: ${{ steps.prepared-cache-key.outputs.key }}
+      prepared-artifact-id: ${{ steps.prepared-artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
         if: needs.changes.outputs.relevant == 'true'
@@ -159,24 +164,21 @@ jobs:
             build/snippet-check/build/packages
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
-      - name: Set prepared dependency cache key
+      - name: Archive prepared Gleam dependencies
         if: needs.changes.outputs.relevant == 'true'
-        id: prepared-cache-key
-        run: |
-          echo "key=${{ steps.cache.outputs.cache-primary-key }}-run-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+        run: bash scripts/archive-gleam-deps.sh "$RUNNER_TEMP"
 
-      - name: Save prepared Gleam dependencies for this workflow run
+      - name: Upload prepared Gleam dependencies
         if: needs.changes.outputs.relevant == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/save@v6
+        id: prepared-artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # ratchet:actions/upload-artifact@v7
         with:
+          name: gleam-dependencies-${{ github.run_attempt }}
           path: |
-            ~/.cache/gleam/hex/hexpm/packages
-            packages/*/build/packages
-            examples/*/build/packages
-            examples/*/client/build/packages
-            build/snippet-check/manifest.toml
-            build/snippet-check/build/packages
-          key: ${{ steps.prepared-cache-key.outputs.key }}
+            ${{ runner.temp }}/gleam-dependencies.tar.gz
+            ${{ runner.temp }}/gleam-hex-cache.tar.gz
+          compression-level: 0
+          if-no-files-found: error
 
       - name: Skip dependency setup
         if: needs.changes.outputs.relevant != 'true'
@@ -211,19 +213,20 @@ jobs:
         if: needs.changes.outputs.source == 'true'
         uses: ./.github/actions/mise
 
+      - name: Download prepared Gleam dependencies
+        if: needs.changes.outputs.source == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # ratchet:actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.dependencies.outputs.prepared-artifact-id }}
+          path: ${{ runner.temp }}
+          merge-multiple: true
+
       - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.source == 'true'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/restore@v6
-        with:
-          path: |
-            ~/.cache/gleam/hex/hexpm/packages
-            packages/*/build/packages
-            examples/*/build/packages
-            examples/*/client/build/packages
-            build/snippet-check/manifest.toml
-            build/snippet-check/build/packages
-          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
-          fail-on-cache-miss: true
+        run: |
+          tar -xzf "$RUNNER_TEMP/gleam-dependencies.tar.gz"
+          mkdir -p "$HOME/.cache/gleam/hex/hexpm"
+          tar -xzf "$RUNNER_TEMP/gleam-hex-cache.tar.gz" -C "$HOME/.cache/gleam/hex/hexpm"
 
       - name: Check formatting
         if: needs.changes.outputs.source == 'true'
@@ -242,6 +245,10 @@ jobs:
       - name: Run tests
         if: needs.changes.outputs.source == 'true'
         run: just test
+
+      - name: Test downstream heirloom namespace
+        if: needs.changes.outputs.source == 'true'
+        run: just namespace-test
 
       - name: Test protocol on Erlang and JavaScript
         if: needs.changes.outputs.source == 'true'
@@ -271,19 +278,20 @@ jobs:
         if: needs.changes.outputs.docs == 'true'
         uses: ./.github/actions/mise
 
+      - name: Download prepared Gleam dependencies
+        if: needs.changes.outputs.docs == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # ratchet:actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.dependencies.outputs.prepared-artifact-id }}
+          path: ${{ runner.temp }}
+          merge-multiple: true
+
       - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.docs == 'true'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/restore@v6
-        with:
-          path: |
-            ~/.cache/gleam/hex/hexpm/packages
-            packages/*/build/packages
-            examples/*/build/packages
-            examples/*/client/build/packages
-            build/snippet-check/manifest.toml
-            build/snippet-check/build/packages
-          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
-          fail-on-cache-miss: true
+        run: |
+          tar -xzf "$RUNNER_TEMP/gleam-dependencies.tar.gz"
+          mkdir -p "$HOME/.cache/gleam/hex/hexpm"
+          tar -xzf "$RUNNER_TEMP/gleam-hex-cache.tar.gz" -C "$HOME/.cache/gleam/hex/hexpm"
 
       - name: Setup Node.js
         if: needs.changes.outputs.docs == 'true'
@@ -319,7 +327,9 @@ jobs:
 
       - name: Type-check documentation snippets
         if: needs.changes.outputs.docs == 'true'
-        run: pnpm -C website check:snippets
+        run: |
+          just site-snippets-test
+          pnpm -C website check:snippets
 
       - name: Validate reference docs are up to date
         if: needs.changes.outputs.docs == 'true'
@@ -384,19 +394,20 @@ jobs:
         if: needs.changes.outputs.examples == 'true'
         uses: ./.github/actions/mise
 
+      - name: Download prepared Gleam dependencies
+        if: needs.changes.outputs.examples == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # ratchet:actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.dependencies.outputs.prepared-artifact-id }}
+          path: ${{ runner.temp }}
+          merge-multiple: true
+
       - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.examples == 'true'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/restore@v6
-        with:
-          path: |
-            ~/.cache/gleam/hex/hexpm/packages
-            packages/*/build/packages
-            examples/*/build/packages
-            examples/*/client/build/packages
-            build/snippet-check/manifest.toml
-            build/snippet-check/build/packages
-          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
-          fail-on-cache-miss: true
+        run: |
+          tar -xzf "$RUNNER_TEMP/gleam-dependencies.tar.gz"
+          mkdir -p "$HOME/.cache/gleam/hex/hexpm"
+          tar -xzf "$RUNNER_TEMP/gleam-hex-cache.tar.gz" -C "$HOME/.cache/gleam/hex/hexpm"
 
       - name: Install example dependencies
         if: needs.changes.outputs.examples == 'true'
@@ -462,19 +473,20 @@ jobs:
         if: needs.changes.outputs.load == 'true'
         uses: ./.github/actions/mise
 
+      - name: Download prepared Gleam dependencies
+        if: needs.changes.outputs.load == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # ratchet:actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.dependencies.outputs.prepared-artifact-id }}
+          path: ${{ runner.temp }}
+          merge-multiple: true
+
       - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.load == 'true'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # ratchet:actions/cache/restore@v6
-        with:
-          path: |
-            ~/.cache/gleam/hex/hexpm/packages
-            packages/*/build/packages
-            examples/*/build/packages
-            examples/*/client/build/packages
-            build/snippet-check/manifest.toml
-            build/snippet-check/build/packages
-          key: ${{ needs.dependencies.outputs.prepared-cache-key }}
-          fail-on-cache-miss: true
+        run: |
+          tar -xzf "$RUNNER_TEMP/gleam-dependencies.tar.gz"
+          mkdir -p "$HOME/.cache/gleam/hex/hexpm"
+          tar -xzf "$RUNNER_TEMP/gleam-hex-cache.tar.gz" -C "$HOME/.cache/gleam/hex/hexpm"
 
       - name: Validate pinned k6 workload
         if: needs.changes.outputs.load == 'true'
@@ -560,7 +572,7 @@ jobs:
 
   load-smoke-report:
     name: Protocol smoke report
-    needs: load-smoke
+    needs: [changes, load-smoke]
     if: >-
       ${{
         always() &&

@@ -329,7 +329,8 @@ pub fn handler_http2_connect_other_path_uses_fallback_test() -> Nil {
   check_http2_connect("127.0.0.1", "127.0.0.1", 0, "/not-socket", "418")
 }
 
-const heartbeat_reply = "[null,\"hb\",\"phoenix\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]"
+const heartbeat_reply =
+  "[null,\"hb\",\"phoenix\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]"
 
 fn check_http2_connect(
   host: String,
@@ -695,6 +696,66 @@ fn wait_for_upgrade(port: Int, remaining_ms: Int) -> Result(Int, Nil) {
   }
 }
 
+pub fn handler_releases_slot_when_client_closes_during_init_test() -> Nil {
+  let entered = process.new_subject()
+  let observed = process.new_subject()
+  let assert Ok(channels) =
+    app_test_helper.start(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(1),
+      init: fn(_) {
+        let release = process.new_subject()
+        process.send(entered, release)
+        process.receive_forever(release)
+        #(Nil, [])
+      },
+      update: fn(model: Nil, _: socket.Input(Nil)) { socket.Next(model, []) },
+    )
+  let config =
+    server.default_config("/socket")
+    |> server.with_on_connect(fn(_) {
+      process.send(observed, process.self())
+      Ok([])
+    })
+  let #(port, server_pid) = start_server_with_config(channels, config)
+  let assert Ok(early) = connect_websocket(port, "/socket")
+  let assert Ok(release) = process.receive(entered, 1000)
+  let assert Ok(owner) = process.receive(observed, 1000)
+  let monitor = process.monitor(owner)
+  close(early)
+  process.send(release, Nil)
+  process.new_selector()
+  |> process.select_specific_monitor(monitor, fn(_) { Nil })
+  |> process.selector_receive(1000)
+  |> should.equal(Ok(Nil))
+  process.demonitor_process(monitor)
+
+  let assert Ok(healthy) = reconnect_when_released(port, 50)
+  let assert Ok(release) = process.receive(entered, 1000)
+  let assert Ok(_) = process.receive(observed, 1000)
+  process.send(release, Nil)
+  let assert Ok(healthy) =
+    send_text(healthy, "[null,\"ready\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(healthy, 1000) |> should.be_ok
+  close(healthy)
+  stop_supervisor(server_pid)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
+
+fn reconnect_when_released(
+  port: Int,
+  attempts: Int,
+) -> Result(WebsocketClient, Nil) {
+  case connect_websocket(port, "/socket") {
+    Ok(client) -> Ok(client)
+    Error(Nil) if attempts > 1 -> {
+      process.sleep(20)
+      reconnect_when_released(port, attempts - 1)
+    }
+    Error(Nil) -> Error(Nil)
+  }
+}
+
 pub fn handler_allows_unlimited_connections_when_limit_is_zero_test() -> Nil {
   // The default config leaves `max_connections_per_ip` at 0 (unlimited), so
   // multiple concurrent connections from the same peer IP are all admitted.
@@ -1006,8 +1067,8 @@ fn start_mixed_outbound_system() -> beryl.Sockets {
       encode_reply: codec.encode_reply(phoenix),
       encode_push: fn(_topic, event, _payload) {
         case string.starts_with(event, "binary-") {
-          True -> codec.BinaryFrame(bit_array.from_string(event))
-          False -> codec.TextFrame(event)
+          True -> Ok(codec.BinaryFrame(bit_array.from_string(event)))
+          False -> Ok(codec.TextFrame(event))
         }
       },
       encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
@@ -1039,6 +1100,36 @@ fn start_app_system_with_update(
       update: update,
     )
   channels
+}
+
+pub fn encoder_failure_closes_websocket_and_releases_connection_slot_test() -> Nil {
+  let phoenix = wire.phoenix_codec()
+  let fallible =
+    codec.new(
+      decode_text: wire.decode_message,
+      encode_reply: codec.encode_reply(phoenix),
+      encode_push: codec.encode_push(phoenix),
+      encode_heartbeat_reply: fn(_) {
+        Error(codec.EncodingRejected("heartbeat fixture"))
+      },
+    )
+  let channels =
+    start_app_system(
+      beryl.config(fallible)
+      |> beryl.with_max_connections(max_connections: 1)
+      |> beryl.with_max_connections_per_ip(max_connections: 1),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  let assert Ok(client) =
+    send_text(client, "[null,\"heartbeat\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(client, 1000) |> should.equal(Error(Nil))
+  wait_for_socket_counts(channels, #(0, 0), 1000)
+  |> should.equal(Ok(#(0, 0)))
+  let assert Ok(replacement) = connect_websocket(port, "/socket")
+  close(replacement)
+  stop_supervisor(server_pid)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
 }
 
 pub fn runtime_death_closes_the_connection_test() -> Nil {
