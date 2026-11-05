@@ -150,8 +150,12 @@ site-reference: docs
 site-reference-test:
     pnpm -C website test:reference
 
-# Type-check every Gleam snippet in the docs against the real packages
-site-snippets: gleam-docs
+# Test snippet extraction and strict compilation regressions
+site-snippets-test:
+    pnpm -C website test:snippets
+
+# Type-check documentation fragments and complete published quick starts
+site-snippets: gleam-docs site-snippets-test
     pnpm -C website check:snippets
 
 # Build website
