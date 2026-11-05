@@ -23,9 +23,9 @@ deps-gleam:
     node scripts/prepare-gleam-deps.mjs
     node website/scripts/check-snippets.mjs --deps-only
 
-# Check dependency preparation and cache reuse
+# Check dependency preparation, cache reuse, and artifact transfer
 deps-test:
-    node --test scripts/prepare-gleam-deps.test.mjs
+    node --test scripts/prepare-gleam-deps.test.mjs scripts/archive-gleam-deps.test.mjs
 
 # === BUILD ===
 
