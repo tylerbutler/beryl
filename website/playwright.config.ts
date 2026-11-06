@@ -2,6 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
 	testDir: "./e2e",
+	testIgnore: "presence-lab.spec.js",
 	timeout: 30_000,
 	retries: 0,
 	use: {

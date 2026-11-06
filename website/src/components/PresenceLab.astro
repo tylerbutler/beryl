@@ -1,0 +1,45 @@
+---
+const serviceUrl =
+  import.meta.env.PUBLIC_BERYL_DEMO_URL ??
+  "https://demo.beryl.tylerbutler.com";
+---
+
+<beryl-presence-lab
+  service-url={serviceUrl}
+  compatibility-version="1"
+>
+  <section
+    slot="fallback"
+    class="presence-lab-fallback"
+    aria-label="Presence lab explanation"
+  >
+    <p>
+      This lab connects two short-lived Phoenix clients to an isolated beryl
+      topic and shows the resulting presence state and diffs.
+    </p>
+    <p>
+      Enable JavaScript to run the live scenario. The Presence guide below
+      describes the same join, track, diff, and leave flow.
+    </p>
+  </section>
+</beryl-presence-lab>
+
+<script>
+  // Compiled by `pnpm build:interactive` (gleam build --target javascript);
+  // Vite bundles it from the Gleam build directory.
+  import { main } from "../../interactive/build/dev/javascript/beryl_site/beryl_site.mjs";
+  main();
+</script>
+
+<style>
+  beryl-presence-lab {
+    display: block;
+    margin-block: 1.5rem 2.5rem;
+  }
+  .presence-lab-fallback {
+    border: 1px solid var(--beryl-hairline);
+    border-radius: 16px;
+    background: var(--beryl-surface);
+    padding: 1.25rem;
+  }
+</style>
