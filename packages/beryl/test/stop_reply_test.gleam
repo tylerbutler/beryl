@@ -133,6 +133,7 @@ pub fn callback_exception_before_reply_deactivates_test() -> Nil {
 /// A taken stop request can still finish after its acceptance caller times out.
 pub fn acceptance_timeout_drops_both_late_stop_replies_test() -> Nil {
   use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
   use <- with_mailbox_baseline
   let caller = process.self()
   let entered = process.new_subject()

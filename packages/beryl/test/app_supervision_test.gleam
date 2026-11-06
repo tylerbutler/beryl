@@ -193,6 +193,7 @@ pub fn stop_waits_for_socket_factory_and_lifecycle_owner_test() -> Nil {
 
 pub fn timed_out_stop_drops_late_completion_and_monitors_test() -> Nil {
   use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(15_000)
   list.each([False, True], fn(with_limiter) {
     let config = beryl.config(wire.phoenix_codec())
     let config = case with_limiter {
