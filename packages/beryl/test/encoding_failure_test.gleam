@@ -276,8 +276,15 @@ pub fn failed_reply_aborts_suffix_and_reclaims_other_references_test() -> Nil {
   let replacement = connect(system, "failed", None, close)
   let assert Ok(replacement_sender) = process.receive(system.senders, 1000)
   joined(system, replacement)
-  let assert Ok(empty) = socket.queue_snapshot(replacement_sender)
-  empty.items |> should.equal(0)
+  // The join reply arrives before the join turn releases its reservations.
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(empty) = socket.queue_snapshot(replacement_sender)
+      empty.items == 0
+    },
+    1000,
+    5,
+  )
   beryl.stop(system.sockets) |> should.equal(Ok(Nil))
 }
 
