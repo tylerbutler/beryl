@@ -133,6 +133,7 @@ pub fn callback_exception_before_reply_deactivates_test() -> Nil {
 /// A taken stop request can still finish after its acceptance caller times out.
 pub fn acceptance_timeout_drops_both_late_stop_replies_test() -> Nil {
   use <- unitest.tag("serial")
+  use <- with_isolated_caller
   use <- with_mailbox_baseline
   let caller = process.self()
   let entered = process.new_subject()
@@ -172,4 +173,41 @@ pub fn acceptance_timeout_drops_both_late_stop_replies_test() -> Nil {
     |> process.select_specific_monitor(monitor, fn(down) { down })
     |> process.selector_receive(1000)
   Nil
+}
+
+// Prior heartbeat fixtures can send messages during the acceptance timeout.
+// A fresh caller keeps the exact mailbox baseline specific to stop replies.
+fn with_isolated_caller(action: fn() -> Nil) -> Nil {
+  let completed = process.new_subject()
+  let caller =
+    process.spawn_unlinked(fn() {
+      action()
+      process.send(completed, Nil)
+      // Stay alive until the runner has installed its monitor and cleans up.
+      process.sleep_forever()
+    })
+  let monitor = process.monitor(caller)
+  let selector =
+    process.new_selector()
+    |> process.select_map(completed, fn(_) { Ok(Nil) })
+    |> process.select_specific_monitor(monitor, Error)
+  let outcome = process.selector_receive(selector, 5000)
+
+  // Caller exit also tears down its linked app supervisor on a timeout.
+  process.kill(caller)
+  let stopped = case outcome {
+    Ok(Error(down)) -> Ok(down)
+    Ok(Ok(Nil)) | Error(Nil) ->
+      process.new_selector()
+      |> process.select_specific_monitor(monitor, fn(down) { down })
+      |> process.selector_receive(1000)
+  }
+  process.demonitor_process(monitor)
+  // After the caller is down, consume at most its private completion race.
+  case process.receive(completed, 0) {
+    Ok(Nil) | Error(Nil) -> Nil
+  }
+  stopped |> should.be_ok
+  // A failed child assertion is Error(down), not a successful completion.
+  outcome |> should.equal(Ok(Ok(Nil)))
 }
