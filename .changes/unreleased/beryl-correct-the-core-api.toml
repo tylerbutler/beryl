@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Correct the core API quick-start example to handle payload conversion failures and consume reply references explicitly."

@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Preserve safe outbound socket-write error reasons in the shared transport completion API, which now accepts Result(Nil, WriteError) instead of Bool."

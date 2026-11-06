@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Preserve channel and topic rate-limit allowances across leave/rejoin and duplicate joins for the life of the socket."
