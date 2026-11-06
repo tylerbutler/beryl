@@ -50,10 +50,16 @@ just ci
 snippet dependencies in sequence. Gleam 1.18.1 updates only one changed path
 dependency fingerprint per call. Preparation repeats until the manifest and
 fingerprints stop changing, retries Hex rate-limit failures with bounded
-backoff, then CI caches that state for all jobs. This workaround can be removed
-when the pinned Gleam release includes
+backoff. Remove this repeated preparation when the pinned Gleam release includes
 [gleam-lang/gleam#6246](https://github.com/gleam-lang/gleam/pull/6246).
-Run `just deps-test` to check cold preparation, changed dependencies, and cache reuse.
+
+CI uses a shared cache to speed up preparation, then transfers the
+prepared state to downstream jobs in a workflow artifact. Rerun jobs use the
+artifact ID from the dependency job, even when the shared cache has expired.
+Artifacts use the repository's retention period; after an artifact expires,
+rerun all jobs to prepare dependencies again.
+Run `just deps-test` to check cold preparation, changed dependencies, cache reuse,
+and artifact transfer.
 
 ### Codec benchmarks
 

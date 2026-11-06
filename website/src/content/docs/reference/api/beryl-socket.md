@@ -550,6 +550,7 @@ pub type StopReason {
   HeartbeatTimeout
   Errored(String)
   AdmissionRejected(overload.AdmissionError)
+  EncodingFailed(codec.EncodeError)
 }
 ```
 
@@ -602,6 +603,15 @@ AdmissionRejected(overload.AdmissionError)
 ```
 
 A local queue or callback result exceeded its admission budget.
+
+##### `EncodingFailed`
+
+```gleam
+EncodingFailed(codec.EncodeError)
+```
+
+An outbound codec callback could not encode a frame. The runtime closes
+ the socket rather than sending a replacement frame or retrying the codec.
 
 ## Functions
 

@@ -121,7 +121,8 @@ pub type Telemetry
 A low-cost transport telemetry context.
 
  When telemetry is disabled, operations avoid VM clock calls and event
- construction.
+ construction. All transport identities use the socket system's telemetry
+ setting.
 
 <div class="api-entry-anchor" id="api-type-telemetrytransport" aria-hidden="true"></div>
 
@@ -131,10 +132,14 @@ A low-cost transport telemetry context.
 pub type TelemetryTransport {
   Mist
   Ewe
+  Custom
 }
 ```
 
 WebSocket transport implementations in beryl's telemetry schema.
+
+ The fixed labels are `mist`, `ewe`, and `custom`. All third-party
+ transports use `Custom`; implementation names cannot become metric labels.
 
 <div class="api-entry-anchor" id="api-type-upgradeoutcome" aria-hidden="true"></div>
 
@@ -359,6 +364,11 @@ pub fn telemetry(
 ```
 
 Create a telemetry context from the channels configuration.
+
+ Third-party transports use `telemetry(channels, Custom)` with the public
+ shared server pipeline. Enabled events use the fixed `custom` transport
+ label. Disabled contexts still support shared setup and frame routing
+ without emitting transport events.
 
 <div class="api-entry-anchor" id="api-function-telemetry_frame_stop" aria-hidden="true"></div>
 
