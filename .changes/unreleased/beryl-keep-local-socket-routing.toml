@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Keep local socket routing active during PubSub recovery, wait for the full beryl subtree to exit before reporting a successful stop, and prevent caught group-call timeouts from retaining monitors or late replies."

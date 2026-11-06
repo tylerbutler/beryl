@@ -1,5 +1,67 @@
 # beryl changelog
 
+## v0.6.0 - 2026-11-06
+
+### Added
+
+- Add a pure channel protocol core for Erlang and JavaScript with capability-safe correlation, ordered lifecycle actions, heartbeat deadlines, and versioned restoration.
+- Bound pending connection admission and cancellation with configurable count and payload limits, reject saturation before mailbox publication, reclaim unacknowledged grants across limiter restarts, recover cancelled holders if a releasing caller dies before notification, immediately reuse released connection capacity, and safely cancel permits when the limiter is unavailable.
+- Support the fixed Custom telemetry identity for third-party transports; exhaustive TelemetryTransport matches must handle Custom.
+
+### Changed
+
+- Make outbound codec encoders return typed errors; close affected sockets on encoding failure, stop later effects, and reclaim pending replies and resources. Custom total encoders must wrap frames in Ok.
+- Reject negative burst capacities for enabled rate limits with ConfigError.InvalidRateLimitBurst instead of silently dropping all traffic. Zero bursts still default to the rate; disabled limits still ignore bursts. Add a beryl.InvalidRateLimitBurst(burst) branch to exhaustive matches on beryl.ConfigError.
+- Rename app-facing JoinRef and ReplyRef to JoinReference and ReplyReference, and rename socket handle arguments from ref to reference. Update type imports and named constructor arguments; the old names have no compatibility aliases. Phoenix wire and codec ref/join_ref names and runtime behavior are unchanged.
+- Return typed errors for failed presence CRDT clock lookups instead of timing out, and resume asynchronous socket mutations with one failed acknowledgement. Failed replacements keep existing entries. Runtime owners stay monitored after rejection so socket death releases reserved cleanup capacity, including parent-supervisor shutdown. Match track call errors as TrackRequestFailed(error) in PresenceTrackError, and handle TrackInvalidCrdtState and UpdateInvalidCrdtState.
+- Return typed Result errors from group operations and PubSub startup, membership, broadcasts, and subscriber queries instead of exiting callers. Handle startup and query Results, match GroupCallFailed and PubSubError, and preserve the existing scoped broadcast wire format.
+- Use the portable protocol core for channel lifecycle decisions while preserving the existing BEAM APIs, codecs, and cleanup behavior.
+
+### Fixed
+
+- Account for referenced BEAM binary size in text and binary outbound queues until transport write completion or close.
+- Avoid collisions with downstream heirloom modules by placing the internal ETS helper in the beryl namespace.
+- Yield between bounded disconnect-control batches so the router can handle shutdown messages, and abort later callback effects when broadcast admission fails.
+- Clarify the caller-enforced same-scope PubSub payload contract, including distinct fixed scopes for incompatible types and presence replication.
+- Clarify typed errors returned by synchronous presence mutations.
+- Clean up bridge forwarders when startup times out.
+- Correct the core API quick-start example to handle payload conversion failures and consume reply references explicitly.
+- Discard reply refs in the default channel message handler and document explicit disposal for handlers that do not reply.
+- Emit one invalid-message telemetry outcome for decoded events with invalid topics or event names.
+- Emit one socket disconnect telemetry event after actor crashes and forced shutdown drains, with documented lifetime measurements.
+- Fix compilation of the connection limiter after queue error types changed.
+- Honor opt-in grapheme-limited text-frame previews in Mist and Ewe decode diagnostics; keep binary previews disabled.
+- Include inline sender delivery in the local recipient count for socket broadcasts without emitting a second telemetry event.
+- Keep local socket routing active during PubSub recovery, wait for the full beryl subtree to exit before reporting a successful stop, and prevent caught group-call timeouts from retaining monitors or late replies.
+- Log routine client rejections at debug level, bound diagnostic fields to 256 UTF-8 bytes, and skip rejection formatting when debug is disabled.
+- Name the invalid field in binary push frame UTF-8 errors: join_ref or ref.
+- Preserve application-owned OTP Logger configuration across runtime starts and restarts, with independent runtime and transport log thresholds for each socket system.
+- Preserve callback failure reasons when committed worker reports are drained during channel closure.
+- Preserve channel and topic rate-limit allowances across leave/rejoin and duplicate joins for the life of the socket.
+- Preserve safe outbound socket-write error reasons in the shared transport completion API, which now accepts Result(Nil, WriteError) instead of Bool.
+- Preserve the close reason when restoring a closed snapshot so it can be exported and restored again.
+- Prevent late shutdown completion messages from remaining in the caller mailbox after stop returns.
+- Drain admitted inbound work before delivering Closed on client disconnect, including frames waiting in the router queue.
+- Reclaim blocked socket actors when their admitting router exits.
+- Reject partial-byte payloads in Phoenix binary encoders with PayloadNotByteAligned. Exhaustive BinaryEncodeError matches must handle the new variant.
+- Reject rate limits whose token cost rounds to zero during config validation.
+- Release connection slots and notify the runtime before forced transport shutdown, including shutdowns that bypass the transport close callback.
+- Retain bounded callback stack call sites in crash diagnostics without logging stack argument values.
+- Run channel termination cleanup when socket output capacity is full, and report rejected cleanup actions as admission failures.
+
+### Performance
+
+- Reduce decoder overhead when converting dynamic JSON payloads and remove temporary value lists from object depth checks. UTF-8 validation and the 64-level nesting limit are unchanged.
+
+### Security
+
+- Preserve exact Unicode suffixes in prefix wildcard captures so distinct topics cannot share channel parameters.
+
+### Dependencies
+
+- Constrain lattice_presence to the 2.0 patch line and verify exact-tag removal and owner-only snapshot compatibility.
+- use the Hex release of unitest
+
 ## v0.5.0 - 2026-09-24
 
 ### Added

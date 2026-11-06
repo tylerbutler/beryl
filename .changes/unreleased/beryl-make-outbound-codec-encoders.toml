@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Make outbound codec encoders return typed errors; close affected sockets on encoding failure, stop later effects, and reclaim pending replies and resources. Custom total encoders must wrap frames in Ok."

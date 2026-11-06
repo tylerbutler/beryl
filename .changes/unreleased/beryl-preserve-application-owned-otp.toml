@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Preserve application-owned OTP Logger configuration across runtime starts and restarts, with independent runtime and transport log thresholds for each socket system."
