@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Clarify typed errors returned by synchronous presence mutations."

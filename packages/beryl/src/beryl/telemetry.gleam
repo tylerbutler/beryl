@@ -94,6 +94,7 @@ pub type DisconnectReason {
   ShutdownDisconnect
   CallbackDisconnect
   AdmissionDisconnect
+  SocketProcessDown
   EncodingDisconnect
 }
 

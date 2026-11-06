@@ -62,13 +62,29 @@ beryl: type-safe real-time communication
            Join("room:" <> _, _payload, reference) ->
              Next(model, [AcceptJoin(reference, option.None)])
            Message(topic, "new_msg", payload, reference) ->
-             Next(model, [
-               Broadcast(topic, "new_msg", payload),
-               ..case reference {
-                 option.Some(reference) -> [socket.DiscardReply(reference)]
-                 option.None -> []
+             case wire.dynamic_to_json(payload) {
+               Ok(payload) -> {
+                 let effects = [Broadcast(topic, "new_msg", payload)]
+                 let effects = case reference {
+                   option.Some(reference) ->
+                     [socket.DiscardReply(reference), ..effects]
+                   option.None -> effects
+                 }
+                 Next(model, effects)
                }
-             ])
+               Error(Nil) -> {
+                 let effects = case reference {
+                   option.Some(reference) -> [
+                     socket.ReplyError(
+                       reference,
+                       json.string("Invalid JSON payload"),
+                     ),
+                   ]
+                   option.None -> []
+                 }
+                 Next(model, effects)
+               }
+             }
            Message(_, _, _, option.Some(reference)) ->
              Next(model, [socket.DiscardReply(reference)])
            Message(_, _, _, option.None)
@@ -83,7 +99,9 @@ beryl: type-safe real-time communication
      |> static_supervisor.start()
 
    // Broadcast to all subscribers of a topic
-   beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
+   let assert Ok(Nil) =
+     beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
+   Nil
  }
  ```
 
