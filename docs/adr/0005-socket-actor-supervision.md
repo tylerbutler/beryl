@@ -294,6 +294,29 @@ or topic state without a new client handshake. If a socket actor stops, the
 router monitor will still remove routing and presence state. If the router
 stops, the socket actor will stop and the client will reconnect.
 
+### Router failure during a callback
+
+The socket actor's router monitor can only stop the actor between callback
+turns. A blocked application `init` or `update` prevents that actor from
+receiving `DOWN`, while the shared socket factory survives the router restart.
+
+Each socket actor starts an unlinked guardian before it runs application
+callbacks. The guardian monitors the exact router PID captured before admission
+and the exact socket actor PID. Router death makes the guardian kill that socket
+actor, even if a callback cannot return. Socket death makes the guardian exit.
+Guardian exit releases its remaining monitors.
+
+The guardian uses no registered-name lookup, socket ID, or replacement router.
+Delayed old-generation cleanup cannot kill a replacement socket that reuses the
+same socket ID. Socket callback failures cannot reach the router through a link.
+The shared factory and connection limiter keep running across router restarts.
+
+Forced termination does not run application `Closed` callbacks. Presence's
+existing owner monitor removes the dead actor's runtime-owned refs; its linked
+topic-worker supervisor stops its workers. The transport still monitors its
+captured router and closes the WebSocket. The guardian emits no disconnect
+telemetry; it cannot recover events from a dead router.
+
 The router monitor remains necessary because the supervisor does not own the
 router's domain cleanup. The transport monitor also remains necessary because
 it closes the WebSocket when the admitting router generation stops.
@@ -324,6 +347,8 @@ the replacement is registered.
 - The factory serializes only the actor-start operation.
 - The router keeps its bounded admission turn and does not wait for `init`.
 - The router and socket actors retain their mutual monitors.
+- Each live socket adds one guardian process and two monitors so router-failure
+  cleanup does not depend on application callbacks returning.
 - The transport retains its monitor of the admitting router generation.
 - Socket actors and topic workers do not restart with incomplete state.
 - The factory and router both retain per-socket process metadata.
@@ -346,6 +371,8 @@ The implementation must:
 - preserve the exact router PID and admission-token checks;
 - keep the router monitor for index, presence, and transport cleanup;
 - keep the socket actor monitor of the router;
+- enforce exact-router ownership outside the callback process and stop the
+  guardian when either owner dies;
 - drain socket actors before stopping the socket factory;
 - reject or stop a `Booting` actor after admission cancellation;
 - stop all per-socket topic workers when their socket actor stops.
@@ -354,6 +381,9 @@ The implementation must add integration tests for:
 
 - transport close during `Booting`;
 - router failure before and after router registration;
+- router failure during blocked callbacks, including delayed cleanup after a
+  replacement socket reuses the same ID;
+- guardian process and monitor cleanup after socket exit;
 - admission timeout before and after `init` completes;
 - socket factory failure with active connections;
 - graceful shutdown with booting and active sockets;

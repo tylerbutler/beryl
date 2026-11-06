@@ -116,7 +116,7 @@ fn receive_frames(
     }
     Outbound(server.SendText(text, bytes)) -> {
       let assert server.Continue(connection) =
-        server.finish_outbound_write(connection, bytes, True)
+        server.finish_outbound_write(connection, bytes, Ok(Nil))
       receive_frames(connection, selector, [text, ..frames])
     }
     Outbound(server.SendBinary(_, _)) -> panic as "Expected Phoenix text frames"
