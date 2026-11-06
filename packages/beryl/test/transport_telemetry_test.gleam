@@ -178,7 +178,7 @@ fn exercise_shared_pipeline(enabled: Bool) -> Nil {
     "[null,\"heartbeat-ref\",\"phoenix\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
   )
   let assert server.Continue(state) =
-    server.finish_outbound_write(state, bytes, True)
+    server.finish_outbound_write(state, bytes, Ok(Nil))
 
   // Phoenix V2 client push: kind, four field lengths, fields, raw payload.
   // A binary join reaches the normal app callback and produces a join reply.
@@ -202,7 +202,7 @@ fn exercise_shared_pipeline(enabled: Bool) -> Nil {
     "[\"j\",\"1\",\"room:lobby\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
   )
   let assert server.Continue(state) =
-    server.finish_outbound_write(state, bytes, True)
+    server.finish_outbound_write(state, bytes, Ok(Nil))
 
   server.close_connection(state)
   beryl.stop(sockets) |> should.equal(Ok(Nil))
