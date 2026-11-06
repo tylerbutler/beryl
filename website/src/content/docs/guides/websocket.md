@@ -106,6 +106,48 @@ server.default_config("/socket/websocket")
 Raw WebSocket clients connect directly to the configured path with no suffix appended.
 :::
 
+## WebSocket compression
+
+Both adapters decline `permessage-deflate` by default. A client can offer the
+extension and complete the handshake, but must send uncompressed messages.
+The transport rejects compressed frames when it has not negotiated compression.
+This policy applies to Mist HTTP/1 upgrades and Ewe HTTP/1 upgrades and HTTP/2
+extended CONNECT, through both `handler` and `upgrade`.
+
+To allow compression, opt in on the transport configuration:
+
+```gleam
+let websocket_config =
+  server.default_config("/socket/websocket")
+  |> server.with_compression
+```
+
+The transport negotiates compression only if the client offers it. Opt-in does
+not require clients to compress messages.
+
+:::caution[Compression can allocate memory before beryl checks size]
+With Mist 6.0.3 / gramps 6.0.1, the transport inflates compressed payloads
+without an output cap before beryl receives them. A small compressed payload
+can cause a large allocation. Use `with_compression` only if you accept this
+risk.
+
+Ewe 9.0.0 / websocks 4.0.1 use separate default limits of 16 MiB per frame
+and 64 MiB per message, with limited inflation. These dependency limits do
+not follow beryl's configured inbound limit and do not bound total transport
+memory.
+
+beryl checks inbound size **after assembly and inflation**. Its inbound
+frame-size limit does not bound transport memory. Disabling compression does
+not establish a beryl memory bound for uncompressed streamed or fragmented
+messages. See [deployment hardening](/guides/production-hardening/).
+:::
+
+The Ewe adapter constrains its dependency to the verified Ewe 9.0.0 release
+because HTTP/1 caches extension offers in private connection metadata.
+A small compatibility shim clears those offers before the default upgrade.
+Updating Ewe requires checking that representation until Ewe provides a public
+compression switch.
+
 ## Authenticate before the upgrade
 
 Use `with_on_connect` to authenticate a connection before the upgrade. It is

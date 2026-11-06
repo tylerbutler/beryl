@@ -842,8 +842,9 @@ pub fn with_max_inbound_frame_bytes(
 
 Configure the maximum allowed inbound WebSocket frame size in bytes.
 
- beryl enforces the limit **post-assembly**. The transport (Mist or Ewe)
- buffers and assembles a complete frame first. beryl then measures it and
+ beryl enforces the limit **after assembly and any inflation**. The
+ transport (Mist or Ewe) buffers and assembles a complete message first.
+ beryl then measures it and
  closes the connection if it exceeds `max_bytes`. This bounds
  per-message processing cost (decode, routing, rate-limit accounting), but
  it does **not** by itself bound transport memory. A hostile client can
@@ -852,11 +853,18 @@ Configure the maximum allowed inbound WebSocket frame size in bytes.
  check runs. This setting alone does not stop one connection from exhausting
  node memory.
 
- For a true transport memory bound you **must** place an edge proxy or load
- balancer in front of beryl and configure a WebSocket frame-size limit
- there (and a matching request/body size limit). beryl's connection,
- frame-rate, and message-rate limits all run after frame assembly and do not
- mitigate this vector. See the README's "Security" section.
+ Both adapters decline compression by default. `server.with_compression`
+ opts in to the adapter's inflation risk: Mist 6.0.3 / gramps 6.0.1 have no
+ inflate-output cap. Ewe 9.0.0 / websocks 4.0.1 have separate dependency
+ limits, not a total transport-memory guarantee. Disabling compression does
+ not establish a beryl bound for uncompressed streamed or fragmented
+ message buffering.
+
+ Configure WebSocket frame/message limits at an edge proxy or load
+ balancer, plus matching upgrade request/body limits. When compression is
+ enabled, check that the edge also limits decompressed messages; wire-byte
+ limits alone do not bound inflation. Frame-rate and message-rate limits
+ run after assembly. See the deployment hardening guide.
 
  Values <= 0 disable the cap. The default is 1 MiB.
 

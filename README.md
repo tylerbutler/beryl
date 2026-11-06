@@ -343,8 +343,8 @@ origin checks, see the
 
 ### Required: an edge proxy frame-size limit
 
-beryl applies the `with_max_inbound_frame_bytes` limit **after frame
-assembly**. The WebSocket transport (Mist/gramps) buffers and assembles a full
+beryl applies the `with_max_inbound_frame_bytes` limit **after assembly and
+any inflation**. The WebSocket transport buffers and assembles a full
 frame before beryl measures it. beryl then rejects an oversized frame. This
 limit controls the processing cost of one message. It does **not** limit
 transport memory.
@@ -356,8 +356,10 @@ A hostile client can exhaust node memory through one connection in two ways:
 - It can send many fragmented continuation frames that the transport puts in
   one buffer.
 
-In both cases, the transport receive buffer has no size limit before beryl
-checks the frame size. **beryl's per-connection frame-rate limit
+Mist 6.0.3 / gramps 6.0.1 do not bound this buffering. Ewe 9.0.0 /
+websocks 4.0.1 apply separate dependency limits of 16 MiB per frame and
+64 MiB per message; these do not follow beryl's inbound limit or bound total
+transport memory. **beryl's per-connection frame-rate limit
 (`with_frame_rate`) and per-socket message-rate limit (`with_message_rate`)
 do not prevent this attack**. These limits run after frame assembly. The
 per-IP connection limit (`with_max_connections_per_ip`) runs before the
@@ -375,6 +377,20 @@ balancer. Configure:
 Set the proxy to reject oversized frames before the BEAM node buffers them.
 Use beryl's in-process limit as a second control for message processing cost.
 Do not use it as a memory limit.
+
+### Compression requires explicit opt-in
+
+Mist and Ewe decline `permessage-deflate` by default without rejecting the
+handshake. Use `server.with_compression` on the transport config to opt in.
+With Mist 6.0.3 / gramps 6.0.1, this accepts unbounded inflation before beryl's
+size check. Ewe 9.0.0 / websocks 4.0.1 use limited inflation under their
+separate dependency limits. Neither gives a beryl transport-memory guarantee.
+When compression is enabled, verify that your proxy also limits decompressed
+messages, not only wire bytes.
+
+Disabling compression does not establish a beryl bound for uncompressed
+streamed or fragmented messages. See the
+[compression policy and risks](https://beryl.tylerbutler.com/guides/websocket/#websocket-compression).
 
 ## Development
 
