@@ -265,9 +265,14 @@ the current fragments with `just version-plan`.
 ### Release Flow
 
 1. Push commits with conventional messages + changelog fragments
-2. `trellis release pr` maintains a release PR (branch `release/pending`)
+2. `scripts/release_pr.py` maintains a release PR (branch `release/pending`)
+   and preserves its mode and package targets across pushes. Manual workflow
+   inputs select a label such as `rc`, `none` (promotion), or empty (stable). Preview with
+   `just version-plan --pre rc` or `just version-plan --pre none`.
 3. Merge release PR → per-package tags (`beryl-v1.2.3`) + GitHub releases
-4. Hex.pm publishing is temporarily disabled
+4. All released packages use `git_only`; Hex.pm publishing is disabled for
+   candidates and stable releases. Do not add publication commands or Hex
+   write credentials to release workflows. See DEV.md for candidate preparation.
 
 ### Staging Discipline
 
@@ -301,8 +306,8 @@ CI additionally matrix-tests Erlang **27 and 28** (see `.github/workflows/ci.yml
 in the root `gleam.toml`). Examples are built and tested, but they get no
 changelog, version, tag, or fragment. `beryl_protocol` uses the `workspace`
 lifecycle and ships inside beryl through `publish.bundle`, without separate
-releases. `beryl` uses the `hex` lifecycle; `beryl_mist` and `beryl_ewe` use
-`git_only`. CI creates tags and GitHub releases but keeps Hex.pm uploads disabled.
+releases. `beryl`, `beryl_mist`, and `beryl_ewe` use `git_only`. CI creates
+tags and GitHub releases; candidates do not update moving series tags.
 
 Benchmarks are workspace members with opt-in dependencies and execution.
 Default build, check, test, lint, docs, and deps tasks exclude them, while

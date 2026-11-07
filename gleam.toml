@@ -38,7 +38,8 @@ beryl = ["beryl_protocol"]
 
 [tools.trellis.publish.lifecycle]
 default = "git_only"
-packages = { "packages/beryl" = "hex", "packages/beryl_protocol" = "workspace" }
+# Stable releases and candidates must not publish to Hex.
+packages = { "packages/beryl_protocol" = "workspace" }
 
 [tools.trellis.tasks.lint]
 command = "gleam run -m glinter"

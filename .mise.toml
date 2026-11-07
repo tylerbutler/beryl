@@ -2,7 +2,7 @@
 erlang = "28"
 gleam = "1.19.2"
 just = "1.50.0"
-"github:tylerbutler/trellis" = "1.1.0"
+"github:tylerbutler/trellis" = "1.2.3"
 "github:erlang/rebar3" = "3.24.0"
 "github:tylerbutler/licence_audit" = "v0.13.0"
 

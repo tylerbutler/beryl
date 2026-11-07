@@ -134,8 +134,16 @@ changelog-check:
     trellis changelog check --base origin/main
 
 # Preview the next versions computed from unreleased fragments
-version-plan:
-    trellis version plan
+version-plan *ARGS:
+    trellis version plan {{ ARGS }}
+
+# Prepare a release PR from main; this pushes release/pending
+release-pr pre="" versions="":
+    python3 -B scripts/release_pr.py --pre "{{ pre }}" --versions "{{ versions }}"
+
+# Test release preparation without creating tags, releases, or PRs
+release-test:
+    python3 -B -m unittest discover -s scripts -p 'release_pr_test.py'
 
 # === WEBSITE ===
 
@@ -232,7 +240,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
+ci: release-test format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
 
 # Alias for PR checks
 alias pr := ci

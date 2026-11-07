@@ -44,17 +44,18 @@ jobs:
       - name: Check workspace invariants
         run: trellis doctor
 
-      # The release PR (branch release/pending) consumes all unreleased
-      # fragments into the CHANGELOGs, so it can never satisfy this check.
+      - name: Test release preparation
+        run: just release-test
+
+      # Check release PRs too; Trellis previews existing RCs without a new bump.
       - name: Check changelog fragments
         id: changelog
-        if: github.head_ref != 'release/pending'
         # Keep going on a failed check so the comment below still reports why.
         continue-on-error: true
         run: |
           trellis changelog check \
-            --base ${{ github.event.pull_request.base.sha }} \
-            --head ${{ github.event.pull_request.head.sha }} \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}" \
             --format github >> "$GITHUB_OUTPUT"
 
       # `header` scopes the sticky comment to this workflow. `gh pr comment

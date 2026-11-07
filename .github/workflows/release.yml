@@ -4,6 +4,19 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      pre:
+        description: "Prerelease label (e.g. rc), promotion (none), or stable (empty)"
+        type: string
+        default: ""
+      versions:
+        description: "Optional package targets, e.g. beryl=1.0.0,beryl_mist=0.5.0"
+        type: string
+        default: ""
+
+concurrency:
+  group: trellis-release
+  cancel-in-progress: false
 
 env:
   HEXPM_READ_API_KEY: ${{ secrets.HEXPM_API_KEY }}
@@ -21,6 +34,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
         with:
+          ref: main
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
@@ -92,22 +106,24 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Create or update release PR
-        run: trellis release pr
+        id: prepare
+        run: python3 -B scripts/release_pr.py
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          INPUT_PRE: ${{ inputs.pre }}
+          INPUT_VERSIONS: ${{ inputs.versions }}
 
       # The release PR bumps package versions, and the generated API reference
       # stamps the version into its headings. Regenerate on the release branch
       # so the Docs check passes on the release PR. Pushing with the app token
-      # re-triggers the PR's checks. No release/pending branch → nothing to do.
+      # re-triggers the PR's checks. Skip when preparation found no new release.
       - name: Regenerate reference docs on the release branch
+        if: steps.prepare.outputs.prepared == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          if ! git fetch origin release/pending; then
-            echo "No release/pending branch; skipping docs regeneration."
-            exit 0
-          fi
+          set -euo pipefail
+          git fetch origin release/pending
           git checkout -B release/pending FETCH_HEAD
           just site-reference
           if git diff --quiet -- website/src/content/docs/reference/api; then
