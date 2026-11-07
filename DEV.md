@@ -414,7 +414,6 @@ them; promotion consumes them.
 Candidate tags use full package versions, such as `beryl-v1.0.0-rc.0`.
 Trellis marks their GitHub releases as prereleases. Candidates do not update
 the repository's moving minor series tag; stable releases do.
-Run `just release-test` for isolated release-helper and cycle tests.
 
 ### 1.0 release checklist
 

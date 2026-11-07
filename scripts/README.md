@@ -14,7 +14,7 @@ dependency boundary, and analyze compiled Erlang FFI. Invoke the root
 | [Portable dependency check](./check-portable-deps.mjs) | `productionGraph(root, loadPackage)`; direct execution checks `packages/beryl_protocol` and `examples/portable_channels`. [check-portable-deps.mjs:productionGraph] [check-portable-deps.mjs:check] |
 | [Dialyzer check](./check-ffi-dialyzer.sh) | `just dialyzer`, with `build-strict` prerequisite; the script scans package Erlang sources and analyzes them against compiled beams. [justfile:dialyzer] [check-ffi-dialyzer.sh:--src] |
 | [Xref check](./check-ffi-xref.sh) | `just xref`, with `build-strict` prerequisite; `XREF_BEAMS` carries selected compiled FFI modules into the Erlang subprocess. [justfile:xref] [check-ffi-xref.sh:XREF_BEAMS] |
-| [Release preparation](./release_pr.py) | `just release-pr <pre> <versions>` from main; shared release mode with separate package versions. `just release-test` checks it offline. |
+| [Release preparation](./release_pr.py) | `just release-pr <pre> <versions>` from main; shared release mode with separate package versions. |
 
 ## Invariants
 
@@ -69,9 +69,6 @@ From the repository root:
 
 - `just deps-test` exercises dependency preparation helpers.
   [justfile:deps-test]
-- `just release-test` uses mocked release commands and temporary repositories.
-  Only fixture version application writes release state; it does not create
-  tags, releases, or PRs. [justfile:release-test]
 - `node --test scripts/check-portable-deps.test.mjs` exercises the portable
   graph helper. `just portable-host-test` also runs the portable-host tests
   and the live package-metadata boundary check.

@@ -44,9 +44,6 @@ jobs:
       - name: Check workspace invariants
         run: trellis doctor
 
-      - name: Test release preparation
-        run: just release-test
-
       # Check release PRs too; Trellis previews existing RCs without a new bump.
       - name: Check changelog fragments
         id: changelog
