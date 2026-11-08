@@ -43,7 +43,7 @@ skip_unchanged = true
 
 [tools.trellis.publish.lifecycle]
 default = "git_only"
-# Stable releases and candidates must not publish to Hex.
+# The protocol is bundled with beryl, not released separately.
 packages = { "packages/beryl_protocol" = "workspace" }
 
 [tools.trellis.tasks.lint]
