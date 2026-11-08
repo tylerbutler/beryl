@@ -5,11 +5,10 @@ name: Publish
 # every version bump. workflow_dispatch allows re-running manually — trellis
 # tag create is idempotent (only creates tags that don't exist yet).
 #
-# Hex publishing is temporarily disabled (`trellis publish` is not run) while
-# packages are not ready for a public Hex release. Tags and GitHub releases
-# still record what would have shipped. To resume Hex publishing, re-add a
-# "Publish to Hex.pm" step running `trellis publish --all-untagged` (with
-# HEXPM_API_KEY) before the tag/release step.
+# Stable releases and candidates are GitHub-only. All released packages have
+# the git_only lifecycle; do not add Hex publishing or a write API key here.
+# Trellis marks candidate GitHub releases as prereleases and leaves moving
+# series tags unchanged until promotion.
 on:
   pull_request:
     types: [closed]
@@ -21,7 +20,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true &&
-       github.event.pull_request.head.ref == 'release/pending')
+       github.event.pull_request.head.ref == 'release/pending' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       actions: read
       contents: read
@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.merge_commit_sha || 'main' }}
           fetch-depth: 0
 
       - name: Setup environment

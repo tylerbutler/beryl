@@ -167,7 +167,7 @@ Managed via `.mise.toml`:
 
 CI matrix-tests Erlang 27 and 28.
 
-trellis (0.10.3) is pinned in `.mise.toml` for local development and
+trellis (1.3.0) is pinned in `.mise.toml` for local development and
 installed in CI via `.github/actions/mise`.
 
 ## CI/CD
@@ -177,10 +177,11 @@ installed in CI via `.github/actions/mise`.
   docs job (website reference must be up to date), examples job (Playwright)
 - **pr.yml**: PR title validation (commitlint), `trellis doctor`,
   `trellis changelog check`
-- **release.yml**: `trellis release pr` on push to main
+- **release.yml**: mode-preserving release PR preparation on push to main;
+  manual `pre` and package/version targets enter RCs or promote them
 - **publish.yml**: on release-PR merge — `trellis tag create --push
-  --github-release` (Hex.pm publishing via `trellis publish` is temporarily
-  disabled)
+  --github-release`; GitHub marks candidates as prereleases. All released
+  packages use `git_only` and cannot publish to Hex.pm
 
 ### Release Flow
 1. Push commits with conventional commit messages
@@ -190,10 +191,16 @@ installed in CI via `.github/actions/mise`.
    dev-tooling changes get no fragment — see the "Changelog Fragments"
    section in `AGENTS.md` for the full rule
 3. `trellis release pr` maintains a release PR (branch `release/pending`)
-   with version bumps and CHANGELOGs
+   with version bumps and CHANGELOGs, preserving its release mode and targets.
+   Manual workflow inputs select a label such as `rc`, `none` (promotion), or empty (automatic).
+   Preview with `just version-plan --pre rc` or `just version-plan --pre none`.
+   Native settings resume intent, continue candidates, and skip unchanged
+   content. Commit candidate fragment archives and `.changes/release.toml`;
+   promotion rolls up the target version's candidate changes.
 4. Merge the release PR → per-package tags (`beryl-v1.2.3`) and GitHub
-   releases are created (Hex.pm publishing is temporarily disabled — see
-   `.github/workflows/publish.yml`)
+   releases are created. Hex.pm publishing is disabled for candidates and
+   stable releases; do not add publication commands or Hex write credentials
+   to the release workflows. See DEV.md for candidate preparation.
 
 ## Conventions
 
