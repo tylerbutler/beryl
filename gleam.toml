@@ -36,6 +36,11 @@ repository_tags = ["minor"]
 [tools.trellis.publish.bundle]
 beryl = ["beryl_protocol"]
 
+[tools.trellis.release]
+resume = true
+auto_pre = true
+skip_unchanged = true
+
 [tools.trellis.publish.lifecycle]
 default = "git_only"
 # Stable releases and candidates must not publish to Hex.

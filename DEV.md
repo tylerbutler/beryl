@@ -11,7 +11,7 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
-| [trellis](https://trellis.tylerbutler.com) | 1.2.3+ | Gleam workspace manager (tasks, versions, publishing) |
+| [trellis](https://trellis.tylerbutler.com) | 1.3.0+ | Gleam workspace manager (tasks, versions, publishing) |
 
 **Recommended:** Use [mise](https://mise.jdx.dev/) with the provided
 `.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
@@ -366,7 +366,7 @@ also need no fragment.
    (e.g. `just change beryl Fixed "handle concurrent leave/join"`); PR CI
    enforces this via `trellis changelog check`
 3. Push to a feature branch and create a PR
-4. After merge, the release preparation script runs `trellis release pr`, which batches
+4. After merge, the release workflow runs `trellis release pr`, which batches
    fragments into a release PR (branch `release/pending`) bumping versions
    and regenerating each package's CHANGELOG.md
 5. Merging the release PR creates per-package tags (`beryl-v1.2.3`) and GitHub
@@ -381,8 +381,9 @@ Useful commands: `just version-plan` previews the next versions;
 
 Use the Release PR workflow's manual inputs to change release mode.
 Set `pre` to a label such as `rc` to enter or continue a candidate cycle.
-Use `none` to promote the current candidates to stable versions. Leave it empty for a stable
-release when no package has a candidate version.
+Use `none` to promote the current candidates to stable versions. Leave it empty
+to resume pending intent or continue committed candidates. With neither,
+Trellis prepares a stable release.
 
 Each package keeps its own version. The optional `versions` input accepts
 comma-separated targets, such as `beryl=1.0.0,beryl_mist=0.5.0`.
@@ -400,16 +401,27 @@ just version-plan --pre none
 ```
 
 To prepare the PR from a clean, current local `main`, use
-`just release-pr rc "beryl=1.0.0,beryl_mist=0.5.0"` or
-`just release-pr none`. These commands push `release/pending` and create or
+`just release-pr --pre rc --set beryl=1.0.0 --set beryl_mist=0.5.0` or
+`just release-pr --pre none`. These commands push `release/pending` and create or
 update its PR. They do not merge, tag, or publish.
 
-On later pushes to main, the script preserves an open release PR's mode and
-targets. After a candidate merges, the script prepares another candidate only
-if relevant fragments changed since the candidate's version commit. Unchanged
-retained fragments and documentation commits do not repeat candidates.
-Trellis retains fragments during the RC cycle so the stable changelog includes
-them; promotion consumes them.
+The `[tools.trellis.release]` settings enable native intent resumption,
+automatic candidate continuation, and skipping unchanged release content.
+On later pushes to main, Trellis preserves an open release PR's mode and
+targets. After a candidate merges, release-owned source or fragment changes
+allow another candidate. Unrelated documentation and excluded example changes
+do not repeat candidates. Use `--force` to prepare unchanged content; it does
+not bypass validation. Stable promotion requires an explicit `--pre none`.
+
+Each candidate includes only new changes. Trellis moves its fragments from
+`unreleased` into `.changes/<package>/v<prerelease>.toml` archives; commit those
+archives with the changelog sections. Promotion combines the target version's
+candidate archives and remaining fragments into the final changelog.
+Trellis also commits release intent in `.changes/release.toml`.
+
+The workflow uses `--github-output` and regenerates API reference pages only
+when `outcome` is `prepared`. Native outputs also distinguish `unchanged` and
+`no_changes`, while failures remain nonzero.
 
 Candidate tags use full package versions, such as `beryl-v1.0.0-rc.0`.
 Trellis marks their GitHub releases as prereleases. Candidates do not update

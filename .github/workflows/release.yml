@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       pre:
-        description: "Prerelease label (e.g. rc), promotion (none), or stable (empty)"
+        description: "Prerelease label (e.g. rc), promotion (none), or automatic (empty)"
         type: string
         default: ""
       versions:
@@ -107,7 +107,18 @@ jobs:
 
       - name: Create or update release PR
         id: prepare
-        run: python3 -B scripts/release_pr.py
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ -n "$INPUT_PRE" ]]; then
+            args+=(--pre "$INPUT_PRE")
+          fi
+          if [[ -n "$INPUT_VERSIONS" ]]; then
+            while IFS= read -r target; do
+              args+=(--set "$target")
+            done < <(printf '%s\n' "$INPUT_VERSIONS" | tr ',' '\n')
+          fi
+          trellis release pr "${args[@]}" --github-output >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           INPUT_PRE: ${{ inputs.pre }}
@@ -118,7 +129,7 @@ jobs:
       # so the Docs check passes on the release PR. Pushing with the app token
       # re-triggers the PR's checks. Skip when preparation found no new release.
       - name: Regenerate reference docs on the release branch
-        if: steps.prepare.outputs.prepared == 'true'
+        if: steps.prepare.outputs.outcome == 'prepared'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |

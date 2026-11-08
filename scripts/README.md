@@ -14,7 +14,6 @@ dependency boundary, and analyze compiled Erlang FFI. Invoke the root
 | [Portable dependency check](./check-portable-deps.mjs) | `productionGraph(root, loadPackage)`; direct execution checks `packages/beryl_protocol` and `examples/portable_channels`. [check-portable-deps.mjs:productionGraph] [check-portable-deps.mjs:check] |
 | [Dialyzer check](./check-ffi-dialyzer.sh) | `just dialyzer`, with `build-strict` prerequisite; the script scans package Erlang sources and analyzes them against compiled beams. [justfile:dialyzer] [check-ffi-dialyzer.sh:--src] |
 | [Xref check](./check-ffi-xref.sh) | `just xref`, with `build-strict` prerequisite; `XREF_BEAMS` carries selected compiled FFI modules into the Erlang subprocess. [justfile:xref] [check-ffi-xref.sh:XREF_BEAMS] |
-| [Release preparation](./release_pr.py) | `just release-pr <pre> <versions>` from main; shared release mode with separate package versions. |
 
 ## Invariants
 
@@ -39,10 +38,6 @@ dependency boundary, and analyze compiled Erlang FFI. Invoke the root
   Erlang FFI sources. Xref succeeds only when `undefined_function_calls`
   returns an empty list. [check-ffi-dialyzer.sh:--input_list_file]
   [check-ffi-xref.sh:undefined_function_calls]
-- Release preparation requires Python 3.11+, Trellis, git, and gh. It rejects
-  Hex lifecycles and preserves pending RC or promotion choices across pushes.
-  Candidate fragments remain unreleased until promotion; unchanged fragments
-  do not trigger another candidate. [release_pr.py:prepare]
 
 ## Side effects
 
@@ -58,10 +53,6 @@ dependency boundary, and analyze compiled Erlang FFI. Invoke the root
   and reads compiled beams. Both print diagnostics; their wrapper recipes
   first build packages. [check-ffi-dialyzer.sh:--output_plt]
   [check-ffi-xref.sh:XREF_BEAMS] [justfile:build-strict]
-- Release preparation reads pending PR metadata, fetches its commit, then
-  runs `trellis release pr` to push `release/pending` and update its PR.
-  It does not create tags or publish packages. [release_pr.py:pending_targets]
-  [release_pr.py:prepare]
 
 ## Verification
 

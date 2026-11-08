@@ -265,10 +265,13 @@ the current fragments with `just version-plan`.
 ### Release Flow
 
 1. Push commits with conventional messages + changelog fragments
-2. `scripts/release_pr.py` maintains a release PR (branch `release/pending`)
+2. `trellis release pr` maintains a release PR (branch `release/pending`)
    and preserves its mode and package targets across pushes. Manual workflow
-   inputs select a label such as `rc`, `none` (promotion), or empty (stable). Preview with
+   inputs select a label such as `rc`, `none` (promotion), or empty (automatic). Preview with
    `just version-plan --pre rc` or `just version-plan --pre none`.
+   Native release settings resume intent, continue candidates, and skip
+   unchanged content. Candidate fragments move into `.changes/<package>/`
+   archives for the final rollup; commit them and `.changes/release.toml`.
 3. Merge release PR → per-package tags (`beryl-v1.2.3`) + GitHub releases
 4. All released packages use `git_only`; Hex.pm publishing is disabled for
    candidates and stable releases. Do not add publication commands or Hex

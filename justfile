@@ -138,8 +138,8 @@ version-plan *ARGS:
     trellis version plan {{ ARGS }}
 
 # Prepare a release PR from main; this pushes release/pending
-release-pr pre="" versions="":
-    python3 -B scripts/release_pr.py --pre "{{ pre }}" --versions "{{ versions }}"
+release-pr *ARGS:
+    trellis release pr {{ ARGS }}
 
 # === WEBSITE ===
 
