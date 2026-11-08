@@ -134,8 +134,12 @@ changelog-check:
     trellis changelog check --base origin/main
 
 # Preview the next versions computed from unreleased fragments
-version-plan:
-    trellis version plan
+version-plan *ARGS:
+    trellis version plan {{ ARGS }}
+
+# Prepare a release PR from main; this pushes release/pending
+release-pr *ARGS:
+    trellis release pr {{ ARGS }}
 
 # === WEBSITE ===
 

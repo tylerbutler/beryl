@@ -52,7 +52,7 @@ type ResumedLoop {
     sender: socket.Sender(LoopMessage),
     frames: Subject(String),
     closed: Subject(socket.StopReason),
-    pid: process.Pid,
+    monitor: process.Monitor,
   )
 }
 
@@ -107,6 +107,8 @@ fn start_resumed_loop(heartbeat_ms: Int, continuous: Bool) -> ResumedLoop {
     )
   let frames = app_test_helper.connect(sockets, "resumed")
   let assert Ok(#(sender, pid)) = process.receive(ready, 1000)
+  // Monitor before releasing work so a fast exit retains its actual reason.
+  let monitor = process.monitor(pid)
   app_test_helper.join_ok(sockets, frames, "resumed", "room:a", "j", "r")
   arm(gate)
   socket.notify(sender, Park) |> should.equal(Ok(Nil))
@@ -135,7 +137,7 @@ fn start_resumed_loop(heartbeat_ms: Int, continuous: Bool) -> ResumedLoop {
   list.each(["presence_diff", "presence_diff", "resumed"], fn(event) {
     app_test_helper.recv(frames) |> string.contains(event) |> should.be_true
   })
-  ResumedLoop(sockets, sender, frames, closed, pid)
+  ResumedLoop(sockets, sender, frames, closed, monitor)
 }
 
 fn await_normal_exit(monitor: process.Monitor) -> Nil {
@@ -148,26 +150,24 @@ fn await_normal_exit(monitor: process.Monitor) -> Nil {
 
 pub fn resumed_work_allows_shutdown_test() -> Nil {
   let loop = start_resumed_loop(60_000, True)
-  let monitor = process.monitor(loop.pid)
   beryl.stop(loop.sockets) |> should.equal(Ok(Nil))
   process.receive(loop.closed, 1000) |> should.equal(Ok(socket.Shutdown))
   app_test_helper.recv(loop.frames)
   |> string.contains("phx_close")
   |> should.be_true
-  await_normal_exit(monitor)
+  await_normal_exit(loop.monitor)
   socket.queue_snapshot(loop.sender)
   |> should.equal(Error(overload.Unavailable))
 }
 
 pub fn resumed_work_allows_heartbeat_eviction_test() -> Nil {
   let loop = start_resumed_loop(2000, True)
-  let monitor = process.monitor(loop.pid)
   process.receive(loop.closed, 4000)
   |> should.equal(Ok(socket.HeartbeatTimeout))
   app_test_helper.recv(loop.frames)
   |> string.contains("phx_close")
   |> should.be_true
-  await_normal_exit(monitor)
+  await_normal_exit(loop.monitor)
   socket.queue_snapshot(loop.sender)
   |> should.equal(Error(overload.Unavailable))
   beryl.stop(loop.sockets) |> should.equal(Ok(Nil))
@@ -175,10 +175,14 @@ pub fn resumed_work_allows_heartbeat_eviction_test() -> Nil {
 
 pub fn resumed_work_allows_owner_monitor_test() -> Nil {
   let loop = start_resumed_loop(60_000, True)
-  let monitor = process.monitor(loop.pid)
   let owner = app_test_helper.runtime_pid(loop.sockets)
   process.kill(owner)
-  await_normal_exit(monitor)
+  let assert Ok(process.ProcessDown(reason:, ..)) =
+    process.new_selector()
+    |> process.select_specific_monitor(loop.monitor, fn(down) { down })
+    |> process.selector_receive(3000)
+  // Either cooperative cleanup or the external guardian can win this race.
+  should.be_true(reason == process.Normal || reason == process.Killed)
   socket.queue_snapshot(loop.sender)
   |> should.equal(Error(overload.Unavailable))
   test_helper.wait_until(
@@ -209,6 +213,7 @@ pub fn resumed_work_releases_reservations_test() -> Nil {
   app_test_helper.recv(loop.frames)
   |> string.contains("phx_close")
   |> should.be_true
+  await_normal_exit(loop.monitor)
 }
 
 @external(erlang, "beryl_test_process_ffi", "socket_queue")
