@@ -1,3 +1,3 @@
 package = "beryl"
 kind = "Added"
-body = "Bound pending connection admission and cancellation with configurable count and payload limits, reject saturation before mailbox publication, reclaim unacknowledged grants across limiter restarts, recover cancelled holders if a releasing caller dies before notification, immediately reuse released connection capacity, and safely cancel permits when the limiter is unavailable."
+body = "Add `with_connection_queue_limits`, defaulting to 256 items and 8 MiB of accounted payload, including executing work. Each acquire reserves two items. When a connection ceiling or per-IP connection rate is enabled, saturation rejects upgrades with HTTP 429. Preserve connection capacity across cancellations, caller exits, and limiter restarts. Byte accounting is structural, not a total-memory cap."
