@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Dependencies"
-body = "Restrict `lattice_presence` to `>= 2.0.0 and < 2.1.0` for presence-state compatibility."

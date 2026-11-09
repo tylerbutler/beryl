@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Keep the socket router responsive to shutdown while it processes large disconnects, and skip later callback effects when broadcast admission fails."
