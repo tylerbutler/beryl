@@ -145,6 +145,12 @@ heartbeat, or WebSocket assertions must:
 - **Never** use broad "any message" selectors — a stale queued message from a
   prior test can cause nondeterministic failures
 
+Use `test_helper.with_isolated_caller` for exact caller mailbox/monitor counts
+and asynchronous fixtures that need cleanup on assertion failure. Start the
+fixture app inside that caller, stop it before returning, and consume its
+expected terminal messages. The helper kills the private caller on failure or
+timeout and terminates its linked app supervisors.
+
 ### Polling Over Sleeping
 
 Use `test_helper.wait_until(check, timeout_ms, interval_ms)` instead of
@@ -318,6 +324,14 @@ format and clean include them. `scripts/prepare-gleam-deps.mjs` also omits
 them unless selected by package name. Use `just bench-codec-deps`,
 `just bench-codec-check`, and `just bench-codec`; see
 `benchmarks/codec/README.md` for scope and measurement limits.
+
+`just deps-gleam` also prepares standalone consumers under `scripts/fixtures/`,
+including `heirloom_namespace`, outside the Trellis workspace/release graph.
+Register standalone consumers in `scripts/prepare-gleam-deps.mjs`, including
+their transitive local dependencies in the preparation pass budget. Keep their
+locks and fingerprints in the dependency artifact. `just namespace-test`
+refreshes its fixture lock with Gleam before building; release validation runs
+it after version bumps and commits that lock with the generated reference docs.
 
 ## Examples
 

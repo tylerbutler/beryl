@@ -7,6 +7,7 @@
 //// handle while the limiter survives, and connection owners that monitor the
 //// accepting runtime close when it dies.
 
+import app_heartbeat_test
 import app_test_helper
 import beryl
 import beryl/connection_limit
@@ -248,6 +249,7 @@ pub fn timed_out_stop_drops_late_completion_and_monitors_test() -> Nil {
 
 pub fn stop_acceptance_timeout_cleans_up_and_allows_later_stop_test() -> Nil {
   use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
   let assert Ok(sockets) =
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec()),
@@ -270,6 +272,19 @@ pub fn stop_acceptance_timeout_cleans_up_and_allows_later_stop_test() -> Nil {
     outcome |> should.equal(Ok(Nil))
   })
   beryl.stop(sockets) |> should.equal(Ok(Nil))
+  test_helper.monitor_count(caller) |> should.equal(monitors)
+  test_helper.mailbox_length(caller) |> should.equal(messages)
+}
+
+pub fn heartbeat_then_stop_acceptance_preserves_caller_mailbox_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(10_000)
+  let caller = process.self()
+  let monitors = test_helper.monitor_count(caller)
+  let messages = test_helper.mailbox_length(caller)
+  // Preserve the fixture order from serial seed 1904618459.
+  app_heartbeat_test.active_socket_survives_while_stale_peer_is_evicted_test()
+  stop_acceptance_timeout_cleans_up_and_allows_later_stop_test()
   test_helper.monitor_count(caller) |> should.equal(monitors)
   test_helper.mailbox_length(caller) |> should.equal(messages)
 }

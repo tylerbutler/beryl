@@ -64,6 +64,7 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
+            scripts/fixtures/*/build/packages
             build/snippet-check/manifest.toml
             build/snippet-check/build/packages
           key: gleam-deps-v2-${{ runner.os }}-${{ hashFiles('.mise.toml', '**/gleam.toml', '**/manifest.toml', 'scripts/prepare-gleam-deps.mjs', 'website/scripts/check-snippets.mjs', '!**/build/**', '!**/node_modules/**') }}
@@ -88,6 +89,7 @@ jobs:
             packages/*/build/packages
             examples/*/build/packages
             examples/*/client/build/packages
+            scripts/fixtures/*/build/packages
             build/snippet-check/manifest.toml
             build/snippet-check/build/packages
           key: ${{ steps.cache.outputs.cache-primary-key }}
@@ -124,11 +126,9 @@ jobs:
           INPUT_PRE: ${{ inputs.pre }}
           INPUT_VERSIONS: ${{ inputs.versions }}
 
-      # The release PR bumps package versions, and the generated API reference
-      # stamps the version into its headings. Regenerate on the release branch
-      # so the Docs check passes on the release PR. Pushing with the app token
-      # re-triggers the PR's checks. Skip when preparation found no new release.
-      - name: Regenerate reference docs on the release branch
+      # Refresh standalone consumer locks and versioned reference headings
+      # after the release bump. The app-token push re-triggers PR checks.
+      - name: Refresh standalone fixture locks and reference docs on the release branch
         if: steps.prepare.outputs.outcome == 'prepared'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -136,11 +136,12 @@ jobs:
           set -euo pipefail
           git fetch origin release/pending
           git checkout -B release/pending FETCH_HEAD
+          just namespace-test
           just site-reference
-          if git diff --quiet -- website/src/content/docs/reference/api; then
-            echo "Reference docs already up to date."
+          if git diff --quiet -- scripts/fixtures/heirloom_namespace/manifest.toml website/src/content/docs/reference/api; then
+            echo "Fixture lock and reference docs already up to date."
             exit 0
           fi
-          git add website/src/content/docs/reference/api
-          git commit -m "docs: regenerate API reference for release"
+          git add scripts/fixtures/heirloom_namespace/manifest.toml website/src/content/docs/reference/api
+          git commit -m "chore: refresh fixture lock and API reference for release"
           git push origin HEAD:release/pending

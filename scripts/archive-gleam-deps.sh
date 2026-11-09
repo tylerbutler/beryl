@@ -6,6 +6,8 @@ paths=(
   packages/*/build/packages
   examples/*/build/packages
   examples/*/client/build/packages
+  scripts/fixtures/*/manifest.toml
+  scripts/fixtures/*/build/packages
   build/snippet-check/manifest.toml
   build/snippet-check/build/packages
 )
