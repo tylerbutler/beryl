@@ -7,12 +7,14 @@
 import app_test_helper
 import beryl
 import beryl/channel
+import beryl/internal
 import beryl/snapshot
 import beryl/socket.{Closed, Join}
 import beryl/transport
 import beryl/wire
 import channel_dispatch_helper
 import gleam/erlang/process
+import gleam/list
 import gleam/string
 import gleeunit/should
 import test_helper
@@ -90,6 +92,7 @@ fn assert_socket_removed(channels: beryl.Sockets, factory: process.Pid) -> Nil {
 }
 
 pub fn heartbeat_timeout_evicts_stale_socket_and_runs_closer_test() -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
   let events = process.new_subject()
   let channels = start_system(events)
   let closed = process.new_subject()
@@ -121,6 +124,7 @@ pub fn heartbeat_timeout_evicts_stale_socket_and_runs_closer_test() -> Nil {
 }
 
 pub fn channel_heartbeat_timeout_stops_socket_actor_test() -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
   let terminated = process.new_subject()
   let handler =
     channel.handler("room:*", fn(_context) {
@@ -159,6 +163,7 @@ pub fn channel_heartbeat_timeout_stops_socket_actor_test() -> Nil {
 }
 
 pub fn evicted_socket_is_removed_and_ignores_further_input_test() -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
   let events = process.new_subject()
   let channels = start_system(events)
   let closed = process.new_subject()
@@ -174,10 +179,13 @@ pub fn evicted_socket_is_removed_and_ignores_further_input_test() -> Nil {
   app_test_helper.join(channels, "s1", "room:b", "jr-2", "r-2")
   app_test_helper.recv_none(frames)
   process.receive(events, 100) |> should.be_error
+  process.receive(closed, 1000) |> should.equal(Ok(Nil))
+  beryl.stop(channels) |> should.equal(Ok(Nil))
 }
 
 pub fn active_socket_survives_while_stale_peer_is_evicted_test() -> Nil {
   use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
   let events = process.new_subject()
   let channels = start_system(events)
   let stale_closed = process.new_subject()
@@ -199,6 +207,10 @@ pub fn active_socket_survives_while_stale_peer_is_evicted_test() -> Nil {
 
   // The stale peer was evicted (closer ran); the active one was not.
   process.receive(stale_closed, 2000) |> should.equal(Ok(Nil))
+  let assert Ok(Closed("room:a", socket.HeartbeatTimeout)) =
+    process.receive(events, 1000)
+  app_test_helper.recv(stale)
+  |> should.equal("[\"jr-1\",\"jr-1\",\"room:a\",\"phx_close\",{}]")
   process.receive(active_closed, 0) |> should.be_error
   process.is_alive(app_test_helper.runtime_pid(channels)) |> should.be_true
 
@@ -207,9 +219,31 @@ pub fn active_socket_survives_while_stale_peer_is_evicted_test() -> Nil {
   app_test_helper.recv(active)
   |> string.contains("\"status\":\"ok\"")
   |> should.be_true
+  let assert Ok(Join("room:b", _, _)) = process.receive(events, 500)
+
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+  let assert Ok(Closed(first_topic, socket.Shutdown)) =
+    process.receive(events, 1000)
+  let assert Ok(Closed(second_topic, socket.Shutdown)) =
+    process.receive(events, 1000)
+  [first_topic, second_topic]
+  |> list.sort(string.compare)
+  |> should.equal(["room:a", "room:b"])
+  let first_close = app_test_helper.recv(active)
+  let second_close = app_test_helper.recv(active)
+  [first_close, second_close]
+  |> list.sort(string.compare)
+  |> should.equal([
+    "[\"jr-2\",\"jr-2\",\"room:a\",\"phx_close\",{}]",
+    "[\"jr-3\",\"jr-3\",\"room:b\",\"phx_close\",{}]",
+  ])
+  process.receive(active_closed, 1000) |> should.equal(Ok(Nil))
+  process.receive(events, 0) |> should.be_error
+  app_test_helper.recv_none(active)
 }
 
 pub fn message_rate_limited_heartbeats_lead_to_eviction_test() -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
   let events = process.new_subject()
   let channels = start_message_limited_system(events)
   let closed = process.new_subject()
@@ -227,6 +261,7 @@ pub fn message_rate_limited_heartbeats_lead_to_eviction_test() -> Nil {
   flood_heartbeats(channels, "flooding", 20)
 
   process.receive(closed, 1000) |> should.equal(Ok(Nil))
+  beryl.stop(channels) |> should.equal(Ok(Nil))
 }
 
 fn flood_heartbeats(
@@ -246,6 +281,20 @@ fn flood_heartbeats(
       flood_heartbeats(channels, socket_id, remaining - 1)
     }
   }
+}
+
+pub fn failed_heartbeat_fixture_stops_its_linked_app_test() -> Nil {
+  let runtime_started = process.new_subject()
+  internal.rescue(fn() {
+    use <- test_helper.with_isolated_caller(5000)
+    let events = process.new_subject()
+    let channels = start_system(events)
+    process.send(runtime_started, app_test_helper.runtime_pid(channels))
+    panic as "intentional fixture assertion failure"
+  })
+  |> should.be_error
+  let assert Ok(runtime) = process.receive(runtime_started, 1000)
+  test_helper.wait_until(fn() { !process.is_alive(runtime) }, 2000, 5)
 }
 
 fn send_heartbeats(

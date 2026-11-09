@@ -14,6 +14,7 @@ import path from "node:path";
 import test from "node:test";
 import {
 	prepareDependencies,
+	prepareWorkspaceDependencies,
 	retryHexRateLimits,
 	selectDependencyMembers,
 } from "./prepare-gleam-deps.mjs";
@@ -44,7 +45,7 @@ test("explicit dependency selection preserves workspace order", () => {
 test("unknown dependency selections fail before preparing any package", () => {
 	assert.throws(
 		() => selectDependencyMembers(members, ["beryl", "missing"]),
-		/Unknown workspace package: missing/,
+		/Unknown dependency package: missing/,
 	);
 });
 
@@ -159,6 +160,55 @@ process.exit(1);
 		readFileSync(path.join(directory, "calls.jsonl"), "utf8"),
 		'"cached lock"\n',
 	);
+});
+
+test("shared preparation refreshes a standalone fixture after a release bump", (t) => {
+	const directory = mkdtempSync(path.join(tmpdir(), "beryl-standalone-deps-"));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	writeFileSync(
+		path.join(directory, "gleam.toml"),
+		'[tools.trellis]\nmembers = ["packages/*"]\n',
+	);
+	for (const name of ["beryl", "beryl_protocol"]) {
+		mkdirSync(path.join(directory, "packages", name, "src"), { recursive: true });
+		writeFileSync(
+			path.join(directory, "packages", name, "gleam.toml"),
+			`name = "${name}"\nversion = "0.5.0"\n`
+				+ (name === "beryl" ? '[dependencies]\nberyl_protocol = { path = "../beryl_protocol" }\n' : ""),
+		);
+	}
+	const fixture = path.join(directory, "scripts/fixtures/heirloom_namespace");
+	mkdirSync(path.join(fixture, "src"), { recursive: true });
+	// Use the real standalone consumer's dependency declaration.
+	cpSync(
+		new URL("./fixtures/heirloom_namespace/gleam.toml", import.meta.url),
+		path.join(fixture, "gleam.toml"),
+	);
+	writeFileSync(
+		path.join(fixture, "src/heirloom_namespace.gleam"),
+		"pub fn main() -> Nil { Nil }\n",
+	);
+	prepareWorkspaceDependencies(directory);
+	const manifest = path.join(fixture, "manifest.toml");
+	assert.match(readFileSync(manifest, "utf8"), /name = "beryl", version = "0\.5\.0"/);
+	for (const name of ["beryl", "beryl_protocol"]) {
+		const config = path.join(directory, "packages", name, "gleam.toml");
+		writeFileSync(config, readFileSync(config, "utf8").replace("0.5.0", "0.6.0"));
+	}
+	prepareWorkspaceDependencies(directory, ["heirloom_namespace"]);
+	for (const name of ["beryl", "beryl_protocol"]) {
+		assert.match(
+			readFileSync(manifest, "utf8"),
+			new RegExp(`name = "${name}", version = "0\\.6\\.0"`),
+		);
+	}
+	const result = spawnSync("gleam", ["build", "--warnings-as-errors"], {
+		cwd: fixture,
+		env: { ...process.env, GLEAM_LOG: "debug" },
+		encoding: "utf8",
+	});
+	assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+	assert.doesNotMatch(`${result.stdout}${result.stderr}`, /manifest_outdated|Resolving versions/);
 });
 
 test("cold, changed, and restored path dependencies need no further resolution", (t) => {

@@ -10,7 +10,7 @@ dependency boundary, and analyze compiled Erlang FFI. Invoke the root
 
 | File | Export or command boundary |
 |---|---|
-| [Dependency preparation](./prepare-gleam-deps.mjs) | `retryHexRateLimits(operation, retryDelays)`, `prepareDependencies(directory, pathDependencyCount)`, and `selectDependencyMembers(members, names)`; direct execution accepts optional workspace package names. [prepare-gleam-deps.mjs:retryHexRateLimits] [prepare-gleam-deps.mjs:prepareDependencies] [prepare-gleam-deps.mjs:selectDependencyMembers] |
+| [Dependency preparation](./prepare-gleam-deps.mjs) | `retryHexRateLimits(operation, retryDelays)`, `prepareDependencies(directory, pathDependencyCount)`, `selectDependencyMembers(members, names)`, and `prepareWorkspaceDependencies(root, names)`; direct execution accepts optional workspace or standalone fixture names. [prepare-gleam-deps.mjs:retryHexRateLimits] [prepare-gleam-deps.mjs:prepareDependencies] [prepare-gleam-deps.mjs:selectDependencyMembers] [prepare-gleam-deps.mjs:prepareWorkspaceDependencies] |
 | [Portable dependency check](./check-portable-deps.mjs) | `productionGraph(root, loadPackage)`; direct execution checks `packages/beryl_protocol` and `examples/portable_channels`. [check-portable-deps.mjs:productionGraph] [check-portable-deps.mjs:check] |
 | [Dialyzer check](./check-ffi-dialyzer.sh) | `just dialyzer`, with `build-strict` prerequisite; the script scans package Erlang sources and analyzes them against compiled beams. [justfile:dialyzer] [check-ffi-dialyzer.sh:--src] |
 | [Xref check](./check-ffi-xref.sh) | `just xref`, with `build-strict` prerequisite; `XREF_BEAMS` carries selected compiled FFI modules into the Erlang subprocess. [justfile:xref] [check-ffi-xref.sh:XREF_BEAMS] |
@@ -20,6 +20,8 @@ dependency boundary, and analyze compiled Erlang FFI. Invoke the root
 - Dependency preparation requires Node.js 22.12+ for `globSync`, plus
   `trellis` and Gleam on `PATH`. Default selection omits benchmark members;
   explicit package names may select them and unknown names fail.
+  The shared preparation also includes registered standalone fixtures outside
+  the Trellis graph. Their pass budget counts transitive local dependencies.
   [prepare-gleam-deps.mjs:globSync]
   [prepare-gleam-deps.mjs:selectDependencyMembers]
 - Hex rate limits retry after 10, 30, and 60 seconds. Other failures
@@ -59,6 +61,8 @@ dependency boundary, and analyze compiled Erlang FFI. Invoke the root
 From the repository root:
 
 - `just deps-test` exercises dependency preparation helpers.
+  It checks standalone fixture lock refresh after local dependency version
+  bumps and artifact transfer of fixture locks, fingerprints, and symlinks.
   [justfile:deps-test]
 - `node --test scripts/check-portable-deps.test.mjs` exercises the portable
   graph helper. `just portable-host-test` also runs the portable-host tests
@@ -67,10 +71,12 @@ From the repository root:
 - `just beam-check` builds packages and runs Dialyzer/Xref; install the root
   BEAM/Gleam toolchain and prepare dependencies first. The analysis writes
   build artifacts. [justfile:beam-check] [justfile:dialyzer] [justfile:xref]
-- `just namespace-test` clean-builds and runs the standalone
+- `just namespace-test` prepares dependencies, clean-builds, and runs the standalone
   `fixtures/heirloom_namespace` consumer. Its own `heirloom` Gleam module and
   `heirloom_ffi` Erlang helper must coexist with beryl. The fixture is outside
   the workspace and release graph. [justfile:namespace-test]
+  The release workflow runs this check after version bumps and commits the
+  fixture lock with the generated API reference.
 
 `just deps-gleam` is dependency setup, not an offline test; it can download
 packages and also prepares website snippets. [justfile:deps-gleam]

@@ -18,7 +18,7 @@ deps: deps-gleam
     pnpm -C examples install
     pnpm -C website install
 
-# Download gleam dependencies for every workspace member
+# Download Gleam dependencies for default workspace members and standalone fixtures
 deps-gleam:
     node scripts/prepare-gleam-deps.mjs
     node website/scripts/check-snippets.mjs --deps-only
@@ -56,6 +56,7 @@ protocol-test:
 
 # Check that consumers can own top-level heirloom Gleam and Erlang modules
 namespace-test:
+    node scripts/prepare-gleam-deps.mjs heirloom_namespace
     cd scripts/fixtures/heirloom_namespace && gleam format --check src && gleam clean && gleam build --warnings-as-errors && gleam run
 
 # Test Phoenix framing and the Durable Object host in the Cloudflare runtime
@@ -236,7 +237,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
+ci: deps-test namespace-test format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
 
 # Alias for PR checks
 alias pr := ci

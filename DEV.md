@@ -46,8 +46,16 @@ just deps
 just ci
 ```
 
-`just deps-gleam` uses Node.js 22.12+ to prepare workspace and documentation
-snippet dependencies in sequence. Gleam 1.18.1 updates only one changed path
+`just deps-gleam` uses Node.js 22.12+ to prepare workspace, standalone fixture,
+and documentation snippet dependencies in sequence. The shared preparation
+includes `scripts/fixtures/heirloom_namespace`, although Trellis excludes it
+from the workspace and release graph. Use
+`node scripts/prepare-gleam-deps.mjs heirloom_namespace` to prepare only this
+fixture. `just namespace-test` prepares its dependencies before a strict clean
+build and run. After a version bump, the release workflow runs this check and
+commits the fixture lock that Gleam generates with the reference docs.
+
+Gleam 1.18.1 updates only one changed path
 dependency fingerprint per call. Preparation repeats until the manifest and
 fingerprints stop changing, retries Hex rate-limit failures with bounded
 backoff. Remove this repeated preparation when the pinned Gleam release includes
@@ -59,7 +67,9 @@ artifact ID from the dependency job, even when the shared cache has expired.
 Artifacts use the repository's retention period; after an artifact expires,
 rerun all jobs to prepare dependencies again.
 Run `just deps-test` to check cold preparation, changed dependencies, cache reuse,
-and artifact transfer.
+standalone fixture version bumps, and artifact transfer. CI transfers fixture
+manifests and dependency fingerprints with the prepared sources so downstream
+jobs use the producer's lock state.
 
 ### Codec benchmarks
 
@@ -294,6 +304,15 @@ exercise VM-sensitive restart exhaustion, PubSub scope recovery, or tightly
 controlled actor restart and delayed-ack scheduling. Do not tag tests that can
 use unique subjects, scopes, socket IDs, or exact mailbox selectors for
 isolation.
+
+Run exact caller mailbox and monitor counts inside
+`test_helper.with_isolated_caller(timeout_ms, action)`. Delayed messages from
+other fixtures must not affect these counts. Create asynchronous fixture apps
+inside that private caller, stop them before returning, and consume their
+expected terminal events, frames, and closer notifications with exact
+selectors. The helper kills the caller on failure or timeout, which also
+terminates its linked app supervisors. Do not replace these checks with broad
+mailbox drains.
 
 Filter tests by name, file, line, or tag by passing unitest arguments after
 `--`:

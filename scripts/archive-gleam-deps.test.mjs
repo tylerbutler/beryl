@@ -37,6 +37,8 @@ test("artifacts restore prepared dependencies without the Actions cache", (t) =>
 		"packages/core/build/packages/local.config_fingerprint": "fingerprint",
 		"examples/app/build/packages/packages.toml": "prepared app",
 		"examples/app/client/build/packages/packages.toml": "prepared client",
+		"scripts/fixtures/heirloom_namespace/manifest.toml": "release fixture lock",
+		"scripts/fixtures/heirloom_namespace/build/packages/beryl.config_fingerprint": "fixture fingerprint",
 		"build/snippet-check/manifest.toml": "snippet lock",
 		"build/snippet-check/build/packages/packages.toml": "prepared snippets",
 	};
@@ -49,6 +51,8 @@ test("artifacts restore prepared dependencies without the Actions cache", (t) =>
 	chmodSync(path.join(workspace, executable), 0o755);
 	const link = "examples/app/build/packages/core";
 	symlinkSync("../../../../packages/core", path.join(workspace, link));
+	const fixtureLink = "scripts/fixtures/heirloom_namespace/build/packages/core";
+	symlinkSync("../../../../../packages/core", path.join(workspace, fixtureLink));
 	const hex = path.join(home, ".cache/gleam/hex/hexpm/packages");
 	mkdirSync(hex, { recursive: true });
 	writeFileSync(path.join(hex, "dependency.tar"), "downloaded Hex package");
@@ -76,6 +80,10 @@ test("artifacts restore prepared dependencies without the Actions cache", (t) =>
 	);
 	assert.equal(
 		realpathSync(path.join(restored, link)),
+		realpathSync(path.join(restored, "packages/core")),
+	);
+	assert.equal(
+		realpathSync(path.join(restored, fixtureLink)),
 		realpathSync(path.join(restored, "packages/core")),
 	);
 	assert.equal(

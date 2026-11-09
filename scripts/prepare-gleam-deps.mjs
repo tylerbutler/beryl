@@ -8,6 +8,13 @@ const HEX_RATE_LIMIT = /rate limit .* exceeded|too many requests/i;
 const INCOMPATIBLE_LOCK =
 	/incompatible locked version|there's no compatible version of/i;
 const RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
+const standaloneFixtures = [
+	{
+		name: "heirloom_namespace",
+		path: "scripts/fixtures/heirloom_namespace",
+		dependencies: ["beryl", "beryl_protocol"],
+	},
+];
 
 function sleep(milliseconds) {
 	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
@@ -88,7 +95,7 @@ export function prepareDependencies(directory, pathDependencyCount) {
 export function selectDependencyMembers(members, names = []) {
 	for (const name of names) {
 		if (!members.some((member) => member.name === name)) {
-			throw new Error(`Unknown workspace package: ${name}`);
+			throw new Error(`Unknown dependency package: ${name}`);
 		}
 	}
 	return members.filter((member) =>
@@ -98,15 +105,20 @@ export function selectDependencyMembers(members, names = []) {
 	);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+export function prepareWorkspaceDependencies(root, names = []) {
 	const { packages } = JSON.parse(
 		execFileSync("trellis", ["list", "--json"], {
-			cwd: repoRoot,
+			cwd: root,
 			encoding: "utf8",
 		}),
 	);
-	for (const member of selectDependencyMembers(packages, process.argv.slice(2))) {
+	const members = selectDependencyMembers([...packages, ...standaloneFixtures], names);
+	for (const member of members) {
 		console.log(`Preparing dependencies for ${member.name}`);
-		prepareDependencies(path.join(repoRoot, member.path), member.dependencies.length);
+		prepareDependencies(path.join(root, member.path), member.dependencies.length);
 	}
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	prepareWorkspaceDependencies(repoRoot, process.argv.slice(2));
 }
