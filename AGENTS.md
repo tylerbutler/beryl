@@ -277,7 +277,8 @@ the current fragments with `just version-plan`.
    `just version-plan --pre rc` or `just version-plan --pre none`.
    Native release settings resume intent, continue candidates, and skip
    unchanged content. Candidate fragments move into `.changes/<package>/`
-   archives for the final rollup; commit them and `.changes/release.toml`.
+   archives for the final rollup; commit those archives. Trellis reads release
+   inputs from Git history, not `.changes/release.toml`.
 3. Merge release PR → per-package tags (`beryl-v1.2.3`) + GitHub releases
 4. All released packages use `git_only`; Hex.pm publishing is disabled for
    candidates and stable releases. Do not add publication commands or Hex

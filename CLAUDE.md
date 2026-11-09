@@ -167,7 +167,7 @@ Managed via `.mise.toml`:
 
 CI matrix-tests Erlang 27 and 28.
 
-trellis (1.3.0) is pinned in `.mise.toml` for local development and
+trellis (1.4.0) is pinned in `.mise.toml` for local development and
 installed in CI via `.github/actions/mise`.
 
 ## CI/CD
@@ -195,8 +195,9 @@ installed in CI via `.github/actions/mise`.
    Manual workflow inputs select a label such as `rc`, `none` (promotion), or empty (automatic).
    Preview with `just version-plan --pre rc` or `just version-plan --pre none`.
    Native settings resume intent, continue candidates, and skip unchanged
-   content. Commit candidate fragment archives and `.changes/release.toml`;
-   promotion rolls up the target version's candidate changes.
+   content. Commit candidate fragment archives; promotion rolls up the target
+   version's candidate changes. Trellis reads release inputs from Git history,
+   not `.changes/release.toml`.
 4. Merge the release PR → per-package tags (`beryl-v1.2.3`) and GitHub
    releases are created. Hex.pm publishing is disabled for candidates and
    stable releases; do not add publication commands or Hex write credentials
