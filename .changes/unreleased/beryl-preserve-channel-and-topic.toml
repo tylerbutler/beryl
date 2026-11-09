@@ -1,3 +1,3 @@
 package = "beryl"
 kind = "Fixed"
-body = "Preserve channel and topic rate-limit allowances across leave/rejoin and duplicate joins for the life of the socket."
+body = "Preserve channel and topic rate-limit allowances across leave/rejoin and duplicate joins for the life of the socket. Previously joined topics count toward `with_channel_rate_max_keys_per_socket` until disconnect. The default cap is 1000; messages requiring a new bucket after the cap is reached are dropped."

@@ -1,3 +1,3 @@
 package = "beryl"
 kind = "Changed"
-body = "Make outbound codec encoders return typed errors; close affected sockets on encoding failure, stop later effects, and reclaim pending replies and resources. Custom total encoders must wrap frames in Ok."
+body = "Return `Result(Frame, EncodeError)` from outbound codec callbacks and `apply_encode_*` helpers; close/error helpers return `Option(Result(Frame, EncodeError))`. Custom encoders must return `Ok(frame)` or `Error(error)`, and exhaustive `socket.StopReason` matches must handle `EncodingFailed(error)`. Runtime encoding failures close the socket, release pending replies and resources, and stop later effects without rolling back earlier effects. Direct helpers only return the callback result."

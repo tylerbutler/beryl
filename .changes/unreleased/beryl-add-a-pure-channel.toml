@@ -1,3 +1,3 @@
 package = "beryl"
 kind = "Added"
-body = "Add a pure channel protocol core for Erlang and JavaScript with capability-safe correlation, ordered lifecycle actions, heartbeat deadlines, and versioned restoration."
+body = "Add `beryl_protocol`, a pure channel lifecycle core for Erlang and JavaScript with connection-scoped join/reply capabilities, ordered actions, heartbeat deadlines, and versioned snapshot export/restoration that preserves closed-connection reasons. Hosts supply I/O, authorization, and application state; the beryl runtime remains Erlang-only."
