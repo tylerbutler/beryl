@@ -1,5 +1,15 @@
 # beryl_mist changelog
 
+## v0.4.1 - 2026-11-09
+
+### Fixed
+
+- Preserve Mist socket-write error reasons for outbound text and binary frames.
+
+### Dependencies
+
+- Updated beryl to 0.6.0
+
 ## v0.4.0 - 2026-09-24
 
 ### Changed

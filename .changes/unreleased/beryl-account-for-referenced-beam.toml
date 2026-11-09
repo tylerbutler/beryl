@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Count referenced binary sizes against outbound queue byte limits until the transport finishes writing or the connection closes."

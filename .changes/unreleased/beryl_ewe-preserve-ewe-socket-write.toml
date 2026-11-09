@@ -1,3 +1,0 @@
-package = "beryl_ewe"
-kind = "Fixed"
-body = "Preserve Ewe socket-write error reasons for outbound text and binary frames."

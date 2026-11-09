@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Return errors instead of timing out on failed presence CRDT clock lookups, and acknowledge failed asynchronous mutations. Failed replacements retain existing entries; socket exit releases reserved cleanup capacity. Match track call errors as `TrackRequestFailed(error)` in `PresenceTrackError`, and handle `TrackInvalidCrdtState` and `UpdateInvalidCrdtState`."

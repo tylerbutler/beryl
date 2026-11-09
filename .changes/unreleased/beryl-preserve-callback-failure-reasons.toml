@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Report a callback failure to the client as phx_error instead of phx_close when the channel closes before the failure is processed."
