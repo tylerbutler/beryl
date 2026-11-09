@@ -146,6 +146,8 @@ pub fn without_heir(spec: Spec(previous_data)) -> Spec(Nil) {
 }
 
 /// Create an ETS table owned by the calling process.
+///
+/// Names longer than 255 Unicode code points return `InvalidName`.
 pub fn create(spec: Spec(heir_data)) -> Result(Table(key, value), CreateError) {
   create_ffi(
     spec.name,
@@ -158,7 +160,7 @@ pub fn create(spec: Spec(heir_data)) -> Result(Table(key, value), CreateError) {
   )
 }
 
-@external(erlang, "heirloom_ffi", "create")
+@external(erlang, "beryl_heirloom_ffi", "create")
 fn create_ffi(
   name: String,
   table_type: TableType,
@@ -178,7 +180,7 @@ pub fn insert(
   insert_ffi(table, key, value)
 }
 
-@external(erlang, "heirloom_ffi", "insert")
+@external(erlang, "beryl_heirloom_ffi", "insert")
 fn insert_ffi(
   table: Table(key, value),
   key: key,
@@ -196,7 +198,7 @@ pub fn lookup(
   lookup_ffi(table, key)
 }
 
-@external(erlang, "heirloom_ffi", "lookup")
+@external(erlang, "beryl_heirloom_ffi", "lookup")
 fn lookup_ffi(
   table: Table(key, value),
   key: key,
@@ -207,19 +209,19 @@ pub fn delete(table: Table(key, value)) -> Result(Nil, TableError) {
   delete_ffi(table)
 }
 
-@external(erlang, "heirloom_ffi", "delete")
+@external(erlang, "beryl_heirloom_ffi", "delete")
 fn delete_ffi(table: Table(key, value)) -> Result(Nil, TableError)
 
 /// Return whether a table currently exists.
-@external(erlang, "heirloom_ffi", "exists")
+@external(erlang, "beryl_heirloom_ffi", "exists")
 pub fn exists(table: Table(key, value)) -> Bool
 
 /// Return the current table owner.
-@external(erlang, "heirloom_ffi", "owner")
+@external(erlang, "beryl_heirloom_ffi", "owner")
 pub fn owner(table: Table(key, value)) -> Result(process.Pid, TableError)
 
 /// Return the configured live heir, if present.
-@external(erlang, "heirloom_ffi", "heir")
+@external(erlang, "beryl_heirloom_ffi", "heir")
 pub fn heir(table: Table(key, value)) -> Result(Option(process.Pid), TableError)
 
 /// Set the table heir.
@@ -233,7 +235,7 @@ pub fn set_heir(
   set_heir_ffi(table, process, data)
 }
 
-@external(erlang, "heirloom_ffi", "set_heir")
+@external(erlang, "beryl_heirloom_ffi", "set_heir")
 fn set_heir_ffi(
   table: Table(key, value),
   process: process.Pid,
@@ -243,7 +245,7 @@ fn set_heir_ffi(
 /// Clear the table heir.
 ///
 /// The caller must own the table.
-@external(erlang, "heirloom_ffi", "clear_heir")
+@external(erlang, "beryl_heirloom_ffi", "clear_heir")
 pub fn clear_heir(table: Table(key, value)) -> Result(Nil, OwnershipError)
 
 /// Give the table to another live local process.
@@ -258,7 +260,7 @@ pub fn give_away(
   give_away_ffi(table, process, data)
 }
 
-@external(erlang, "heirloom_ffi", "give_away")
+@external(erlang, "beryl_heirloom_ffi", "give_away")
 fn give_away_ffi(
   table: Table(key, value),
   process: process.Pid,
@@ -286,7 +288,7 @@ pub fn select_transfers(
   })
 }
 
-@external(erlang, "heirloom_ffi", "validate_transfer")
+@external(erlang, "beryl_heirloom_ffi", "validate_transfer")
 fn validate_transfer(
   message: decode.Dynamic,
 ) -> Result(

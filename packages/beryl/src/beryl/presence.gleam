@@ -102,6 +102,23 @@ fn monotonic_time_ms() -> Int {
 /// the runtime representation. It contains the actor's stable registered
 /// subject and the name of its actor-owned ETS read model.
 ///
+/// ## Mutation errors
+///
+/// Synchronous mutations return `overload.CallError` values:
+///
+/// - `AdmissionRejected(reason)` when queue lookup or admission fails. The
+///   reason is `Unavailable`, `Closed`, `Overloaded(boundary)`, or
+///   `ItemTooLarge(boundary)`.
+/// - `RequestTimedOut` when the actor does not reply within the configured
+///   timeout. Pending work is cancelled, but a running mutation may complete.
+/// - `OwnerUnavailable` when the queue owner exits while the caller waits.
+///
+/// An actor that is already unavailable can cause
+/// `AdmissionRejected(Unavailable)` during queue lookup.
+/// `track` wraps call errors in `TrackRequestFailed`, and `update` wraps them
+/// in `RequestFailed`. `untrack` and `untrack_all` return call errors directly.
+/// `track` and `update` also return their documented mutation-specific errors.
+///
 /// ## Node affinity
 ///
 /// The stable registered subject and ETS read model are resolved on the
@@ -445,6 +462,7 @@ pub type PresenceTrackError {
 pub type PresenceUpdateError {
   /// The ref is unknown, already removed, or was not returned by `track`.
   UnknownRef(ref: String)
+  /// Queue lookup or admission failed, the actor exited, or the request timed out.
   RequestFailed(overload.CallError)
   /// The CRDT did not expose its local clock after joining. The old ref remains valid.
   UpdateInvalidCrdtState
@@ -846,7 +864,8 @@ pub fn with_broadcast_interval(config: Config, interval_ms: Int) -> Config {
 /// Set the timeout for synchronous presence mutations, in milliseconds.
 ///
 /// This timeout applies to `track`, `update`, `untrack`, and `untrack_all`. These
-/// functions return typed timeout errors if the actor does not reply in time.
+/// functions return `RequestTimedOut` if the actor does not reply in time.
+/// `track` wraps it in `TrackRequestFailed`, and `update` in `RequestFailed`.
 /// Pending work is cancelled, but running mutations may still complete.
 /// The default is 5000 ms.
 pub fn with_call_timeout(config: Config, timeout_ms: Int) -> Config {
@@ -1397,12 +1416,13 @@ fn meta_with_phx_ref(meta: json.Json, ref: String) -> json.Json {
 /// to that actor. The ref is also merged into object metas as `phx_ref` for
 /// Phoenix client compatibility.
 ///
-/// Returns a typed call error on admission failure, owner exit, or timeout
-/// (5 seconds by default). A timeout cancels pending work, but a running
-/// mutation may still complete.
+/// Returns `TrackRequestFailed` with `AdmissionRejected`, `OwnerUnavailable`,
+/// or `RequestTimedOut`. See **Mutation errors** on `Presence` for details.
+/// The timeout is 5 seconds by default. A timeout cancels pending work, but a
+/// running mutation may still complete.
 ///
-/// `TrackRequestFailed` wraps the call error. `TrackInvalidCrdtState` means the
-/// CRDT local-clock lookup failed; no entry, diff, or read-model change was made.
+/// `TrackInvalidCrdtState` means the CRDT local-clock lookup failed; no entry,
+/// diff, or read-model change was made.
 pub fn track(
   presence: Presence,
   topic: String,
@@ -1425,8 +1445,9 @@ pub fn track(
 /// or `untrack` calls. Returns `Error(UnknownRef(ref))` when `ref` is
 /// unknown, already removed, or belongs to the internal runtime.
 ///
-/// `RequestFailed` wraps admission, owner-exit, and timeout errors. A timeout
-/// cancels pending work, but a running mutation may still complete.
+/// `RequestFailed` wraps `AdmissionRejected`, `OwnerUnavailable`, or
+/// `RequestTimedOut`. See **Mutation errors** on `Presence` for details.
+/// A timeout cancels pending work, but a running mutation may still complete.
 /// `UpdateInvalidCrdtState` means the CRDT local-clock lookup failed. The old
 /// entry and ref remain unchanged, and no diff is emitted.
 pub fn update(
@@ -1443,7 +1464,8 @@ pub fn update(
 ///
 /// Removing an unknown or already-removed ref is a harmless no-op.
 ///
-/// Returns a typed call error on admission failure, owner exit, or timeout.
+/// Returns `AdmissionRejected`, `OwnerUnavailable`, or `RequestTimedOut`
+/// directly. See **Mutation errors** on `Presence` for details.
 /// A timeout cancels pending work, but a running mutation may still complete.
 pub fn untrack(
   presence: Presence,
@@ -1458,7 +1480,8 @@ pub fn untrack(
 /// Replicated entries owned by another presence actor are not removed, even
 /// when they use the same session ID.
 ///
-/// Returns a typed call error on admission failure, owner exit, or timeout.
+/// Returns `AdmissionRejected`, `OwnerUnavailable`, or `RequestTimedOut`
+/// directly. See **Mutation errors** on `Presence` for details.
 /// A timeout cancels pending work, but a running mutation may still complete.
 pub fn untrack_all(
   presence: Presence,

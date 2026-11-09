@@ -975,7 +975,8 @@ pub fn stalled_client_outbound_queue_is_bounded_test() -> Nil {
   // owner, so its mailbox cannot be inspected (or resumed) after overflow.
   send_mixed_broadcasts(channels, healthy_client, 1, 5)
   process.is_alive(connection_pid) |> should.be_true
-  let #(frames, bytes) = outbound_queue_usage(connection_pid)
+  // Healthy replies do not order delivery by the slow peer's socket actor.
+  let #(frames, bytes) = wait_for_outbound_queue(connection_pid, 10, 1000)
   frames |> should.equal(10)
   { frames > 0 && frames <= 32 } |> should.be_true
   { bytes > 0 && bytes <= 256 } |> should.be_true
@@ -1012,6 +1013,21 @@ pub fn stalled_client_outbound_queue_is_bounded_test() -> Nil {
   stop_supervisor(server_pid)
 }
 
+fn wait_for_outbound_queue(
+  pid: process.Pid,
+  expected_frames: Int,
+  remaining_ms: Int,
+) -> #(Int, Int) {
+  let usage = outbound_queue_usage(pid)
+  case usage.0 < expected_frames && remaining_ms > 0 {
+    True -> {
+      process.sleep(10)
+      wait_for_outbound_queue(pid, expected_frames, remaining_ms - 10)
+    }
+    False -> usage
+  }
+}
+
 fn wait_for_socket_counts(
   channels: beryl.Sockets,
   expected: #(Int, Int),
@@ -1043,12 +1059,14 @@ fn send_mixed_broadcasts(
   case remaining <= 0 {
     True -> Nil
     False -> {
-      let text_event = "text-" <> int.to_string(index)
+      // Compact payloads keep the first ten frames below the retained-byte
+      // budget on both supported OTP versions.
+      let text_event = string.concat(["t", int.to_string(index)])
       beryl.broadcast(channels, "room:lobby", text_event, json.object([]))
       |> should.equal(Ok(Nil))
       receive_text(healthy_client, 1000) |> should.equal(Ok(text_event))
 
-      let binary_event = "binary-" <> int.to_string(index)
+      let binary_event = string.concat(["b", int.to_string(index)])
       beryl.broadcast(channels, "room:lobby", binary_event, json.object([]))
       |> should.equal(Ok(Nil))
       receive_binary(healthy_client, 1000)
@@ -1066,9 +1084,9 @@ fn start_mixed_outbound_system() -> beryl.Sockets {
       decode_text: wire.decode_message,
       encode_reply: codec.encode_reply(phoenix),
       encode_push: fn(_topic, event, _payload) {
-        case string.starts_with(event, "binary-") {
-          True -> codec.BinaryFrame(bit_array.from_string(event))
-          False -> codec.TextFrame(event)
+        case string.starts_with(event, "b") {
+          True -> Ok(codec.BinaryFrame(bit_array.from_string(event)))
+          False -> Ok(codec.TextFrame(event))
         }
       },
       encode_heartbeat_reply: codec.encode_heartbeat_reply(phoenix),
@@ -1100,6 +1118,36 @@ fn start_app_system_with_update(
       update: update,
     )
   channels
+}
+
+pub fn encoder_failure_closes_websocket_and_releases_connection_slot_test() -> Nil {
+  let phoenix = wire.phoenix_codec()
+  let fallible =
+    codec.new(
+      decode_text: wire.decode_message,
+      encode_reply: codec.encode_reply(phoenix),
+      encode_push: codec.encode_push(phoenix),
+      encode_heartbeat_reply: fn(_) {
+        Error(codec.EncodingRejected("heartbeat fixture"))
+      },
+    )
+  let channels =
+    start_app_system(
+      beryl.config(fallible)
+      |> beryl.with_max_connections(max_connections: 1)
+      |> beryl.with_max_connections_per_ip(max_connections: 1),
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(client) = connect_websocket(port, "/socket")
+  let assert Ok(client) =
+    send_text(client, "[null,\"heartbeat\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(client, 1000) |> should.equal(Error(Nil))
+  wait_for_socket_counts(channels, #(0, 0), 1000)
+  |> should.equal(Ok(#(0, 0)))
+  let assert Ok(replacement) = connect_websocket(port, "/socket")
+  close(replacement)
+  stop_supervisor(server_pid)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
 }
 
 pub fn runtime_death_closes_the_connection_test() -> Nil {

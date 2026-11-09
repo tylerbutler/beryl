@@ -196,13 +196,19 @@ fn on_message(
       resume(server.finish_outbound_write(
         state,
         bytes,
-        ewe.send_text_frame(connection, text) |> result.is_ok,
+        ewe.send_text_frame(connection, text)
+          |> result.map_error(fn(reason) {
+            server.WriteFailed(ewe.send_error_to_string(reason))
+          }),
       ))
     ewe.UserMessage(server.SendBinary(data, bytes)) ->
       resume(server.finish_outbound_write(
         state,
         bytes,
-        ewe.send_binary_frame(connection, data) |> result.is_ok,
+        ewe.send_binary_frame(connection, data)
+          |> result.map_error(fn(reason) {
+            server.WriteFailed(ewe.send_error_to_string(reason))
+          }),
       ))
   }
 }

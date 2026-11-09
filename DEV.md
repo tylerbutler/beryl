@@ -11,7 +11,7 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
-| [trellis](https://trellis.tylerbutler.com) | 1.1.0+ | Gleam workspace manager (tasks, versions, publishing) |
+| [trellis](https://trellis.tylerbutler.com) | 1.3.0+ | Gleam workspace manager (tasks, versions, publishing) |
 
 **Recommended:** Use [mise](https://mise.jdx.dev/) with the provided
 `.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
@@ -50,10 +50,16 @@ just ci
 snippet dependencies in sequence. Gleam 1.18.1 updates only one changed path
 dependency fingerprint per call. Preparation repeats until the manifest and
 fingerprints stop changing, retries Hex rate-limit failures with bounded
-backoff, then CI caches that state for all jobs. This workaround can be removed
-when the pinned Gleam release includes
+backoff. Remove this repeated preparation when the pinned Gleam release includes
 [gleam-lang/gleam#6246](https://github.com/gleam-lang/gleam/pull/6246).
-Run `just deps-test` to check cold preparation, changed dependencies, and cache reuse.
+
+CI uses a shared cache to speed up preparation, then transfers the
+prepared state to downstream jobs in a workflow artifact. Rerun jobs use the
+artifact ID from the dependency job, even when the shared cache has expired.
+Artifacts use the repository's retention period; after an artifact expires,
+rerun all jobs to prepare dependencies again.
+Run `just deps-test` to check cold preparation, changed dependencies, cache reuse,
+and artifact transfer.
 
 ### Codec benchmarks
 
@@ -337,7 +343,7 @@ test: add edge case tests for topic matching
 ## Release Process
 
 Releases are driven by trellis changelog fragments (TOML files in
-`.changes/unreleased/` with `project`, `kind`, and `body` fields).
+`.changes/unreleased/` with `package`, `kind`, and `body` fields).
 
 ### When a fragment is required
 
@@ -364,12 +370,62 @@ also need no fragment.
    fragments into a release PR (branch `release/pending`) bumping versions
    and regenerating each package's CHANGELOG.md
 5. Merging the release PR creates per-package tags (`beryl-v1.2.3`) and GitHub
-   releases. Hex.pm publishing is temporarily disabled — `trellis publish` is
-   not run; see the header comment in `.github/workflows/publish.yml` for how
-   to resume it
+   releases. The `git_only` lifecycle disables Hex.pm publishing for stable
+   releases and candidates. Keep publication commands and Hex write
+   credentials out of the release workflows.
 
 Useful commands: `just version-plan` previews the next versions;
 `just doctor` validates workspace invariants.
+
+### Release candidates
+
+Use the Release PR workflow's manual inputs to change release mode.
+Set `pre` to a label such as `rc` to enter or continue a candidate cycle.
+Use `none` to promote the current candidates to stable versions. Leave it empty
+to resume pending intent or continue committed candidates. With neither,
+Trellis prepares a stable release.
+
+Each package keeps its own version. The optional `versions` input accepts
+comma-separated targets, such as `beryl=1.0.0,beryl_mist=0.5.0`.
+Use base versions without an RC suffix. Promotion takes the current
+candidate's base version; do not also set a target for that package.
+`beryl_protocol` remains a workspace member bundled with beryl and takes no
+independent release target. Examples and benchmarks remain excluded.
+
+Preview a release without writing files or contacting GitHub:
+
+```bash
+just version-plan --pre rc --set beryl=1.0.0 --set beryl_mist=0.5.0
+just version-plan --pre rc
+just version-plan --pre none
+```
+
+To prepare the PR from a clean, current local `main`, use
+`just release-pr --pre rc --set beryl=1.0.0 --set beryl_mist=0.5.0` or
+`just release-pr --pre none`. These commands push `release/pending` and create or
+update its PR. They do not merge, tag, or publish.
+
+The `[tools.trellis.release]` settings enable native intent resumption,
+automatic candidate continuation, and skipping unchanged release content.
+On later pushes to main, Trellis preserves an open release PR's mode and
+targets. After a candidate merges, release-owned source or fragment changes
+allow another candidate. Unrelated documentation and excluded example changes
+do not repeat candidates. Use `--force` to prepare unchanged content; it does
+not bypass validation. Stable promotion requires an explicit `--pre none`.
+
+Each candidate includes only new changes. Trellis moves its fragments from
+`unreleased` into `.changes/<package>/v<prerelease>.toml` archives; commit those
+archives with the changelog sections. Promotion combines the target version's
+candidate archives and remaining fragments into the final changelog.
+Trellis also commits release intent in `.changes/release.toml`.
+
+The workflow uses `--github-output` and regenerates API reference pages only
+when `outcome` is `prepared`. Native outputs also distinguish `unchanged` and
+`no_changes`, while failures remain nonzero.
+
+Candidate tags use full package versions, such as `beryl-v1.0.0-rc.0`.
+Trellis marks their GitHub releases as prereleases. Candidates do not update
+the repository's moving minor series tag; stable releases do.
 
 ### 1.0 release checklist
 

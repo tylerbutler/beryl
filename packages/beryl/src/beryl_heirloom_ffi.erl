@@ -1,4 +1,4 @@
--module(heirloom_ffi).
+-module(beryl_heirloom_ffi).
 -export([create/7, insert/3, lookup/2, delete/1, exists/1, owner/1, heir/1,
          set_heir/3, clear_heir/1, give_away/3, validate_transfer/1]).
 
@@ -146,10 +146,15 @@ validate_transfer(_) ->
     {error, invalid_transfer_message}.
 
 table_name(Name) when is_binary(Name) ->
-    try binary_to_atom(Name, utf8) of
-        Atom -> {ok, Atom}
-    catch
-        error:badarg -> {error, invalid_name}
+    case unicode:characters_to_list(Name, utf8) of
+        Characters when is_list(Characters), length(Characters) =< 255 ->
+            try binary_to_atom(Name, utf8) of
+                Atom -> {ok, Atom}
+            catch
+                error:badarg -> {error, invalid_name}
+            end;
+        _ ->
+            {error, invalid_name}
     end;
 table_name(_) ->
     {error, invalid_name}.

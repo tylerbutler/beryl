@@ -56,9 +56,9 @@ fn start_app(
   let codec =
     codec.new(
       decode_text: wire.decode_message,
-      encode_reply: fn(_, _, _, _, _) { frame(kind) },
-      encode_push: fn(_, _, _) { frame(kind) },
-      encode_heartbeat_reply: fn(_) { frame(kind) },
+      encode_reply: fn(_, _, _, _, _) { Ok(frame(kind)) },
+      encode_push: fn(_, _, _) { Ok(frame(kind)) },
+      encode_heartbeat_reply: fn(_) { Ok(frame(kind)) },
     )
   let assert Ok(sockets) =
     app_test_helper.start_app(
@@ -155,7 +155,7 @@ fn receive_frame(connection: Connection, kind: FrameKind) -> Int {
 
 fn complete(connection: Connection, bytes: Int) -> Nil {
   let assert server.Continue(_) =
-    server.finish_outbound_write(connection.state, bytes, True)
+    server.finish_outbound_write(connection.state, bytes, Ok(Nil))
   Nil
 }
 
@@ -247,7 +247,11 @@ pub fn retained_reservations_close_on_write_failure_test() -> Nil {
     reply(connection)
     let second = receive_frame(connection, kind)
     let assert server.Stop =
-      server.finish_outbound_write(connection.state, first, False)
+      server.finish_outbound_write(
+        connection.state,
+        first,
+        Error(server.WriteFailed("Timeout")),
+      )
     complete(connection, second)
     reply(connection)
     assert_evicted(connection)

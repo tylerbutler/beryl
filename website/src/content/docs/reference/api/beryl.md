@@ -62,13 +62,29 @@ beryl: type-safe real-time communication
            Join("room:" <> _, _payload, reference) ->
              Next(model, [AcceptJoin(reference, option.None)])
            Message(topic, "new_msg", payload, reference) ->
-             Next(model, [
-               Broadcast(topic, "new_msg", payload),
-               ..case reference {
-                 option.Some(reference) -> [socket.DiscardReply(reference)]
-                 option.None -> []
+             case wire.dynamic_to_json(payload) {
+               Ok(payload) -> {
+                 let effects = [Broadcast(topic, "new_msg", payload)]
+                 let effects = case reference {
+                   option.Some(reference) ->
+                     [socket.DiscardReply(reference), ..effects]
+                   option.None -> effects
+                 }
+                 Next(model, effects)
                }
-             ])
+               Error(Nil) -> {
+                 let effects = case reference {
+                   option.Some(reference) -> [
+                     socket.ReplyError(
+                       reference,
+                       json.string("Invalid JSON payload"),
+                     ),
+                   ]
+                   option.None -> []
+                 }
+                 Next(model, effects)
+               }
+             }
            Message(_, _, _, option.Some(reference)) ->
              Next(model, [socket.DiscardReply(reference)])
            Message(_, _, _, option.None)
@@ -83,7 +99,9 @@ beryl: type-safe real-time communication
      |> static_supervisor.start()
 
    // Broadcast to all subscribers of a topic
-   beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
+   let assert Ok(Nil) =
+     beryl.broadcast(sockets, "room:lobby", "announce", json.object([]))
+   Nil
  }
  ```
 
@@ -515,8 +533,10 @@ Stop a beryl system.
  You can call `stop` more than once or use a handle whose system never
  started. In these cases, it returns `Error(NotRunning)` and does not crash.
  It returns `Error(StopTimeout)` if the runtime does not drain or the
- subtree does not terminate within the shutdown window. After a successful stop
- the handle should no longer be used.
+ subtree does not terminate within the shutdown window. A timeout does not
+ cancel shutdown, and no late completion message remains in the caller's
+ mailbox after `stop` returns. After a successful stop the handle should no
+ longer be used.
 
 <div class="api-entry-anchor" id="api-function-validate_config" aria-hidden="true"></div>
 

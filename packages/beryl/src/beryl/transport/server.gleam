@@ -99,6 +99,15 @@ pub type ForceCloseError {
   ForceCloseFailed(reason: String)
 }
 
+/// An error from writing an outbound WebSocket frame.
+pub type WriteError {
+  /// A safe description of the transport's write error.
+  ///
+  /// This reason is logged. Use a socket-error formatter that returns only
+  /// error descriptions, never frame contents or connection metadata.
+  WriteFailed(reason: String)
+}
+
 /// Create a default transport config with no connect hook.
 ///
 /// The resulting configuration sets `ConnectSeed.metadata` to `[]` and applies
@@ -720,18 +729,23 @@ pub fn close_connection(state: ConnectionState) -> Nil {
 /// connection as closed, logs the failure, and tells the transport to stop.
 /// Pass the `bytes` from the corresponding `SendRequest` unchanged; do not
 /// recompute it from the logical frame size.
+///
+/// Pass `Ok(Nil)` for a successful write, or map the native transport error
+/// to `Error(WriteFailed(reason))`. The reason must contain only a safe error
+/// description; it is logged even when payload logging is disabled.
 pub fn finish_outbound_write(
   state: ConnectionState,
   bytes: Int,
-  succeeded: Bool,
+  outcome: Result(Nil, WriteError),
 ) -> FrameDisposition {
   outbound_budget.release(state.outbound_budget, bytes)
-  case succeeded {
-    True -> Continue(state)
-    False -> {
+  case outcome {
+    Ok(Nil) -> Continue(state)
+    Error(WriteFailed(reason)) -> {
       outbound_budget.cancel(state.outbound_budget)
       log.warn(state.logger, "Failed to write outbound WebSocket frame", [
         #("socket_id", state.socket_id),
+        #("error", reason),
       ])
       Stop
     }

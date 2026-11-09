@@ -1,11 +1,13 @@
 // Type-checks the Gleam snippets in the docs against the real packages.
 //
-// Sources: the hand-written pages under website/src/content/docs (the
+// Sources: complete quick starts in the root README and core module docs, plus
+// the hand-written pages under website/src/content/docs (the
 // generated reference/api pages are skipped — they hold signature fragments,
 // not code) and the ```gleam blocks inside `///` doc comments in
 // packages/*/src.
 //
-// Every snippet on one page shares that page's scope, the way a reader reads
+// Complete quick starts compile verbatim before the partial examples below.
+// Every partial snippet on one page shares that page's scope, the way a reader reads
 // it: imports are merged, top-level items are hoisted, and loose statements
 // are concatenated into a single function. Names the prose never defines
 // (`groups`, `socket`, a handler from an earlier section) are bound to `todo`,
@@ -21,7 +23,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { prepareDependencies } from "../../scripts/prepare-gleam-deps.mjs";
 
@@ -122,12 +124,34 @@ function fencedGleamBlocks(text) {
 	return blocks;
 }
 
+// Complete quick starts must stand alone, without inferred imports or values.
+export function quickStartSource(file, text, moduleComment = false) {
+	const lines = text.split("\n").map((line) =>
+		moduleComment ? line.replace(/^\s*\/\/\/\/ ?/, "") : line,
+	);
+	const headings = lines
+		.map((line, index) => (/^## Quick start\s*$/i.test(line) ? index : -1))
+		.filter((index) => index !== -1);
+	if (headings.length !== 1) {
+		throw new Error(`${file}: expected exactly one Quick start section`);
+	}
+	const start = headings[0] + 1;
+	let end = lines.findIndex((line, index) => index >= start && /^## /.test(line));
+	if (end === -1) end = lines.length;
+	const blocks = fencedGleamBlocks(lines.slice(start, end).join("\n"))
+		.map((block) => ({ ...block, line: block.line + start }));
+	if (blocks.length !== 1) {
+		throw new Error(`${file}: expected exactly one Quick start Gleam block`);
+	}
+	return { file, blocks, strict: true };
+}
+
 // Pulls the fenced blocks out of `///` doc comments, mapping each back to its
 // line in the .gleam file.
-function docCommentBlocks(text) {
+export function docCommentBlocks(text) {
 	const lines = text.split("\n");
 	const stripped = lines.map((line) => {
-		const match = /^\s*\/\/\/ ?(.*)$/.exec(line);
+		const match = /^\s*\/\/\/(?!\/) ?(.*)$/.exec(line);
 		return match === null ? null : match[1];
 	});
 	const blocks = [];
@@ -196,7 +220,12 @@ function gleamModuleName(file) {
 }
 
 async function collectSources() {
-	const sources = [];
+	const readme = path.join(repoRoot, "README.md");
+	const core = path.join(packagesRoot, "beryl", "src", "beryl.gleam");
+	const sources = [
+		quickStartSource(readme, await readFile(readme, "utf8")),
+		quickStartSource(core, await readFile(core, "utf8"), true),
+	];
 
 	const docFiles = (await walk(docsRoot, SKIPPED_DOC_DIRS))
 		.filter((file) => /\.mdx?$/.test(file))
@@ -348,7 +377,14 @@ function isCaseClause(text) {
 
 // Builds one Gleam module per source file. `map` lets a compiler diagnostic on
 // a generated line be reported against the original doc line.
-function assembleModule(source, placeholders, exports, extraImports = new Map()) {
+export function assembleModule(source, placeholders, exports, extraImports = new Map()) {
+	if (source.strict) {
+		const block = source.blocks[0];
+		const map = new Map(
+			block.code.split("\n").map((_, index) => [index + 1, block.line + index + 1]),
+		);
+		return [{ text: `${block.code}\n`, map, suffix: "_quick_start" }];
+	}
 	const imports = [];
 	for (const [module, { alias, items }] of extraImports) {
 		imports.push({
@@ -608,10 +644,21 @@ async function build() {
 			cwd: workDir,
 			maxBuffer: 32 * 1024 * 1024,
 		});
-		return `${stdout}${stderr}`;
+		return { success: true, output: `${stdout}${stderr}` };
 	} catch (error) {
-		return `${error.stdout ?? ""}${error.stderr ?? ""}`;
+		return { success: false, output: `${error.stdout ?? ""}${error.stderr ?? ""}`, error };
 	}
+}
+
+export function buildDiagnostics(result) {
+	const diagnostics = parseDiagnostics(result.output);
+	if (!result.success && diagnostics.length === 0) {
+		throw new Error(
+			`Gleam snippet build failed without a parsed diagnostic:\n${result.output}`,
+			{ cause: result.error },
+		);
+	}
+	return diagnostics;
 }
 
 // Consequences of a fragment being a fragment, not defects in it: a `case`
@@ -651,6 +698,16 @@ async function main() {
 	const keep = process.argv.includes("--keep");
 	const exports = await publicNames();
 	const sources = await collectSources();
+	process.exitCode = await checkSources(
+		sources.filter((source) => source.strict),
+		exports,
+		{ keep },
+	);
+	if (process.exitCode !== 0) return;
+	process.exitCode = await checkSources(sources, exports, { keep });
+}
+
+export async function checkSources(sources, exports = new Map(), { keep = false } = {}) {
 	const blockCount = sources.reduce((total, s) => total + s.blocks.length, 0);
 	console.log(
 		`Checking ${blockCount} Gleam snippets from ${sources.length} files.`,
@@ -668,8 +725,9 @@ async function main() {
 	}));
 
 	let diagnostics = [];
+	let byPath = new Map();
 	for (let round = 0; round < MAX_PLACEHOLDER_ROUNDS; round++) {
-		const byPath = new Map();
+		byPath = new Map();
 		for (const module of modules) {
 			const sections = assembleModule(
 				module.source,
@@ -688,7 +746,7 @@ async function main() {
 			}
 		}
 
-		diagnostics = parseDiagnostics(await build());
+		diagnostics = buildDiagnostics(await build());
 
 		// A fragment leaves out what the surrounding prose already
 		// established: the imports, and the values the reader binds. Supply
@@ -697,6 +755,7 @@ async function main() {
 		for (const diagnostic of diagnostics) {
 			const entry = byPath.get(diagnostic.file);
 			if (entry === undefined) continue;
+			if (entry.module.source.strict) continue;
 			const { placeholders, extraImports } = entry.module;
 
 			const variable = UNKNOWN_VARIABLE.exec(diagnostic.detail);
@@ -738,21 +797,19 @@ async function main() {
 				addUnqualified(known.constructors.get(constructor[1]), constructor[1]);
 			}
 		}
-		if (!added) {
-			// Report against the original doc file and line.
-			diagnostics = diagnostics.map((diagnostic) => {
-				const entry = byPath.get(diagnostic.file);
-				if (entry === undefined) return diagnostic;
-				return {
-					...diagnostic,
-					file: path.relative(repoRoot, entry.module.source.file),
-					line: entry.map.get(diagnostic.line) ?? null,
-					generated: `:`,
-				};
-			});
-			break;
-		}
+		if (!added) break;
 	}
+	// Report against the original source even when placeholder retries run out.
+	diagnostics = diagnostics.map((diagnostic) => {
+		const entry = byPath.get(diagnostic.file);
+		if (entry === undefined) return { ...diagnostic, strict: true };
+		return {
+			...diagnostic,
+			file: path.relative(repoRoot, entry.module.source.file),
+			line: entry.map.get(diagnostic.line) ?? null,
+			strict: entry.module.source.strict ?? false,
+		};
+	});
 
 	if (!keep) await rm(path.join(workDir, "src"), { recursive: true, force: true });
 
@@ -766,10 +823,10 @@ async function main() {
 		if (seen.has(key)) continue;
 		seen.add(key);
 		const name = externalName(diagnostic);
-		if (name !== null) {
+		if (!diagnostic.strict && name !== null) {
 			const at = `${diagnostic.file}:${diagnostic.line ?? "?"}`;
 			external.set(name, (external.get(name) ?? new Set()).add(at));
-		} else if (!SUPPRESSED.has(diagnostic.title)) {
+		} else if (diagnostic.strict || !SUPPRESSED.has(diagnostic.title)) {
 			findings.push(diagnostic);
 		}
 	}
@@ -786,7 +843,7 @@ async function main() {
 
 	if (findings.length === 0) {
 		console.log("\nEvery snippet type-checks against the real packages.");
-		return;
+		return 0;
 	}
 
 	console.log("");
@@ -800,7 +857,9 @@ async function main() {
 		);
 	}
 	console.log(`\n${findings.length} problems.`);
-	process.exitCode = 1;
+	return 1;
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+	await main();
+}

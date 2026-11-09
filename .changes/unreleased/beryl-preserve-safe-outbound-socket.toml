@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Preserve socket-write error reasons through `transport/server.finish_outbound_write`, which now accepts `Result(Nil, WriteError)` instead of `Bool`. Custom transports must replace `True` with `Ok(Nil)` and `False` with `Error(server.WriteFailed(reason))`. Reasons are logged even with payload logging disabled and must exclude payloads and connection metadata."
