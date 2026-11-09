@@ -1,0 +1,3 @@
+package = "beryl_ewe"
+kind = "Security"
+body = "Decline WebSocket compression by default on HTTP/1 and HTTP/2; add explicit opt-in and constrain Ewe to the verified compatibility release."
