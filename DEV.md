@@ -11,7 +11,7 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
-| [trellis](https://trellis.tylerbutler.com) | 1.3.0+ | Gleam workspace manager (tasks, versions, publishing) |
+| [trellis](https://trellis.tylerbutler.com) | 1.4.0+ | Gleam workspace manager (tasks, versions, publishing) |
 
 **Recommended:** Use [mise](https://mise.jdx.dev/) with the provided
 `.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
@@ -436,7 +436,9 @@ Each candidate includes only new changes. Trellis moves its fragments from
 `unreleased` into `.changes/<package>/v<prerelease>.toml` archives; commit those
 archives with the changelog sections. Promotion combines the target version's
 candidate archives and remaining fragments into the final changelog.
-Trellis also commits release intent in `.changes/release.toml`.
+Trellis 1.4 reads candidate baselines and release inputs from Git history.
+Release preparation no longer writes `.changes/release.toml` and removes an
+existing file from the generated release commit.
 
 The workflow uses `--github-output` and regenerates API reference pages only
 when `outcome` is `prepared`. Native outputs also distinguish `unchanged` and
