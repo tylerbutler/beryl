@@ -140,7 +140,11 @@ version-plan *ARGS:
 
 # Prepare a release PR from main; this pushes release/pending
 release-pr *ARGS:
-    trellis release pr {{ ARGS }}
+    node scripts/prepare-release.mjs {{ ARGS }}
+
+# Check release preparation with local Git and mock GitHub fixtures
+release-test:
+    node --test scripts/prepare-release.test.mjs
 
 # === WEBSITE ===
 
@@ -237,7 +241,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: deps-test namespace-test format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
+ci: release-test deps-test namespace-test format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
 
 # Alias for PR checks
 alias pr := ci

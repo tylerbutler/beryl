@@ -46,6 +46,8 @@ jobs:
               - '.mise.toml'
               - 'justfile'
               - 'scripts/prepare-gleam-deps*.mjs'
+              - 'scripts/prepare-release*.mjs'
+              - '.github/workflows/release.yml'
               - 'scripts/archive-gleam-deps*'
               - 'scripts/check-ffi-*.sh'
               - 'scripts/check-portable-deps*.mjs'
@@ -110,6 +112,10 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # ratchet:actions/setup-node@v7
         with:
           node-version: 22
+
+      - name: Test release preparation
+        if: needs.changes.outputs.relevant == 'true'
+        run: just release-test
 
       # Cache source dependencies and resolution fingerprints, not compiled
       # output, so both Erlang versions can use the same cache.
