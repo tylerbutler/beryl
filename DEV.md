@@ -385,9 +385,10 @@ also need no fragment.
    (e.g. `just change beryl Fixed "handle concurrent leave/join"`); PR CI
    enforces this via `trellis changelog check`
 3. Push to a feature branch and create a PR
-4. After merge, the release workflow runs `trellis release pr`, which batches
-   fragments into a release PR (branch `release/pending`) bumping versions
-   and regenerating each package's CHANGELOG.md
+4. After merge, the release workflow runs `just release-pr`, which uses
+   `trellis release pr` to select versions and regenerate package changelogs.
+   The wrapper validates the standalone consumer lock and API reference before
+   Trellis commits and pushes `release/pending`.
 5. Merging the release PR creates per-package tags (`beryl-v1.2.3`) and GitHub
    releases. The `git_only` lifecycle disables Hex.pm publishing for stable
    releases and candidates. Keep publication commands and Hex write
@@ -440,9 +441,39 @@ Trellis 1.4 reads candidate baselines and release inputs from Git history.
 Release preparation no longer writes `.changes/release.toml` and removes an
 existing file from the generated release commit.
 
-The workflow uses `--github-output` and regenerates API reference pages only
-when `outcome` is `prepared`. Native outputs also distinguish `unchanged` and
-`no_changes`, while failures remain nonzero.
+`scripts/prepare-release.mjs` uses Trellis 1.4's JSON outcomes and a
+command-scoped Git pre-commit hook. The hook runs `just namespace-test` and
+`just site-reference` after version application, then stages the fixture lock
+and reference pages in the release commit. Generation failure prevents the
+push. The wrapper does not change repository hook configuration.
+
+The wrapper also checks the current release PR after native no-op outcomes.
+It can repair an older partial preparation without another version bump.
+Before repair, it verifies that the PR is open, unmerged, and in the same
+repository with the expected head and base branches. It checks the API head
+against the remote branch, generates from that exact commit, then pushes a
+child commit with an explicit SHA lease. A concurrent update causes a fresh
+read and regeneration instead of overwriting the new head.
+
+Only identified Trellis head conflicts with a stable or self-pushed remote
+head and repair head/lease conflicts retry, with at most three attempts per
+phase. A distinct concurrent update during native preparation stops the run
+for inspection; the wrapper does not rebase over that edit. Other failures
+also stop preparation.
+Run `just release-test` for local bare-Git and mock-API regression tests;
+the tests use the repository's mise-selected Trellis binary and mock the
+generation commands.
+
+Trellis 1.4 has no prepare-only or generation hook interface; the wrapper
+depends on its standard Git commit path. Trellis still pushes before updating
+PR metadata. An API failure can leave a complete, validated release commit
+with stale PR metadata, and a no-op retry does not refresh that metadata.
+Persistent conflicts stop after the retry limit. Failed local generation
+leaves files for inspection; the wrapper does not reset or clean them.
+Upstream tracks the generation interface in
+[tylerbutler/trellis#183](https://github.com/tylerbutler/trellis/issues/183)
+and post-push API convergence in
+[tylerbutler/trellis#158](https://github.com/tylerbutler/trellis/issues/158).
 
 Candidate tags use full package versions, such as `beryl-v1.0.0-rc.0`.
 Trellis marks their GitHub releases as prereleases. Candidates do not update

@@ -10,6 +10,7 @@ dependency boundary, and analyze compiled Erlang FFI. Invoke the root
 
 | File | Export or command boundary |
 |---|---|
+| [Release preparation](./prepare-release.mjs) | `just release-pr` selects versions with Trellis, validates generated files before its push, and repairs generated files on a verified pending PR. `just release-test` uses local Git fixtures and a mock GitHub API. See [release preparation](../DEV.md#release-candidates) for guarantees and limits. |
 | [Dependency preparation](./prepare-gleam-deps.mjs) | `retryHexRateLimits(operation, retryDelays)`, `prepareDependencies(directory, pathDependencyCount)`, `selectDependencyMembers(members, names)`, and `prepareWorkspaceDependencies(root, names)`; direct execution accepts optional workspace or standalone fixture names. [prepare-gleam-deps.mjs:retryHexRateLimits] [prepare-gleam-deps.mjs:prepareDependencies] [prepare-gleam-deps.mjs:selectDependencyMembers] [prepare-gleam-deps.mjs:prepareWorkspaceDependencies] |
 | [Portable dependency check](./check-portable-deps.mjs) | `productionGraph(root, loadPackage)`; direct execution checks `packages/beryl_protocol` and `examples/portable_channels`. [check-portable-deps.mjs:productionGraph] [check-portable-deps.mjs:check] |
 | [Dialyzer check](./check-ffi-dialyzer.sh) | `just dialyzer`, with `build-strict` prerequisite; the script scans package Erlang sources and analyzes them against compiled beams. [justfile:dialyzer] [check-ffi-dialyzer.sh:--src] |
