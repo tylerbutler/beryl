@@ -40,6 +40,7 @@ jobs:
         with:
           filters: |
             source:
+              - '.github/workflows/ci.yml'
               - 'packages/**'
               - '**/gleam.toml'
               - '**/manifest.toml'
@@ -147,6 +148,10 @@ jobs:
       - name: Test dependency preparation
         if: needs.changes.outputs.relevant == 'true'
         run: just deps-test
+
+      - name: Check licences and vulnerabilities
+        if: needs.changes.outputs.source == 'true'
+        run: just audit-check
 
       - name: Save Gleam dependencies
         if: >-

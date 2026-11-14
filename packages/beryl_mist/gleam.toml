@@ -24,7 +24,7 @@ gluegun = { git = "https://github.com/tylerbutler/gluegun.git", ref = "532af1ac0
 glinter = ">= 2.19.0 and < 3.0.0"
 
 [tools.licence_audit]
-allow = ["Apache-2.0", "ISC", "MIT"]
+allow = ["Apache-2.0", "BSD-3-Clause", "ISC", "MIT"]
 deny = []
 
 [tools.glinter]
