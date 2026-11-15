@@ -60,10 +60,6 @@ dependency boundary, and analyze compiled Erlang FFI. Invoke the root
 
 From the repository root:
 
-- `just release-test` exercises Trellis's native preparation command with local
-  Git fixtures and a mock GitHub API. `just release-pr` passes
-  `just namespace-test && just site-reference` to Trellis before commit and push.
-  See [release preparation](../DEV.md#release-candidates) for guarantees and limits.
 - `just deps-test` exercises dependency preparation helpers.
   It checks standalone fixture lock refresh after local dependency version
   bumps and artifact transfer of fixture locks, fingerprints, and symlinks.

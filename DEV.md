@@ -473,9 +473,7 @@ push succeeded but finalization remains incomplete and emits no success
 output. Failed local generation can leave files for inspection; the recipes
 do not reset or clean the checkout.
 
-Run `just release-test` for local bare-Git and mock-API regression tests.
-They use the repository's mise-selected Trellis binary and mock generation
-commands. Native preparation and convergence first shipped in
+Native preparation and convergence first shipped in
 [Trellis 1.5.0](https://github.com/tylerbutler/trellis/releases/tag/v1.5.0);
 the repository pins
 [1.6.1](https://github.com/tylerbutler/trellis/releases/tag/v1.6.1).

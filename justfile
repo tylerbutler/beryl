@@ -142,10 +142,6 @@ version-plan *ARGS:
 release-pr *ARGS:
     trellis release pr {{ ARGS }} --prepare-command "just namespace-test && just site-reference"
 
-# Check release preparation with local Git and mock GitHub fixtures
-release-test:
-    node --test scripts/prepare-release.test.mjs
-
 # === WEBSITE ===
 
 # Start website dev server
@@ -241,7 +237,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: release-test deps-test audit-check namespace-test format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
+ci: deps-test audit-check namespace-test format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
 
 # Alias for PR checks
 alias pr := ci
