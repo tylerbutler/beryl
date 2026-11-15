@@ -11,7 +11,7 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
-| [trellis](https://trellis.tylerbutler.com) | 1.4.0+ | Gleam workspace manager (tasks, versions, publishing) |
+| [trellis](https://trellis.tylerbutler.com) | 1.6.1+ | Gleam workspace manager (tasks, versions, publishing) |
 
 **Recommended:** Use [mise](https://mise.jdx.dev/) with the provided
 `.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
@@ -390,9 +390,10 @@ also need no fragment.
    (e.g. `just change beryl Fixed "handle concurrent leave/join"`); PR CI
    enforces this via `trellis changelog check`
 3. Push to a feature branch and create a PR
-4. After merge, the release workflow runs `trellis release pr`, which batches
-   fragments into a release PR (branch `release/pending`) bumping versions
-   and regenerating each package's CHANGELOG.md
+4. After merge, the release workflow runs `just release-pr`, which uses
+   `trellis release pr` to select versions and regenerate package changelogs.
+   The wrapper validates the standalone consumer lock and API reference before
+   Trellis commits and pushes `release/pending`.
 5. Merging the release PR creates per-package tags (`beryl-v1.2.3`) and GitHub
    releases. The `git_only` lifecycle disables Hex.pm publishing for stable
    releases and candidates. Keep publication commands and Hex write
@@ -441,13 +442,41 @@ Each candidate includes only new changes. Trellis moves its fragments from
 `unreleased` into `.changes/<package>/v<prerelease>.toml` archives; commit those
 archives with the changelog sections. Promotion combines the target version's
 candidate archives and remaining fragments into the final changelog.
-Trellis 1.4 reads candidate baselines and release inputs from Git history.
+Trellis reads candidate baselines and release inputs from Git history.
 Release preparation no longer writes `.changes/release.toml` and removes an
 existing file from the generated release commit.
 
-The workflow uses `--github-output` and regenerates API reference pages only
-when `outcome` is `prepared`. Native outputs also distinguish `unchanged` and
-`no_changes`, while failures remain nonzero.
+The workflow and `just release-pr` call Trellis with
+`--prepare-command "just namespace-test && just site-reference"`.
+These existing recipes refresh the fixture lock and reference pages after
+version application. Trellis stages the generated files with the version
+changes in the same release commit. A failed command prevents the push.
+Trellis stages all changes from the command; there is no separate output-path
+restriction.
+
+Trellis also runs the command for unchanged release inputs. It validates an
+open, same-repository pending PR and its remote head before repairing stale
+artifacts with a child commit and an explicit SHA lease. A clean rerun leaves
+the branch and PR unchanged. Genuine head changes, closed or retargeted PRs,
+and unrelated failures stop preparation. Inspect the current state before
+retrying; the command does not retry or overwrite concurrent edits.
+With no release plan, Trellis skips the command. For an unchanged merged
+candidate, changed generated files require an explicit `--force`; the
+command does not add force or promotion options.
+
+After updating an existing release branch, Trellis waits for GitHub to report
+the pushed head, with at most six reads one second apart. It accepts only
+the previously verified head while waiting. Unexpected heads or PR identity
+changes stop finalization. An API failure or convergence timeout can leave a
+complete release commit with unfinished PR metadata. Trellis reports that the
+push succeeded but finalization remains incomplete and emits no success
+output. Failed local generation can leave files for inspection; the recipes
+do not reset or clean the checkout.
+
+Native preparation and convergence first shipped in
+[Trellis 1.5.0](https://github.com/tylerbutler/trellis/releases/tag/v1.5.0);
+the repository pins
+[1.6.1](https://github.com/tylerbutler/trellis/releases/tag/v1.6.1).
 
 Candidate tags use full package versions, such as `beryl-v1.0.0-rc.0`.
 Trellis marks their GitHub releases as prereleases. Candidates do not update

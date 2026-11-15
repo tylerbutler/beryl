@@ -140,7 +140,7 @@ version-plan *ARGS:
 
 # Prepare a release PR from main; this pushes release/pending
 release-pr *ARGS:
-    trellis release pr {{ ARGS }}
+    trellis release pr {{ ARGS }} --prepare-command "just namespace-test && just site-reference"
 
 # === WEBSITE ===
 
