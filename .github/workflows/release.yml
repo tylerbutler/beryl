@@ -119,7 +119,7 @@ jobs:
               args+=(--set "$target")
             done < <(printf '%s\n' "$INPUT_VERSIONS" | tr ',' '\n')
           fi
-          trellis release pr "${args[@]}" --prepare-command "node scripts/prepare-release.mjs"
+          trellis release pr "${args[@]}" --prepare-command "just namespace-test && just site-reference"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           INPUT_PRE: ${{ inputs.pre }}

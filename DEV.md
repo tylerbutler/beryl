@@ -447,11 +447,12 @@ Release preparation no longer writes `.changes/release.toml` and removes an
 existing file from the generated release commit.
 
 The workflow and `just release-pr` call Trellis with
-`--prepare-command "node scripts/prepare-release.mjs"`.
-The command runs `just namespace-test` and `just site-reference` after
-version application and checks that generation changes only the fixture lock
-and reference pages. Trellis stages those files with the version changes in
-the same release commit. Generation failure prevents the push.
+`--prepare-command "just namespace-test && just site-reference"`.
+These existing recipes refresh the fixture lock and reference pages after
+version application. Trellis stages the generated files with the version
+changes in the same release commit. A failed command prevents the push.
+Trellis stages all changes from the command; there is no separate output-path
+restriction.
 
 Trellis also runs the command for unchanged release inputs. It validates an
 open, same-repository pending PR and its remote head before repairing stale
@@ -469,8 +470,8 @@ the previously verified head while waiting. Unexpected heads or PR identity
 changes stop finalization. An API failure or convergence timeout can leave a
 complete release commit with unfinished PR metadata. Trellis reports that the
 push succeeded but finalization remains incomplete and emits no success
-output. Failed local generation can leave files for inspection; the generator
-does not reset or clean the checkout.
+output. Failed local generation can leave files for inspection; the recipes
+do not reset or clean the checkout.
 
 Run `just release-test` for local bare-Git and mock-API regression tests.
 They use the repository's mise-selected Trellis binary and mock generation

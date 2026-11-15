@@ -6,10 +6,8 @@ import {
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const script = fileURLToPath(new URL("./prepare-release.mjs", import.meta.url));
 const reference = "refs/heads/release/pending";
 const docs = "website/src/content/docs/reference/api/index.md";
 const lock = "scripts/fixtures/heirloom_namespace/manifest.toml";
@@ -62,7 +60,6 @@ default = "git_only"
 	write(docs, "sample 0.1.0\n");
 	write(lock, "sample 0.1.0\n");
 	write(".gitignore", "calls\n");
-	write("scripts/prepare-release.mjs", readFileSync(script));
 	git("add", ".");
 	git("commit", "-m", "initial");
 	git("push", "origin", "main");
@@ -130,11 +127,13 @@ const { execFileSync } = require("node:child_process");
 const command = process.argv[2];
 fs.appendFileSync("calls", command + "\\n");
 const version = fs.readFileSync("packages/sample/gleam.toml", "utf8").match(/version = "([^"]+)"/)[1];
-if (command === "namespace-test") fs.writeFileSync(${JSON.stringify(lock)}, "sample " + version + "\\n");
+if (command === "namespace-test") {
+  ${options.namespaceError ? 'console.error("namespace validation failed"); process.exit(1);' : ""}
+  fs.writeFileSync(${JSON.stringify(lock)}, "sample " + version + "\\n");
+}
 else if (command === "site-reference") {
   ${options.generationError ? 'console.error("reference generation failed"); process.exit(1);' : ""}
   fs.writeFileSync(${JSON.stringify(docs)}, "sample " + version + "\\n");
-  ${options.unexpectedFile ? 'fs.writeFileSync("unexpected", "do not publish");' : ""}
   ${options.onGenerate ?? ""}
 } else throw new Error("unexpected command " + command);
 `, { mode: 0o755 });
@@ -160,7 +159,7 @@ process.exit(result.status ?? 1);
 	const run = (args = []) => new Promise((resolve, reject) => {
 		const child = spawn("trellis", [
 			"release", "pr", ...args, "--json",
-			"--prepare-command", "node scripts/prepare-release.mjs",
+			"--prepare-command", "just namespace-test && just site-reference",
 		], { cwd, env });
 		let stdout = "";
 		let stderr = "";
@@ -219,6 +218,16 @@ test("generation failure prevents the first release push and PR creation", async
 	const result = await f.run();
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /reference generation failed/);
+	assert.equal(f.remoteHead(), null);
+	assert.equal(f.requests.filter((r) => r.method !== "GET").length, 0);
+});
+
+test("namespace failure stops the command chain before reference generation or push", async (t) => {
+	const f = await fixture(t, { namespaceError: true });
+	const result = await f.run();
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /namespace validation failed/);
+	assert.equal(readFileSync(path.join(f.root, "work", "calls"), "utf8"), "namespace-test\n");
 	assert.equal(f.remoteHead(), null);
 	assert.equal(f.requests.filter((r) => r.method !== "GET").length, 0);
 });
@@ -377,26 +386,6 @@ test("native convergence rejects an unexpected head after the release push", asy
 	assert.equal(f.requests.filter((r) => r.method === "PATCH").length, 0);
 	assert.equal(f.output("concurrent.txt"), "preserve this edit");
 	assert.equal(f.output(docs), "sample 0.1.1");
-});
-
-test("unexpected generated paths stop the release push", async (t) => {
-	const f = await fixture(t, { unexpectedFile: true });
-	const result = await f.run();
-	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /outside the release outputs/);
-	assert.equal(f.remoteHead(), null);
-});
-
-test("generation cannot modify the candidate archives that Trellis just created", async (t) => {
-	const f = await fixture(t, { onGenerate: `
-for (const file of fs.readdirSync(".changes/sample")) {
-  if (file.endsWith(".toml")) fs.appendFileSync(".changes/sample/" + file, "\\n# unexpected generator edit\\n");
-}
-` });
-	const result = await f.run(["--pre", "rc"]);
-	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /outside the release outputs/);
-	assert.equal(f.remoteHead(), null);
 });
 
 test("no release inputs and no pending PR makes no changes", async (t) => {
