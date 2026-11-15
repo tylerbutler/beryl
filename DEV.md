@@ -446,25 +446,22 @@ Trellis reads candidate baselines and release inputs from Git history.
 Release preparation no longer writes `.changes/release.toml` and removes an
 existing file from the generated release commit.
 
-`scripts/prepare-release.mjs` invokes Trellis with `--prepare-command`.
+The workflow and `just release-pr` call Trellis with
+`--prepare-command "node scripts/prepare-release.mjs"`.
 The command runs `just namespace-test` and `just site-reference` after
 version application and checks that generation changes only the fixture lock
 and reference pages. Trellis stages those files with the version changes in
 the same release commit. Generation failure prevents the push.
-
-The launcher copies its generator to a temporary path before calling Trellis.
-This keeps the generator available when a pending release predates the script.
-The launcher does not install Git hooks, inspect PRs, or push branches itself.
 
 Trellis also runs the command for unchanged release inputs. It validates an
 open, same-repository pending PR and its remote head before repairing stale
 artifacts with a child commit and an explicit SHA lease. A clean rerun leaves
 the branch and PR unchanged. Genuine head changes, closed or retargeted PRs,
 and unrelated failures stop preparation. Inspect the current state before
-retrying; the launcher does not retry or overwrite concurrent edits.
+retrying; the command does not retry or overwrite concurrent edits.
 With no release plan, Trellis skips the command. For an unchanged merged
 candidate, changed generated files require an explicit `--force`; the
-launcher does not add force or promotion options.
+command does not add force or promotion options.
 
 After updating an existing release branch, Trellis waits for GitHub to report
 the pushed head, with at most six reads one second apart. It accepts only
@@ -472,7 +469,7 @@ the previously verified head while waiting. Unexpected heads or PR identity
 changes stop finalization. An API failure or convergence timeout can leave a
 complete release commit with unfinished PR metadata. Trellis reports that the
 push succeeded but finalization remains incomplete and emits no success
-output. Failed local generation can leave files for inspection; the launcher
+output. Failed local generation can leave files for inspection; the generator
 does not reset or clean the checkout.
 
 Run `just release-test` for local bare-Git and mock-API regression tests.

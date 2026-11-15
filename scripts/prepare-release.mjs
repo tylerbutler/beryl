@@ -1,8 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 
 const generated = [
 	"scripts/fixtures/heirloom_namespace/manifest.toml",
@@ -43,26 +40,8 @@ function refresh() {
 	}
 }
 
-function prepare(args) {
-	const directory = mkdtempSync(path.join(tmpdir(), "beryl-release-"));
-	const generator = path.join(directory, "prepare-release.mjs");
-	try {
-		// Pending heads can predate this script; keep the caller's generator available.
-		copyFileSync(fileURLToPath(import.meta.url), generator);
-		const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
-		run("trellis", [
-			"release", "pr", ...args,
-			"--base", "main", "--branch", "release/pending",
-			"--prepare-command", `${quote(process.execPath)} ${quote(generator)} --refresh`,
-		], { stdio: "inherit" });
-	} finally {
-		rmSync(directory, { recursive: true, force: true });
-	}
-}
-
 try {
-	if (process.argv[2] === "--refresh") refresh();
-	else prepare(process.argv.slice(2));
+	refresh();
 } catch (error) {
 	console.error(error.message);
 	process.exitCode = 1;

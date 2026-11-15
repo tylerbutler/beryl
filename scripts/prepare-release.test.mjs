@@ -158,7 +158,10 @@ process.exit(result.status ?? 1);
 `, { mode: 0o755 });
 	}
 	const run = (args = []) => new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, [path.join(cwd, "scripts/prepare-release.mjs"), ...args, "--json"], { cwd, env });
+		const child = spawn("trellis", [
+			"release", "pr", ...args, "--json",
+			"--prepare-command", "node scripts/prepare-release.mjs",
+		], { cwd, env });
 		let stdout = "";
 		let stderr = "";
 		child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -171,7 +174,6 @@ process.exit(result.status ?? 1);
 		write("packages/sample/gleam.toml", 'name = "sample"\nversion = "0.1.1"\n');
 		write("packages/sample/CHANGELOG.md", "## v0.1.1\n\n### Fixed\n\n- Fix sample.\n");
 		git("rm", ".changes/unreleased/sample.toml");
-		git("rm", "scripts/prepare-release.mjs");
 		git("add", ".");
 		git("commit", "-m", "old partial preparation");
 		git("push", "origin", `HEAD:${reference}`);

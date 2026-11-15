@@ -140,7 +140,7 @@ version-plan *ARGS:
 
 # Prepare a release PR from main; this pushes release/pending
 release-pr *ARGS:
-    node scripts/prepare-release.mjs {{ ARGS }}
+    trellis release pr {{ ARGS }} --prepare-command "node scripts/prepare-release.mjs"
 
 # Check release preparation with local Git and mock GitHub fixtures
 release-test:
