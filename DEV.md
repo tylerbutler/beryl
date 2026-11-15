@@ -11,7 +11,7 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
-| [trellis](https://trellis.tylerbutler.com) | 1.4.0+ | Gleam workspace manager (tasks, versions, publishing) |
+| [trellis](https://trellis.tylerbutler.com) | 1.6.1+ | Gleam workspace manager (tasks, versions, publishing) |
 
 **Recommended:** Use [mise](https://mise.jdx.dev/) with the provided
 `.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
@@ -442,43 +442,45 @@ Each candidate includes only new changes. Trellis moves its fragments from
 `unreleased` into `.changes/<package>/v<prerelease>.toml` archives; commit those
 archives with the changelog sections. Promotion combines the target version's
 candidate archives and remaining fragments into the final changelog.
-Trellis 1.4 reads candidate baselines and release inputs from Git history.
+Trellis reads candidate baselines and release inputs from Git history.
 Release preparation no longer writes `.changes/release.toml` and removes an
 existing file from the generated release commit.
 
-`scripts/prepare-release.mjs` uses Trellis 1.4's JSON outcomes and a
-command-scoped Git pre-commit hook. The hook runs `just namespace-test` and
-`just site-reference` after version application, then stages the fixture lock
-and reference pages in the release commit. Generation failure prevents the
-push. The wrapper does not change repository hook configuration.
+`scripts/prepare-release.mjs` invokes Trellis with `--prepare-command`.
+The command runs `just namespace-test` and `just site-reference` after
+version application and checks that generation changes only the fixture lock
+and reference pages. Trellis stages those files with the version changes in
+the same release commit. Generation failure prevents the push.
 
-The wrapper also checks the current release PR after native no-op outcomes.
-It can repair an older partial preparation without another version bump.
-Before repair, it verifies that the PR is open, unmerged, and in the same
-repository with the expected head and base branches. It checks the API head
-against the remote branch, generates from that exact commit, then pushes a
-child commit with an explicit SHA lease. A concurrent update causes a fresh
-read and regeneration instead of overwriting the new head.
+The launcher copies its generator to a temporary path before calling Trellis.
+This keeps the generator available when a pending release predates the script.
+The launcher does not install Git hooks, inspect PRs, or push branches itself.
 
-Only identified Trellis head conflicts with a stable or self-pushed remote
-head and repair head/lease conflicts retry, with at most three attempts per
-phase. A distinct concurrent update during native preparation stops the run
-for inspection; the wrapper does not rebase over that edit. Other failures
-also stop preparation.
-Run `just release-test` for local bare-Git and mock-API regression tests;
-the tests use the repository's mise-selected Trellis binary and mock the
-generation commands.
+Trellis also runs the command for unchanged release inputs. It validates an
+open, same-repository pending PR and its remote head before repairing stale
+artifacts with a child commit and an explicit SHA lease. A clean rerun leaves
+the branch and PR unchanged. Genuine head changes, closed or retargeted PRs,
+and unrelated failures stop preparation. Inspect the current state before
+retrying; the launcher does not retry or overwrite concurrent edits.
+With no release plan, Trellis skips the command. For an unchanged merged
+candidate, changed generated files require an explicit `--force`; the
+launcher does not add force or promotion options.
 
-Trellis 1.4 has no prepare-only or generation hook interface; the wrapper
-depends on its standard Git commit path. Trellis still pushes before updating
-PR metadata. An API failure can leave a complete, validated release commit
-with stale PR metadata, and a no-op retry does not refresh that metadata.
-Persistent conflicts stop after the retry limit. Failed local generation
-leaves files for inspection; the wrapper does not reset or clean them.
-Upstream tracks the generation interface in
-[tylerbutler/trellis#183](https://github.com/tylerbutler/trellis/issues/183)
-and post-push API convergence in
-[tylerbutler/trellis#158](https://github.com/tylerbutler/trellis/issues/158).
+After updating an existing release branch, Trellis waits for GitHub to report
+the pushed head, with at most six reads one second apart. It accepts only
+the previously verified head while waiting. Unexpected heads or PR identity
+changes stop finalization. An API failure or convergence timeout can leave a
+complete release commit with unfinished PR metadata. Trellis reports that the
+push succeeded but finalization remains incomplete and emits no success
+output. Failed local generation can leave files for inspection; the launcher
+does not reset or clean the checkout.
+
+Run `just release-test` for local bare-Git and mock-API regression tests.
+They use the repository's mise-selected Trellis binary and mock generation
+commands. Native preparation and convergence first shipped in
+[Trellis 1.5.0](https://github.com/tylerbutler/trellis/releases/tag/v1.5.0);
+the repository pins
+[1.6.1](https://github.com/tylerbutler/trellis/releases/tag/v1.6.1).
 
 Candidate tags use full package versions, such as `beryl-v1.0.0-rc.0`.
 Trellis marks their GitHub releases as prereleases. Candidates do not update

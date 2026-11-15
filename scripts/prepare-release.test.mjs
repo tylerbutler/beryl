@@ -83,14 +83,15 @@ default = "git_only"
 	const server = createServer(async (req, res) => {
 		let body = "";
 		for await (const chunk of req) body += chunk;
-		requests.push({ method: req.method, url: req.url, body, repair: Boolean(req.headers["x-release-repair"]) });
+		requests.push({ method: req.method, url: req.url, body });
 		res.setHeader("Content-Type", "application/json");
 		if (options.apiError) {
 			res.writeHead(500).end('{"message":"unrelated API failure"}');
 		} else if (req.method === "GET" && req.url.includes("?")) {
 			res.end(JSON.stringify(pr ? [prData()] : []));
 		} else if (req.method === "GET") {
-			if (options.nativeConflict && !nativeConflict && !req.headers["x-release-repair"]) {
+			if (!nativeConflict && (options.nativeConflict
+				|| (options.postPushConflict && laggedHead && laggedHead !== remoteHead()))) {
 				nativeConflict = true;
 				git("clone", "--quiet", "--branch", "release/pending", remote, path.join(root, "peer"));
 				writeFileSync(path.join(root, "peer", "concurrent.txt"), "preserve this edit\n");
@@ -99,16 +100,14 @@ default = "git_only"
 				git("-C", path.join(root, "peer"), "push", "origin", "HEAD:release/pending");
 			}
 			const head = remoteHead();
-			if (options.lagAfterPush && laggedHead && laggedHead !== head && conflictCount++ === 0) {
+			if (laggedHead && laggedHead !== head
+				&& (options.staleAfterPush || (options.lagAfterPush && conflictCount++ === 0))) {
 				res.end(JSON.stringify(prData(laggedHead)));
 			} else {
 				laggedHead = head;
 				const data = prData();
-				if (req.headers["x-release-repair"]) {
-					if (options.closed) data.state = "closed";
-					if (options.retargeted) data.base.ref = "other";
-					if (options.staleRepair) data.head.sha = git("rev-parse", "main");
-				}
+				if (options.closed) data.state = "closed";
+				if (options.retargeted) data.base.ref = "other";
 				res.end(JSON.stringify(data));
 			}
 		} else if (req.method === "POST") {
@@ -125,16 +124,6 @@ default = "git_only"
 	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => server.close());
 	env.TRELLIS_GITHUB_API_URL = `http://127.0.0.1:${server.address().port}`;
-	writeFileSync(path.join(bin, "gh"), `#!${process.execPath}
-const args = process.argv.slice(2);
-if (args[0] === "repo") console.log("fixture/release");
-else {
-  fetch(process.env.TRELLIS_GITHUB_API_URL + "/" + args[1], {headers: {"X-Release-Repair": "true"}}).then(async response => {
-    if (!response.ok) throw new Error(await response.text());
-    console.log(await response.text());
-  }).catch(error => { console.error(error.message); process.exitCode = 1; });
-}
-`, { mode: 0o755 });
 	writeFileSync(path.join(bin, "just"), `#!${process.execPath}
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
@@ -169,7 +158,7 @@ process.exit(result.status ?? 1);
 `, { mode: 0o755 });
 	}
 	const run = (args = []) => new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, [path.join(cwd, "scripts/prepare-release.mjs"), ...args], { cwd, env });
+		const child = spawn(process.execPath, [path.join(cwd, "scripts/prepare-release.mjs"), ...args, "--json"], { cwd, env });
 		let stdout = "";
 		let stderr = "";
 		child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -196,7 +185,15 @@ process.exit(result.status ?? 1);
 		git("fetch", "--no-tags", "origin", head);
 		return git("show", `${head}:${file}`);
 	};
-	return { root, remote, git, write, run, partial, output, remoteHead, requests };
+	const mergeRelease = () => {
+		const head = remoteHead();
+		git("fetch", "--no-tags", "origin", head);
+		git("checkout", "main");
+		git("merge", "--ff-only", head);
+		git("push", "origin", "main");
+		pr = null;
+	};
+	return { root, remote, git, write, run, partial, output, remoteHead, requests, mergeRelease };
 }
 
 test("the first native Trellis push includes refreshed docs and fixture lock; rerun is a no-op", async (t) => {
@@ -229,7 +226,7 @@ test("unchanged native preparation repairs an old partial release without a seco
 	const before = f.partial();
 	const result = await f.run();
 	assert.equal(result.status, 0, result.stderr);
-	assert.match(result.stdout, /unchanged/);
+	assert.match(result.stdout, /prepared/);
 	assert.equal(f.output(docs), "sample 0.1.1");
 	assert.equal(f.output(lock), "sample 0.1.1");
 	assert.equal(f.git("rev-parse", `${f.remoteHead()}^`), before);
@@ -244,7 +241,7 @@ test("failed recovery leaves the previously partial remote unchanged", async (t)
 	assert.equal(f.output(docs), "sample 0.1.0");
 });
 
-test("a stale API response after the native push re-reads current state and recovers", async (t) => {
+test("native convergence waits for the pushed head and finalizes PR metadata", async (t) => {
 	const f = await fixture(t, { lagAfterPush: true });
 	f.partial();
 	f.write("packages/sample/src/source.txt", "updated release input\n");
@@ -252,13 +249,15 @@ test("a stale API response after the native push re-reads current state and reco
 	f.git("commit", "-m", "new input");
 	const result = await f.run();
 	assert.equal(result.status, 0, result.stderr);
-	assert.match(result.stderr, /re-reading release state/);
-	assert.match(result.stderr, /no-op retry does not finalize PR metadata/);
+	assert.equal(JSON.parse(result.stdout).outcome, "prepared");
+	assert.equal(f.requests.filter((r) => r.method === "PATCH").length, 1);
+	assert.match(JSON.parse(f.requests.find((r) => r.method === "PATCH").body).body, /sample.*0.1.1/);
+	assert.doesNotMatch(result.stderr, /finalization remains incomplete/);
 	assert.equal(f.output(docs), "sample 0.1.1");
 	assert.equal(f.output(lock), "sample 0.1.1");
 });
 
-test("recovery preserves a concurrent edit and retries from the new remote head", async (t) => {
+test("native unchanged repair stops without overwriting an edit during generation", async (t) => {
 	const f = await fixture(t, {
 		onGenerate: `
   if (!fs.existsSync("../concurrent")) {
@@ -273,11 +272,12 @@ test("recovery preserves a concurrent edit and retries from the new remote head"
 	});
 	const partial = f.partial();
 	const result = await f.run();
-	assert.equal(result.status, 0, result.stderr);
-	assert.match(result.stderr, /re-reading release state/);
-	assert.equal(f.git("log", "-1", "--format=%s", `${f.remoteHead()}^`), "concurrent edit");
-	assert.equal(f.git("rev-parse", `${f.remoteHead()}^^`), partial);
-	assert.equal(f.output(docs), "sample 0.1.1");
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /changed during preparation/);
+	f.output("concurrent.txt");
+	assert.equal(f.git("log", "-1", "--format=%s", f.remoteHead()), "concurrent edit");
+	assert.equal(f.git("rev-parse", `${f.remoteHead()}^`), partial);
+	assert.equal(f.output(docs), "sample 0.1.0");
 	assert.equal(f.output("concurrent.txt"), "preserve this edit");
 });
 
@@ -289,23 +289,23 @@ test("native preparation stops rather than retrying over a distinct concurrent e
 	f.git("commit", "-m", "new input");
 	const result = await f.run();
 	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /Concurrent release edit preserved/);
+	assert.match(result.stderr, /changed during preparation/);
 	assert.doesNotMatch(result.stderr, /re-reading release state/);
 	assert.equal(f.output("concurrent.txt"), "preserve this edit");
 	assert.equal(f.git("log", "-1", "--format=%s", f.remoteHead()), "concurrent edit");
 });
 
-test("the repair push lease rejects a last-moment edit and retries from its new head", async (t) => {
+test("the native repair lease rejects a last-moment edit without overwriting it", async (t) => {
 	const f = await fixture(t, { pushRace: true });
 	const before = f.partial();
 	const result = await f.run();
-	assert.equal(result.status, 0, result.stderr);
-	assert.match(result.stderr, /changed before the repair push/);
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /stale info/);
 	assert.equal(readFileSync(path.join(f.root, "push-race"), "utf8"), `--force-with-lease=${reference}:${before}`);
 	assert.equal(f.output("concurrent.txt"), "preserve this edit");
-	assert.equal(f.output(docs), "sample 0.1.1");
-	assert.equal(f.output(lock), "sample 0.1.1");
-	assert.equal(f.git("rev-parse", `${f.remoteHead()}^^`), before);
+	assert.equal(f.output(docs), "sample 0.1.0");
+	assert.equal(f.output(lock), "sample 0.1.0");
+	assert.equal(f.git("rev-parse", `${f.remoteHead()}^`), before);
 });
 
 for (const state of ["closed", "retargeted"]) {
@@ -314,21 +314,27 @@ for (const state of ["closed", "retargeted"]) {
 		const before = f.partial();
 		const result = await f.run();
 		assert.notEqual(result.status, 0);
-		assert.match(result.stderr, /closed, merged, retargeted/);
+		assert.match(result.stderr, /closed, merged, or retargeted|targeting/);
 		assert.equal(f.remoteHead(), before);
 		assert.doesNotMatch(result.stderr, /re-reading release state/);
 	});
 }
 
-test("persistent API/branch disagreement stops after three reads without publishing a repair", async (t) => {
-	const f = await fixture(t, { staleRepair: true });
-	const before = f.partial();
+test("persistent stale post-push heads fail after bounded convergence without success output", async (t) => {
+	const f = await fixture(t, { staleAfterPush: true });
+	f.partial();
+	f.write("packages/sample/src/source.txt", "updated release input\n");
+	f.git("add", ".");
+	f.git("commit", "-m", "new input");
 	const result = await f.run();
 	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /have not converged/);
-	assert.equal(f.requests.filter((r) => r.repair).length, 6);
-	assert.equal(f.remoteHead(), before);
-	assert.equal(f.output(docs), "sample 0.1.0");
+	assert.match(result.stderr, /still reports the previous head/);
+	assert.match(result.stderr, /pushed successfully, but PR finalization remains incomplete/);
+	assert.equal(result.stdout, "");
+	assert.equal(f.requests.filter((r) => r.method === "GET" && !r.url.includes("?")).length, 7);
+	assert.equal(f.requests.filter((r) => r.method === "PATCH").length, 0);
+	assert.equal(f.output(docs), "sample 0.1.1");
+	assert.equal(f.output(lock), "sample 0.1.1");
 });
 
 test("unrelated API errors remain failures without retries or a release push", async (t) => {
@@ -355,9 +361,37 @@ test("unrelated PR metadata failures remain visible after a fully generated push
 	assert.equal(f.output(lock), "sample 0.1.1");
 });
 
+test("native convergence rejects an unexpected head after the release push", async (t) => {
+	const f = await fixture(t, { postPushConflict: true });
+	f.partial();
+	f.write("packages/sample/src/source.txt", "updated release input\n");
+	f.git("add", ".");
+	f.git("commit", "-m", "new input");
+	const result = await f.run();
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /pushed successfully, but PR finalization remains incomplete/);
+	assert.match(result.stderr, /changed during preparation/);
+	assert.equal(result.stdout, "");
+	assert.equal(f.requests.filter((r) => r.method === "PATCH").length, 0);
+	assert.equal(f.output("concurrent.txt"), "preserve this edit");
+	assert.equal(f.output(docs), "sample 0.1.1");
+});
+
 test("unexpected generated paths stop the release push", async (t) => {
 	const f = await fixture(t, { unexpectedFile: true });
 	const result = await f.run();
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /outside the release outputs/);
+	assert.equal(f.remoteHead(), null);
+});
+
+test("generation cannot modify the candidate archives that Trellis just created", async (t) => {
+	const f = await fixture(t, { onGenerate: `
+for (const file of fs.readdirSync(".changes/sample")) {
+  if (file.endsWith(".toml")) fs.appendFileSync(".changes/sample/" + file, "\\n# unexpected generator edit\\n");
+}
+` });
+	const result = await f.run(["--pre", "rc"]);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /outside the release outputs/);
 	assert.equal(f.remoteHead(), null);
@@ -372,4 +406,34 @@ test("no release inputs and no pending PR makes no changes", async (t) => {
 	assert.match(result.stdout, /no_changes/);
 	assert.equal(f.remoteHead(), null);
 	assert.equal(f.git("status", "--porcelain"), "");
+});
+
+test("native preparation preserves candidate intent and requires explicit promotion", async (t) => {
+	const f = await fixture(t);
+	const first = await f.run(["--pre", "rc", "--set", "sample=0.2.0"]);
+	assert.equal(first.status, 0, first.stderr);
+	assert.equal(f.output(docs), "sample 0.2.0-rc.0");
+	const resumed = await f.run();
+	assert.equal(resumed.status, 0, resumed.stderr);
+	assert.equal(JSON.parse(resumed.stdout).outcome, "unchanged");
+	assert.equal(f.output(lock), "sample 0.2.0-rc.0");
+
+	f.mergeRelease();
+	f.write(".changes/unreleased/next.toml", 'package = "sample"\nkind = "Fixed"\nbody = "Next fix."\n');
+	f.git("add", ".");
+	f.git("commit", "-m", "new candidate input");
+	const continued = await f.run();
+	assert.equal(continued.status, 0, continued.stderr);
+	assert.equal(f.output(docs), "sample 0.2.0-rc.1");
+	assert.equal(f.output(lock), "sample 0.2.0-rc.1");
+
+	f.mergeRelease();
+	const unchanged = await f.run();
+	assert.equal(unchanged.status, 0, unchanged.stderr);
+	assert.equal(JSON.parse(unchanged.stdout).outcome, "unchanged");
+	assert.equal(f.output(docs), "sample 0.2.0-rc.1");
+	const promoted = await f.run(["--pre", "none"]);
+	assert.equal(promoted.status, 0, promoted.stderr);
+	assert.equal(f.output(docs), "sample 0.2.0");
+	assert.equal(f.output(lock), "sample 0.2.0");
 });
