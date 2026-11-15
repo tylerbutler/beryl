@@ -119,7 +119,8 @@ just pr
 
 ### Dependency audits
 
-Local audit tasks use `licence_audit` v0.11.1, pinned in `.mise.toml`.
+Local and CI audit tasks use `licence_audit` v1.0.0-rc.2, a release candidate
+pinned in `.mise.toml`.
 Install it with `mise install github:tylerbutler/licence_audit`. mise selects
 the self-contained platform archive; the repo's Erlang version is unchanged.
 
@@ -138,9 +139,13 @@ package name, such as `just audit-licences cursor`.
 Examples need an approved licence policy before licence enforcement is useful.
 
 The report tasks do not fail on findings; `audit-check` uses `check --vulns`
-and propagates failures. The existing policies allow Apache-2.0, ISC, and MIT.
+and propagates failures. The policies allow Apache-2.0, ISC, and MIT.
+`beryl`, `beryl_mist`, and `beryl_ewe` also allow BSD-3-Clause for their
+development dependencies.
 The default vulnerability threshold is `high`; unknown severity does not
-block. No audit task is part of CI or `just ci`.
+block. CI runs `audit-check` after dependency preparation for source-relevant
+changes, including changes to the CI workflow. `just ci` also runs this gate.
+Licence violations, blocking vulnerabilities, and network errors fail the gate.
 
 Licence reports cover locked Hex dependencies, not Git or local path sources.
 Vulnerability reports cover Hex and GitHub dependencies; other sources are

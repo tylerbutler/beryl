@@ -241,7 +241,7 @@ clean:
 # === CI ===
 
 # Run all CI checks (format, check, test, build, examples)
-ci: release-test deps-test namespace-test format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
+ci: release-test deps-test audit-check namespace-test format-check docs site-snippets beam-check test protocol-test portable-host-test examples-test site-demos-test
 
 # Alias for PR checks
 alias pr := ci

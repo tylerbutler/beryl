@@ -4,7 +4,7 @@ gleam = "1.19.2"
 just = "1.50.0"
 "github:tylerbutler/trellis" = "1.4.0"
 "github:erlang/rebar3" = "3.24.0"
-"github:tylerbutler/licence_audit" = "v0.13.0"
+"github:tylerbutler/licence_audit" = "v1.0.0-rc.2"
 
 [env]
 LC_ALL = "en_US.UTF-8"
