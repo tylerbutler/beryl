@@ -1,4 +1,4 @@
-import beryl/heirloom
+import beryl_heirloom as heirloom
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/list

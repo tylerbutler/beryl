@@ -6,7 +6,6 @@ repository = { type = "github", user = "tylerbutler", repo = "beryl", path = "pa
 gleam = ">= 1.13.0"
 target = "erlang"
 internal_modules = [
-  "beryl/heirloom",
   "beryl/app_supervisor",
   "beryl/atomic_token",
   "beryl/connection_limit",
@@ -22,6 +21,7 @@ internal_modules = [
 ]
 
 [dependencies]
+beryl_heirloom = { path = "../beryl_heirloom" }
 beryl_protocol = { path = "../beryl_protocol" }
 palabres = ">= 1.0.4 and < 2.0.0"
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"

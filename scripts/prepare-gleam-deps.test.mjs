@@ -169,12 +169,12 @@ test("shared preparation refreshes a standalone fixture after a release bump", (
 		path.join(directory, "gleam.toml"),
 		'[tools.trellis]\nmembers = ["packages/*"]\n',
 	);
-	for (const name of ["beryl", "beryl_protocol"]) {
+	for (const name of ["beryl", "beryl_protocol", "beryl_heirloom"]) {
 		mkdirSync(path.join(directory, "packages", name, "src"), { recursive: true });
 		writeFileSync(
 			path.join(directory, "packages", name, "gleam.toml"),
 			`name = "${name}"\nversion = "0.5.0"\n`
-				+ (name === "beryl" ? '[dependencies]\nberyl_protocol = { path = "../beryl_protocol" }\n' : ""),
+				+ (name === "beryl" ? '[dependencies]\nberyl_protocol = { path = "../beryl_protocol" }\nberyl_heirloom = { path = "../beryl_heirloom" }\n' : ""),
 		);
 	}
 	const fixture = path.join(directory, "scripts/fixtures/heirloom_namespace");
@@ -191,12 +191,12 @@ test("shared preparation refreshes a standalone fixture after a release bump", (
 	prepareWorkspaceDependencies(directory);
 	const manifest = path.join(fixture, "manifest.toml");
 	assert.match(readFileSync(manifest, "utf8"), /name = "beryl", version = "0\.5\.0"/);
-	for (const name of ["beryl", "beryl_protocol"]) {
+	for (const name of ["beryl", "beryl_protocol", "beryl_heirloom"]) {
 		const config = path.join(directory, "packages", name, "gleam.toml");
 		writeFileSync(config, readFileSync(config, "utf8").replace("0.5.0", "0.6.0"));
 	}
 	prepareWorkspaceDependencies(directory, ["heirloom_namespace"]);
-	for (const name of ["beryl", "beryl_protocol"]) {
+	for (const name of ["beryl", "beryl_protocol", "beryl_heirloom"]) {
 		assert.match(
 			readFileSync(manifest, "utf8"),
 			new RegExp(`name = "${name}", version = "0\\.6\\.0"`),

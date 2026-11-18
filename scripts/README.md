@@ -73,7 +73,9 @@ From the repository root:
   build artifacts. [justfile:beam-check] [justfile:dialyzer] [justfile:xref]
 - `just namespace-test` prepares dependencies, clean-builds, and runs the standalone
   `fixtures/heirloom_namespace` consumer. Its own `heirloom` Gleam module and
-  `heirloom_ffi` Erlang helper must coexist with beryl. The fixture is outside
+  `heirloom_ffi` Erlang helper must coexist with beryl and its `beryl_heirloom`
+  dependency. It also creates, reads, and deletes an ETS table using an
+  explicit local dependency on the extracted package. The fixture is outside
   the workspace and release graph. [justfile:namespace-test]
   The release workflow runs this check after version bumps and commits the
   fixture lock with the generated API reference.

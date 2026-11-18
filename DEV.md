@@ -17,14 +17,15 @@ Ensure you have the following installed:
 `.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
 licence_audit. CI matrix-tests Erlang 27 and 28.
 
-This repository is a trellis-managed workspace: four packages live under
-`packages/`: `beryl_protocol`, `beryl`, `beryl_mist`, and `beryl_ewe`, with
-runnable examples in `examples/` and a root `gleam.toml` holding only the
-`[tools.trellis]` configuration. `beryl_protocol` uses the `workspace`
-lifecycle and ships inside beryl through `publish.bundle`, without separate
-releases. `beryl` uses the `hex` lifecycle; the transport packages use
-`git_only`. CI keeps Hex uploads disabled. Write protocol changelog fragments
-for `beryl`. `just` recipes fan out across the workspace through `trellis run`.
+This repository is a trellis-managed workspace: five packages live under
+`packages/`: `beryl_heirloom`, `beryl_protocol`, `beryl`, `beryl_mist`, and
+`beryl_ewe`, with runnable examples in `examples/` and a root `gleam.toml`
+holding only the `[tools.trellis]` configuration. `beryl_protocol` and
+`beryl_heirloom` use the `workspace` lifecycle and ship inside beryl through
+`publish.bundle`, without separate
+releases. The three released packages use `git_only`; Hex uploads stay disabled.
+Write consumer-visible protocol and heirloom changelog fragments for `beryl`.
+`just` recipes fan out across the workspace through `trellis run`.
 Use `just protocol-test` for the shared Erlang/JavaScript suite and
 `just portable-host-test` for the Roost/Durable Object host.
 
@@ -131,8 +132,9 @@ just audit-check             # Enforce licences and the vulnerability threshold
 just audit-check beryl_mist  # Limit the task to one package
 ```
 
-These tasks default to `beryl_protocol`, `beryl`, `beryl_mist`, and `beryl_ewe`. Each command runs
-in the package directory and reads its locked manifest. Licence reports and
+These tasks default to `beryl_heirloom`, `beryl_protocol`, `beryl`,
+`beryl_mist`, and `beryl_ewe`. Each command runs in the package directory and
+reads its locked manifest. Licence reports and
 enforcement use its existing `[tools.licence_audit]` policy.
 Examples are not included by default. To report on an example, pass its
 package name, such as `just audit-licences cursor`.
@@ -414,8 +416,8 @@ Each package keeps its own version. The optional `versions` input accepts
 comma-separated targets, such as `beryl=1.0.0,beryl_mist=0.5.0`.
 Use base versions without an RC suffix. Promotion takes the current
 candidate's base version; do not also set a target for that package.
-`beryl_protocol` remains a workspace member bundled with beryl and takes no
-independent release target. Examples and benchmarks remain excluded.
+`beryl_protocol` and `beryl_heirloom` remain workspace members bundled with
+beryl and take no independent release target. Examples and benchmarks remain excluded.
 
 Preview a release without writing files or contacting GitHub:
 

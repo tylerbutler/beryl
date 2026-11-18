@@ -11,12 +11,12 @@ import app_heartbeat_test
 import app_test_helper
 import beryl
 import beryl/connection_limit
-import beryl/heirloom
 import beryl/internal
 import beryl/snapshot
 import beryl/socket.{AcceptJoin, Broadcast, Join, Next}
 import beryl/transport
 import beryl/wire
+import beryl_heirloom as heirloom
 import gleam/erlang/process
 import gleam/json
 import gleam/list
