@@ -4,10 +4,12 @@
 
 Type-safe real-time channels and presence for Gleam, targeting the Erlang
 (BEAM) runtime. The repository is a [trellis](https://trellis.tylerbutler.com)-managed
-monorepo with four releasable packages:
+monorepo with three releasable packages and two bundled workspace packages:
 
 - **`packages/beryl_protocol`**: Pure channel protocol transitions for Erlang
   and JavaScript. Hosts own I/O, authorization, scheduling, and application work.
+- **`packages/beryl_heirloom`**: Typed ETS tables, heirs, and ownership transfers
+  for Erlang. No beryl dependency; bundled with beryl without a separate release.
 - **`packages/beryl`** — raw app dispatch plus `beryl/channel` (runtime,
   typed events/effects, presence, PubSub, wire protocol, abuse controls,
   transport SPI)

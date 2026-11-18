@@ -8,6 +8,8 @@ the root workspace controls release bundling and test tasks.
 
 ## Interface
 
+- [beryl_heirloom](./beryl_heirloom/README.md): typed ETS tables, heirs, and
+  ownership transfers, with no beryl dependency.
 - [beryl_protocol](./beryl_protocol/README.md): immutable protocol state,
   capabilities, validation, snapshots, and ordered host actions
   (`beryl_protocol/src/beryl_protocol.gleam:step`,
@@ -27,15 +29,15 @@ the root workspace controls release bundling and test tasks.
 
 ## Invariants
 
-- beryl depends on `beryl_protocol`; adapters depend on beryl and use its shared
-  transport server. The protocol package has no BEAM process dependency
+- beryl depends on `beryl_protocol` and `beryl_heirloom`; adapters depend on
+  beryl and use its shared transport server. The protocol package has no BEAM process dependency
   (`beryl/gleam.toml:dependencies`, `beryl_protocol/gleam.toml:dependencies`,
   `beryl_mist/gleam.toml:dependencies`, `beryl_ewe/gleam.toml:dependencies`).
 - Manifest `internal_modules` and declaration `@internal` annotations separate
   implementation helpers from supported API (`beryl/gleam.toml:internal_modules`,
   `beryl/src/beryl.gleam:app_dispatch`).
 - beryl, Mist, and Ewe target Erlang; the portable protocol supports both
-  targets. The workspace bundles the protocol into beryl releases
+  targets. The workspace bundles the protocol and heirloom into beryl releases
   (`beryl/gleam.toml:target`, `beryl_mist/gleam.toml:target`,
   `beryl_ewe/gleam.toml:target`, `/gleam.toml:tools.trellis.publish.bundle`).
 - Hosts execute protocol actions in order; runtime join/reply capabilities

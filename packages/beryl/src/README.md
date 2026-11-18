@@ -4,7 +4,7 @@
 
 The `beryl` entry module builds typed application dispatch and supervision.
 Native Erlang modules implement process calls, ETS queues/read models, pg
-integration, and telemetry. The internal `beryl/heirloom` module wraps ETS ownership.
+integration, and telemetry. The bundled `beryl_heirloom` package wraps ETS ownership.
 
 ## Interface
 
@@ -39,9 +39,10 @@ integration, and telemetry. The internal `beryl/heirloom` module wraps ETS owner
 - [Module contracts](./beryl/README.md) cover raw socket and channel APIs,
   presence, PubSub, groups, snapshots, transport support, and wire encoding.
 - Native exports and `@internal` entry-module dispatch helpers are package
-  implementation details. `beryl/heirloom` also appears in the manifest's
-  `internal_modules` list (`beryl.gleam:app_dispatch`,
-  `beryl/heirloom.gleam:Table`, `../gleam.toml:internal_modules`).
+  implementation details (`beryl.gleam:app_dispatch`,
+  `../gleam.toml:internal_modules`). ETS primitives live in the independent
+  [beryl_heirloom package](../../beryl_heirloom/README.md); checkpoint process
+  lifecycle and recovery policy remain in `beryl/connection_limit`.
 
 ## Invariants
 
@@ -74,10 +75,9 @@ integration, and telemetry. The internal `beryl/heirloom` module wraps ETS owner
   dequeue until release, and recovery reclaims dead producers' reservations
   (`beryl_work_queue_ffi.erl:retain`, `beryl_work_queue_ffi.erl:recover`,
   `beryl_work_queue_ffi.erl:payload_bytes`).
-- `beryl/heirloom` key/value types provide compile-time tracking only. Ownership
+- `beryl_heirloom` key/value types provide compile-time tracking only. Ownership
   changes require the caller to own the table and recipients/heirs to be live
-  local processes (`beryl/heirloom.gleam:Table`, `beryl_heirloom_ffi.erl:ownership_precheck`,
-  `beryl_heirloom_ffi.erl:valid_local_process`, `beryl_heirloom_ffi.erl:give_away`).
+  local processes (see [beryl_heirloom](../../beryl_heirloom/README.md)).
 
 ## Side effects
 
@@ -101,11 +101,9 @@ integration, and telemetry. The internal `beryl/heirloom` module wraps ETS owner
   bounded diagnostic text (`beryl_telemetry_ffi.erl:execute`,
   `beryl_telemetry_ffi.erl:mailbox_length`,
   `beryl_error_ffi.erl:describe_operation_failure`).
-- `beryl/heirloom` creates/mutates/deletes ETS tables, configures heirs, transfers
-  ownership, and converts table names to atoms (`beryl_heirloom_ffi.erl:create`,
-  `beryl_heirloom_ffi.erl:insert`, `beryl_heirloom_ffi.erl:delete`,
-  `beryl_heirloom_ffi.erl:set_heir`, `beryl_heirloom_ffi.erl:give_away`,
-  `beryl_heirloom_ffi.erl:table_name`).
+- `beryl_heirloom` creates/mutates/deletes ETS tables, configures heirs, transfers
+  ownership, and converts table names to atoms (see
+  [beryl_heirloom](../../beryl_heirloom/README.md)).
 
 ## Verification
 

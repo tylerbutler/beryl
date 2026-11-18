@@ -41,8 +41,8 @@ JavaScript target.
   `src/beryl.gleam:broadcast_from`, `src/beryl.gleam:broadcast_presence_diff`).
 - [Source contracts](./src/README.md) index the entry module, native support,
   and nested socket/channel, presence, PubSub, wire, and transport APIs.
-- The package depends on the workspace `beryl_protocol` package. The root
-  workspace bundles that dependency into beryl releases
+- The package depends on the workspace `beryl_protocol` and `beryl_heirloom`
+  packages. The root workspace bundles those dependencies into beryl releases
   (`gleam.toml:dependencies`, `/gleam.toml:tools.trellis.publish.bundle`).
 - Manifest `internal_modules` and declaration-level `@internal` annotations
   exclude runtime helpers from the supported API

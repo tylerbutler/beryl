@@ -12,7 +12,7 @@ const standaloneFixtures = [
 	{
 		name: "heirloom_namespace",
 		path: "scripts/fixtures/heirloom_namespace",
-		dependencies: ["beryl", "beryl_protocol"],
+		dependencies: ["beryl", "beryl_protocol", "beryl_heirloom"],
 	},
 ];
 

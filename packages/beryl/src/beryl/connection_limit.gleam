@@ -23,11 +23,11 @@
 //// router and limiter-worker restarts, but not shutdown or replacement of
 //// that supervisor, or a node restart.
 
-import beryl/heirloom
 import beryl/log
 import beryl/overload
 import beryl/rate_limit
 import beryl/work_queue
+import beryl_heirloom as heirloom
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/dynamic/decode

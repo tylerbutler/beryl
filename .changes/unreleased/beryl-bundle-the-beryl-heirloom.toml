@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Dependencies"
+body = "Bundle the beryl_heirloom workspace package for typed ETS ownership; beryl consumers need no separate installation or API migration."

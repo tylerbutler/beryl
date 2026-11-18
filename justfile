@@ -54,7 +54,7 @@ protocol-test:
     trellis run build --strict --target all beryl_protocol
     trellis run test --target all beryl_protocol
 
-# Check that consumers can own top-level heirloom Gleam and Erlang modules
+# Exercise extracted ETS ownership alongside consumer-owned heirloom modules
 namespace-test:
     node scripts/prepare-gleam-deps.mjs heirloom_namespace
     cd scripts/fixtures/heirloom_namespace && gleam format --check src && gleam clean && gleam build --warnings-as-errors && gleam run
@@ -98,16 +98,16 @@ beam-check: dialyzer xref
 doctor:
     trellis doctor
 
-# Report locked dependency licences (defaults to the four library packages)
-audit-licences *PACKAGES="beryl_protocol beryl beryl_mist beryl_ewe":
+# Report locked dependency licences (defaults to the library packages)
+audit-licences *PACKAGES="beryl_heirloom beryl_protocol beryl beryl_mist beryl_ewe":
     mise exec -- trellis run audit-licences --serial {{ PACKAGES }}
 
 # Report known vulnerabilities; findings do not fail this task
-audit-vulns *PACKAGES="beryl_protocol beryl beryl_mist beryl_ewe":
+audit-vulns *PACKAGES="beryl_heirloom beryl_protocol beryl beryl_mist beryl_ewe":
     mise exec -- trellis run audit-vulns --serial {{ PACKAGES }}
 
 # Enforce each package's licence policy and vulnerability threshold
-audit-check *PACKAGES="beryl_protocol beryl beryl_mist beryl_ewe":
+audit-check *PACKAGES="beryl_heirloom beryl_protocol beryl beryl_mist beryl_ewe":
     mise exec -- trellis run audit-check --serial --keep-going {{ PACKAGES }}
 
 # === DOCUMENTATION ===

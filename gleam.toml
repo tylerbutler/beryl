@@ -34,7 +34,7 @@ repository_tag_format = "v{series}"
 repository_tags = ["minor"]
 
 [tools.trellis.publish.bundle]
-beryl = ["beryl_protocol"]
+beryl = ["beryl_protocol", "beryl_heirloom"]
 
 [tools.trellis.release]
 resume = true
@@ -43,8 +43,8 @@ skip_unchanged = true
 
 [tools.trellis.publish.lifecycle]
 default = "git_only"
-# The protocol is bundled with beryl, not released separately.
-packages = { "packages/beryl_protocol" = "workspace" }
+# These packages are bundled with beryl, not released separately.
+packages = { "packages/beryl_protocol" = "workspace", "packages/beryl_heirloom" = "workspace" }
 
 [tools.trellis.tasks.lint]
 command = "gleam run -m glinter"
