@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Reject rate limits whose token cost rounds to zero during config validation."

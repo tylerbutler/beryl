@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Release connection slots and notify the runtime before forced transport shutdown, including shutdowns that bypass the transport close callback."

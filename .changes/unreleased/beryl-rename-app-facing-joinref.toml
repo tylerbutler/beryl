@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = "Rename app-facing JoinRef and ReplyRef to JoinReference and ReplyReference, and rename socket handle arguments from ref to reference. Update type imports and named constructor arguments; the old names have no compatibility aliases. Phoenix wire and codec ref/join_ref names and runtime behavior are unchanged."

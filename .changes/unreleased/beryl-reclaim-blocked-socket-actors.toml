@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Reclaim blocked socket actors when their admitting router exits."
