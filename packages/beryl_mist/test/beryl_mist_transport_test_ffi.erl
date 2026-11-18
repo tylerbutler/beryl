@@ -1,4 +1,5 @@
 -module(beryl_mist_transport_test_ffi).
+-export([ensuring/2, connect_tcp/1]).
 -export([connect_websocket/2, connect_websocket_with_origin/3,
          websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
          send_text/2, send_binary/2, receive_text/2, receive_binary/2,
@@ -9,6 +10,17 @@
          receive_message_event/1, coalesced_upgrade_frames/0,
          split_upgrade_frames/0, empty_text_control_frames/0,
          empty_binary_frames/0]).
+
+%% Test-owned resources must also be released when a Gleam assertion raises.
+ensuring(Cleanup, Action) ->
+    try Action() after Cleanup() end.
+
+connect_tcp(Port) ->
+    gen_tcp:connect(
+        {127, 0, 0, 1}, Port,
+        [binary, {active, false}, {packet, raw}, {nodelay, true},
+         {send_timeout, 1000}], 1000
+    ).
 
 attach_transport_events() ->
     HandlerId = {beryl_mist_transport_test, make_ref()},

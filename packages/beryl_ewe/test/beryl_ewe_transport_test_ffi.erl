@@ -1,4 +1,5 @@
 -module(beryl_ewe_transport_test_ffi).
+-export([ensuring/2]).
 -export([connect_websocket/2, connect_websocket_with_origin/3,
          websocket_upgrade_status/2, websocket_upgrade_status_with_origin/3,
          send_text/2, send_binary/2, receive_text/2, receive_binary/2,
@@ -9,6 +10,10 @@
          receive_message_event/1, coalesced_upgrade_frames/0,
          split_upgrade_frames/0, empty_text_control_frames/0,
          empty_binary_frames/0, connect_tcp/1]).
+
+%% Test-owned resources must also be released when a Gleam assertion raises.
+ensuring(Cleanup, Action) ->
+    try Action() after Cleanup() end.
 
 %% The calling Gleam test owns this passive socket and closes it via glisten.
 %% gen_tcp's {ok, Socket}/{error, inet:posix()} matches Glisten's types.

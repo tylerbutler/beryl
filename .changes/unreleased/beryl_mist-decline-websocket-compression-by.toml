@@ -1,0 +1,3 @@
+package = "beryl_mist"
+kind = "Security"
+body = "Decline WebSocket compression by default; require explicit opt-in to accept unbounded transport inflation."

@@ -69,6 +69,8 @@ pub opaque type TransportConfig(body) {
     /// Policy applied to the request `Origin` header before the WebSocket
     /// handshake. Defaults to `origin.SameOrigin`.
     origin_policy: OriginPolicy,
+    /// Whether to accept compression offered by a WebSocket client.
+    compression_enabled: Bool,
     /// Maximum frames reserved for writes by one connection.
     max_outbound_frames: Int,
     /// Maximum payload bytes reserved for writes by one connection.
@@ -118,6 +120,9 @@ pub type WriteError {
 /// and 1 MiB of retained payload binaries. A connection that exceeds either
 /// limit is closed.
 ///
+/// WebSocket compression is declined by default. Use `with_compression` only
+/// after accepting the adapter-specific inflation and buffering risks.
+///
 /// Add `with_on_connect` to authenticate connections and/or seed connect
 /// metadata. Use `with_allowed_origins` to set an explicit allow-list. Use
 /// `with_allow_all_origins` to opt out of origin checking entirely.
@@ -126,6 +131,7 @@ pub fn default_config(path: String) -> TransportConfig(body) {
     path: normalize_path(path),
     on_connect: None,
     origin_policy: origin.SameOrigin,
+    compression_enabled: False,
     max_outbound_frames: default_max_outbound_frames,
     max_outbound_bytes: default_max_outbound_bytes,
   )
@@ -138,6 +144,46 @@ fn normalize_path(path: String) -> String {
     |> list.filter(fn(segment) { segment != "" })
     |> string.join("/")
   }
+}
+
+/// Allow the transport to negotiate WebSocket compression when offered.
+///
+/// Compression is disabled by default. This opt-in accepts the transport's
+/// inflation risk: Mist 6.0.3 / gramps 6.0.1 inflate without an output cap
+/// before beryl receives a message. Ewe 9.0.0 / websocks 4.0.1 apply their own
+/// frame, message, and inflation limits, not beryl's configured inbound limit.
+///
+/// beryl checks inbound size after assembly and inflation. That check does
+/// not bound transport memory. Disabling compression does not establish a
+/// beryl memory bound for uncompressed streamed or fragmented messages.
+pub fn with_compression(
+  config: TransportConfig(body),
+) -> TransportConfig(body) {
+  TransportConfig(..config, compression_enabled: True)
+}
+
+/// Whether the operator explicitly enabled WebSocket compression.
+pub fn compression_enabled(config: TransportConfig(body)) -> Bool {
+  config.compression_enabled
+}
+
+/// Prepare the request headers passed to a server's WebSocket handshake.
+///
+/// Capture authentication input and `ConnectSeed` from the original request
+/// first. When compression is disabled, all extension offers are removed.
+/// A server that caches upgrade metadata must also clear its cached offers;
+/// changing these headers alone does not disable Ewe HTTP/1 compression.
+pub fn prepare_websocket_request(
+  request: Request(body),
+  config: TransportConfig(body),
+) -> Request(body) {
+  use <- bool.guard(config.compression_enabled, return: request)
+  request.Request(
+    ..request,
+    headers: list.filter(request.headers, fn(header) {
+      string.lowercase(header.0) != "sec-websocket-extensions"
+    }),
+  )
 }
 
 // nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
@@ -532,7 +578,6 @@ pub opaque type ConnectionState {
   )
 }
 
-// nolint: unused_exports -- transport SPI, consumed by transport packages such as beryl_mist
 /// Build the connection seed for an app-dispatch system's `init` function.
 ///
 /// The function receives the seed as `ConnectInfo.seed`. Systems that do not

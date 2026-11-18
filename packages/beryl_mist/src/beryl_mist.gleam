@@ -9,6 +9,11 @@
 //// [`handler`](#handler) or [`upgrade`](#upgrade). This module supplies only
 //// the Mist-specific glue: the WebSocket upgrade call, frame sending, and
 //// peer IP extraction.
+////
+//// Compression is declined by default. `server.with_compression` explicitly
+//// allows negotiation, accepting unbounded inflation in Mist 6.0.3 /
+//// gramps 6.0.1 before beryl's inbound size check. Neither that check nor
+//// disabling compression bounds streamed or fragmented transport buffering.
 
 import beryl/transport.{type Sockets}
 import beryl/transport/server.{type ConnectionState, type SendRequest}
@@ -120,7 +125,7 @@ fn do_upgrade(
 ) -> Response(ResponseData) {
   let seed = server.connect_seed(request, connect_metadata)
   mist.websocket(
-    request: request,
+    request: server.prepare_websocket_request(request, config),
     handler: on_message,
     on_init: fn(connection) {
       let #(state, selector) =

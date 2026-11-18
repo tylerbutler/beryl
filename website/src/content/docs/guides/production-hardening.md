@@ -40,12 +40,44 @@ Even with no configuration, beryl enforces:
   and 1 MiB of payload data while writes are pending. beryl closes a slow
   connection instead of dropping frames. Use `with_outbound_limits` on the
   transport config to adjust both limits.
+- **Compression declined**: Mist and Ewe decline `permessage-deflate` offers
+  unless you add `server.with_compression` to the transport configuration.
+  Clients can complete the handshake without compression.
 
 The frame-size check limits decoding and routing work. It does **not** limit
-transport memory because buffering and reassembly occur before beryl receives
-the frame. At deployment, set a WebSocket frame or message limit in the reverse
+transport memory because buffering, reassembly, and any inflation occur before
+beryl receives the frame. Disabling compression does not establish a beryl
+memory bound for large uncompressed streamed or fragmented messages.
+At deployment, set a WebSocket frame or message limit in the reverse
 proxy or load balancer. Set it at or below beryl's limit. Also set a matching
 HTTP request or body limit for the upgrade.
+
+### Accept compression risk only when needed
+
+Keep the default compression policy unless your application needs compression.
+To allow negotiation when a client offers `permessage-deflate`, use:
+
+```gleam
+let websocket_config =
+  server.default_config("/socket/websocket")
+  |> server.with_compression
+```
+
+:::caution[Opt-in accepts inflation risk]
+Mist 6.0.3 / gramps 6.0.1 inflate payloads without an output cap. A client can
+force large allocations before beryl's post-assembly inbound size check runs.
+That check limits decoding and routing work, not decompressed transport memory.
+
+Ewe 9.0.0 / websocks 4.0.1 have dependency-level defaults of 16 MiB per frame
+and 64 MiB per message, with limited inflation. These limits are separate from
+beryl's configured inbound limit and are not a total-memory guarantee.
+:::
+
+Check whether your proxy enforces limits on decompressed messages as well as
+wire bytes. A wire-byte cap alone does not bound inflation. Keep limits for
+uncompressed streamed and fragmented messages even when compression is off.
+See [WebSocket compression](/guides/websocket/#websocket-compression) for
+adapter behavior and the Ewe compatibility constraint.
 
 ## Choose initial limits
 
