@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Honor opt-in grapheme-limited text-frame previews in Mist and Ewe decode diagnostics; keep binary previews disabled."

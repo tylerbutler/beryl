@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = "Add `with_connection_queue_limits`, defaulting to 256 items and 8 MiB of accounted payload, including executing work. Each acquire reserves two items. When a connection ceiling or per-IP connection rate is enabled, saturation rejects upgrades with HTTP 429. Preserve connection capacity across cancellations, caller exits, and limiter restarts. Byte accounting is structural, not a total-memory cap."

@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Retain bounded callback stack call sites in crash diagnostics without logging stack argument values."
