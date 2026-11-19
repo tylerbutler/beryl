@@ -20,7 +20,7 @@ unitest = ">= 1.6.1 and < 2.0.0"
 gleam_json = ">= 3.1.0 and < 4.0.0"
 gleam_otp = ">= 1.2.0 and < 2.0.0"
 aquamarine = { git = "https://github.com/tylerbutler/aquamarine.git", ref = "main" }
-gluegun = { git = "https://github.com/tylerbutler/gluegun.git", ref = "532af1ac0308ff93c8a957467dbb638859593c93" }
+gluegun = ">= 1.0.0 and < 2.0.0"
 glinter = ">= 2.19.0 and < 3.0.0"
 
 [tools.licence_audit]

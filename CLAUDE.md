@@ -150,7 +150,8 @@ website/                           # Astro/Starlight docs site (not a member)
 #### Development
 - `gleeunit` - Testing framework
 - git-sourced test helpers: `phoenix_channel_fixtures` (beryl),
-  `aquamarine`, `gluegun` (beryl_mist)
+  `aquamarine` (beryl_mist)
+- `gluegun` 1.x from Hex - WebSocket test client (beryl_mist)
 
 ## Testing
 
