@@ -187,11 +187,9 @@ installed in CI via `.github/actions/mise`.
 
 ### Release Flow
 1. Push commits with conventional commit messages
-2. Add changelog fragments with `just change <package> <kind> "<body>"`.
-   Fragments apply only to what a released package ships (`src/`,
-   `gleam.toml`, `manifest.toml`). Website, `docs/`, examples, and
-   dev-tooling changes get no fragment — see the "Changelog Fragments"
-   section in `AGENTS.md` for the full rule
+2. Use the `changelog-authoring` skill whenever creating or editing required
+   changelog entries. Follow the "Changelog Fragments" policy in `AGENTS.md`;
+   documentation-only and development-only changes get no fragment
 3. `trellis release pr` maintains a release PR (branch `release/pending`)
    with version bumps and CHANGELOGs, preserving its release mode and targets.
    Manual workflow inputs select a label such as `rc`, `none` (promotion), or empty (automatic).

@@ -373,24 +373,24 @@ Releases are driven by trellis changelog fragments (TOML files in
 
 ### When a fragment is required
 
-A fragment applies only to what a released package ships — its `src/`,
-`gleam.toml`, or `manifest.toml`. It describes what a consumer of the
-published package receives. Add a fragment when you change a package's public
-API, its observable behavior, its dependency requirements, or its `///` doc
-comments (these ship in the API reference).
+Add a fragment for user-facing code changes: a released package's public API,
+observable behavior, or runtime dependency requirements. Do not add fragments
+for documentation-only changes, including package documentation and `///` or
+`////` source comments. In a mixed PR, document only the user-facing code/API
+changes, not its documentation-only parts.
 
-Do not add a fragment for anything a package does not ship. The `website/`,
-`docs/`, and `examples/` directories and the dev tooling reach no consumer, so
-a fragment for them bumps a version that nobody sees. Test files, internal
-refactors, and formatting that keep the consumer-visible behavior the same
-also need no fragment.
+Development, test, CI, tooling, website, example, and benchmark changes need
+no fragment. Neither do internal refactors or formatting with no
+consumer-visible effect. Use the `changelog-authoring` skill for the fragment
+format, sentence heading and paragraphs, package/kind choices, and previews.
 
 ### Steps
 
 1. Make changes following the commit message convention
-2. Add a changelog entry: `just change <package> <kind> "<body>"`
-   (e.g. `just change beryl Fixed "handle concurrent leave/join"`); PR CI
-   enforces this via `trellis changelog check`
+2. Add an entry when required, following the `changelog-authoring` skill.
+   `just change <package> <kind> "<body>"` creates the fragment; inspect the
+   rendered prose with `trellis changelog check --base origin/main --format json`.
+   The configured check is advisory for missing entries but rejects invalid files
 3. Push to a feature branch and create a PR
 4. After merge, the release workflow runs `just release-pr`, which uses
    `trellis release pr` to select versions and regenerate package changelogs.

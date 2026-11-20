@@ -613,6 +613,24 @@ deployments:
   content_hash: sha256:c788a282fc75b981b421dfdad5d84ea7f83f946c126daa39cfc7d3f97845e193
 - kind: project-relative
   target: claude
+  value: .claude/skills/changelog-authoring
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/changelog-authoring/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:1aeadbdb3b34b7165a3fe4c617b8f7fc6aed909af0d6f05bdb51928b9db7c8ba
+- kind: project-relative
+  target: claude
   value: .claude/skills/egm-bootstrap
   runtime: null
   scope: project
@@ -1367,6 +1385,24 @@ deployments:
   - juliusbrussee/caveman/skills/caveman-commit
   active_owner: juliusbrussee/caveman/skills/caveman-commit
   content_hash: sha256:c788a282fc75b981b421dfdad5d84ea7f83f946c126daa39cfc7d3f97845e193
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/changelog-authoring
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/changelog-authoring/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:1aeadbdb3b34b7165a3fe4c617b8f7fc6aed909af0d6f05bdb51928b9db7c8ba
 - kind: project-relative
   target: copilot
   value: .agents/skills/egm-bootstrap
@@ -2277,8 +2313,14 @@ lsp_target_servers:
 lsp_config_provenance:
   gleam: project:.
 local_deployed_files:
+- .agents/skills/changelog-authoring
+- .agents/skills/changelog-authoring/SKILL.md
 - .claude/agents/beam-vm-reviewer.md
+- .claude/skills/changelog-authoring
+- .claude/skills/changelog-authoring/SKILL.md
 - .github/agents/beam-vm-reviewer.agent.md
 local_deployed_file_hashes:
+  .agents/skills/changelog-authoring/SKILL.md: sha256:1aeadbdb3b34b7165a3fe4c617b8f7fc6aed909af0d6f05bdb51928b9db7c8ba
   .claude/agents/beam-vm-reviewer.md: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
+  .claude/skills/changelog-authoring/SKILL.md: sha256:1aeadbdb3b34b7165a3fe4c617b8f7fc6aed909af0d6f05bdb51928b9db7c8ba
   .github/agents/beam-vm-reviewer.agent.md: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
