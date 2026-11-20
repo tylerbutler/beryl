@@ -282,7 +282,9 @@ After registry loss, start PubSub again and rejoin with new subscribers.
 
 ## Startup configuration errors
 
-`beryl.child_spec` validates configuration before returning the child spec:
+`beryl.validate_config` checks core configuration without allocating
+registered-name atoms or starting processes. `beryl.child_spec` runs the same
+checks before it allocates names or returns a child specification:
 
 ```gleam
 case beryl.child_spec(config, init: init, update: update) {
@@ -291,6 +293,10 @@ case beryl.child_spec(config, init: init, update: update) {
   Error(beryl.HeartbeatTimeoutTooLow(_minimum)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"
+  Error(beryl.NegativeConnectionLimit(_limit, _value)) ->
+    panic as "use zero or a positive connection ceiling"
+  Error(beryl.InvalidProtocolConfig(_reason)) ->
+    panic as "use supported protocol limits"
   Error(beryl.RateLimitTooHigh(_maximum)) ->
     panic as "reduce the per-second rate"
   Error(beryl.InvalidRateLimitBurst(_burst)) ->
@@ -302,6 +308,18 @@ case beryl.child_spec(config, init: init, update: update) {
 }
 ```
 
+`NegativeConnectionLimit` identifies `PerIpConnections` or `TotalConnections`
+and the rejected value. Zero remains unlimited. Non-positive rates and other
+settings that document a disabled state keep that behavior.
+
+`InvalidProtocolConfig` wraps `beryl_protocol.InvalidConfig(limit, value)`.
+The typed `ConfigLimit` identifies `MaxTopicBytes`, `MaxEventBytes`,
+`MaxChannels`, `MaxPending`, or `HeartbeatTimeoutMs`. These correspond to
+`with_max_topic_length`, `with_max_event_length`,
+`with_max_joined_topics_per_socket`, the socket queue's item limit, and
+`with_heartbeat`. The runtime uses the same translation at socket admission.
+For log text, pass the nested reason to `beryl_protocol.describe_error`.
+
 `InvalidTopicPattern` contains `beryl/topic.TopicError` instead of a string.
 Match each `TopicError` variant explicitly. If an API update adds a variant,
 the compiler identifies the matches that need an additional branch.
@@ -310,6 +328,9 @@ the compiler identifies the matches that need an additional branch.
 `InvalidPattern(pattern, reason)`, `DuplicatePattern(pattern)`, or
 `InvalidConfig(beryl.ConfigError)`. `InvalidPattern` nests
 `beryl/topic.TopicError`; handle its variants explicitly in the same way.
+`beryl.validate_config` does not validate this handler table. Construct either
+child specification once per long-lived system and reuse it for supervised
+restarts; see [Construct once and reuse](/guides/supervision/#construct-once-and-reuse).
 
 ## Typed sender delivery is not confirmed
 

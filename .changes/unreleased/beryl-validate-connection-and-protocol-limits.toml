@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Reject negative total and per-IP connection ceilings with NegativeConnectionLimit; zero remains unlimited. Validate translated protocol limits before building a child specification, with InvalidProtocolConfig identifying the rejected limit and value. Add both variants to exhaustive ConfigError matches. beryl_protocol.InvalidConfig now includes a ConfigLimit and rejected value; update matches from InvalidConfig to InvalidConfig(limit, value)."

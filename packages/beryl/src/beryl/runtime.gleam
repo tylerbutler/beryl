@@ -2305,7 +2305,20 @@ fn new_protocol(
   config: Config,
   active_codec: Codec,
 ) -> Result(protocol.State, protocol.Error) {
-  use limits <- result.try(protocol.with_limits(
+  use limits <- result.try(protocol_config(config))
+  let limits =
+    protocol.with_topicless_events(limits, codec.topicless_events(active_codec))
+  let epoch =
+    crypto.strong_random_bytes(24) |> bit_array.base64_url_encode(False)
+  protocol.new(limits, epoch, monotonic_time_ms())
+}
+
+/// Translate and validate the same limits used during socket admission.
+@internal
+pub fn protocol_config(
+  config: Config,
+) -> Result(protocol.Config, protocol.Error) {
+  protocol.with_limits(
     protocol.config(),
     max_topic_bytes: int.max(0, config.max_topic_length),
     max_event_bytes: int.max(0, config.max_event_length),
@@ -2315,12 +2328,7 @@ fn new_protocol(
     },
     max_pending: overload.max_items(config.socket_queue_limits),
     heartbeat_timeout_ms: config.heartbeat_timeout_ms,
-  ))
-  let limits =
-    protocol.with_topicless_events(limits, codec.topicless_events(active_codec))
-  let epoch =
-    crypto.strong_random_bytes(24) |> bit_array.base64_url_encode(False)
-  protocol.new(limits, epoch, monotonic_time_ms())
+  )
 }
 
 fn protocol_reason(reason: StopReason) -> protocol.CloseReason {

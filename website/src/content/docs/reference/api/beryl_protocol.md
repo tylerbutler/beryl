@@ -36,6 +36,7 @@ A deterministic channel protocol. Hosts supply time, decoded messages and
 <li><a href="#api-type-closemode"><code>CloseMode</code></a></li>
 <li><a href="#api-type-closereason"><code>CloseReason</code></a></li>
 <li><a href="#api-type-config"><code>Config</code></a></li>
+<li><a href="#api-type-configlimit"><code>ConfigLimit</code></a></li>
 <li><a href="#api-type-connection"><code>Connection</code></a></li>
 <li><a href="#api-type-decoded"><code>Decoded</code></a></li>
 <li><a href="#api-type-error"><code>Error</code></a></li>
@@ -84,7 +85,12 @@ A deterministic channel protocol. Hosts supply time, decoded messages and
 <li><a href="#api-function-validate_event"><code>validate_event</code></a></li>
 <li><a href="#api-function-validate_pattern"><code>validate_pattern</code></a></li>
 <li><a href="#api-function-validate_topic"><code>validate_topic</code></a></li>
+<li><a href="#api-function-with_heartbeat_timeout"><code>with_heartbeat_timeout</code></a></li>
 <li><a href="#api-function-with_limits"><code>with_limits</code></a></li>
+<li><a href="#api-function-with_max_channels"><code>with_max_channels</code></a></li>
+<li><a href="#api-function-with_max_event_bytes"><code>with_max_event_bytes</code></a></li>
+<li><a href="#api-function-with_max_pending"><code>with_max_pending</code></a></li>
+<li><a href="#api-function-with_max_topic_bytes"><code>with_max_topic_bytes</code></a></li>
 <li><a href="#api-function-with_topicless_events"><code>with_topicless_events</code></a></li>
   </ul>
 </section>
@@ -206,6 +212,22 @@ pub type Config
 
 Validated resource limits. Payload byte admission remains the host's job.
 
+<div class="api-entry-anchor" id="api-type-configlimit" aria-hidden="true"></div>
+
+### `ConfigLimit`
+
+```gleam
+pub type ConfigLimit {
+  MaxTopicBytes
+  MaxEventBytes
+  MaxChannels
+  MaxPending
+  HeartbeatTimeoutMs
+}
+```
+
+A configurable protocol limit.
+
 <div class="api-entry-anchor" id="api-type-connection" aria-hidden="true"></div>
 
 ### `Connection`
@@ -252,7 +274,10 @@ Codec-normalized inbound frames. Framing and rate limiting stay in the host.
 
 ```gleam
 pub type Error {
-  InvalidConfig
+  InvalidConfig(
+    limit: ConfigLimit,
+    value: Int
+  )
   InvalidIdentity
   InvalidClock
   CounterExhausted
@@ -263,6 +288,19 @@ pub type Error {
 ```
 
 A rejected transition commits no state or actions.
+
+#### Constructors
+
+##### `InvalidConfig`
+
+```gleam
+InvalidConfig(
+  limit: ConfigLimit,
+  value: Int
+)
+```
+
+The named limit is outside its supported range.
 
 <div class="api-entry-anchor" id="api-type-input" aria-hidden="true"></div>
 
@@ -830,6 +868,21 @@ pub fn validate_topic(String) -> Result(String, ValidationError)
 
 Validate the syntax shared with beryl's public topic helper.
 
+<div class="api-entry-anchor" id="api-function-with_heartbeat_timeout" aria-hidden="true"></div>
+
+### `with_heartbeat_timeout`
+
+```gleam
+pub fn with_heartbeat_timeout(
+  Config,
+  timeout_ms: Int
+) -> Result(Config, Error)
+```
+
+Set the heartbeat timeout without changing other settings.
+
+ Uses the ranges and errors documented by `with_limits`.
+
 <div class="api-entry-anchor" id="api-function-with_limits" aria-hidden="true"></div>
 
 ### `with_limits`
@@ -847,6 +900,71 @@ pub fn with_limits(
 
 Set finite limits. Pending operations include joins and deferred replies;
  cleanup barriers are bounded separately by the channel limit.
+
+ Topic and event byte limits must be 0..9_007_199_254_740_991. Channel and
+ pending-operation limits must be 1..9_007_199_254_740_991. The heartbeat
+ timeout must be 1..9_007_199_254_740_990 milliseconds. Invalid values return
+ `InvalidConfig` with the rejected limit and value.
+
+<div class="api-entry-anchor" id="api-function-with_max_channels" aria-hidden="true"></div>
+
+### `with_max_channels`
+
+```gleam
+pub fn with_max_channels(
+  Config,
+  max_channels: Int
+) -> Result(Config, Error)
+```
+
+Set the channel limit without changing other settings.
+
+ Uses the ranges and errors documented by `with_limits`.
+
+<div class="api-entry-anchor" id="api-function-with_max_event_bytes" aria-hidden="true"></div>
+
+### `with_max_event_bytes`
+
+```gleam
+pub fn with_max_event_bytes(
+  Config,
+  max_event_bytes: Int
+) -> Result(Config, Error)
+```
+
+Set the event byte limit without changing other settings.
+
+ Uses the ranges and errors documented by `with_limits`.
+
+<div class="api-entry-anchor" id="api-function-with_max_pending" aria-hidden="true"></div>
+
+### `with_max_pending`
+
+```gleam
+pub fn with_max_pending(
+  Config,
+  max_pending: Int
+) -> Result(Config, Error)
+```
+
+Set the pending-operation limit without changing other settings.
+
+ Uses the ranges and errors documented by `with_limits`.
+
+<div class="api-entry-anchor" id="api-function-with_max_topic_bytes" aria-hidden="true"></div>
+
+### `with_max_topic_bytes`
+
+```gleam
+pub fn with_max_topic_bytes(
+  Config,
+  max_topic_bytes: Int
+) -> Result(Config, Error)
+```
+
+Set the topic byte limit without changing other settings.
+
+ Uses the ranges and errors documented by `with_limits`.
 
 <div class="api-entry-anchor" id="api-function-with_topicless_events" aria-hidden="true"></div>
 
