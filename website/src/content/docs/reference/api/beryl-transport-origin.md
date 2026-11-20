@@ -45,7 +45,7 @@ Origin and handshake-version checks for WebSocket upgrades.
 
 ```gleam
 pub type OriginPolicy {
-  SameOrigin
+  SameAuthority
   AllowList(List(String))
   AllowAll
 }
@@ -69,19 +69,21 @@ Policy for validating the browser `Origin` header before a WebSocket
 
 #### Constructors
 
-##### `SameOrigin`
+##### `SameAuthority`
 
 ```gleam
-SameOrigin
+SameAuthority
 ```
 
 Allow an upgrade only when the request `Origin` authority (host plus any
  port, with the scheme stripped) matches the request `Host` authority.
- This is the default and rejects cross-site upgrades before the handshake.
+ This is the default. It checks authority, not the full browser origin:
+ `http` and `https` origins with the same authority are both admitted.
 
  A malformed or opaque `Origin` (e.g. `null` from a sandboxed iframe, or a
  value with no host) is rejected. Comparison is over the full `host:port`
- authority, so a non-default port must match on both sides.
+ authority, so an explicit port must match on both sides. Default ports
+ are not normalized: `example.com:443` does not match `example.com`.
 
  Behind a reverse proxy, this compares against the `Host` header that the
  app receives. Configure the proxy to forward the public `Host` unchanged, or use
@@ -127,7 +129,7 @@ pub fn allowed(
 Decide whether an upgrade is allowed under the configured origin policy.
 
  `origin` and `host` are the request's `Origin` and `Host` header values.
- Use `None` when a header is absent. `SameOrigin` and `AllowAll` admit a
+ Use `None` when a header is absent. `SameAuthority` and `AllowAll` admit a
  request without an `Origin` header because non-browser clients omit it.
  `AllowList` rejects the request because it requires an explicit match.
 

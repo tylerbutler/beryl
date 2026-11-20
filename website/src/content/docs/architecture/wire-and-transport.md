@@ -169,7 +169,7 @@ enabled, all custom transports share the fixed `custom` label. When disabled,
 setup and routing still work without transport events. See
 [telemetry labels](/guides/observability/#enable-telemetry-events).
 
-**`server.default_config(path)`**: creates a `TransportConfig` with no connect hook and the default same-origin policy.
+**`server.default_config(path)`**: creates a `TransportConfig` with no connect hook and the default same-authority policy (host and explicit port, not scheme).
 
 **`server.with_on_connect(config, callback)`**: attaches a socket-level authentication callback. The callback receives the HTTP request before the WebSocket upgrade. Return `Ok(metadata)` to allow the connection and append ordered string pairs to `ConnectSeed.metadata`, or `Error(ConnectRejected)` to reject with 403.
 

@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Rename transport origin policy SameOrigin to SameAuthority without changing host-and-port matching, absent-Origin admission, or explicit allow-list rules."

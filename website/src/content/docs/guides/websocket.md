@@ -159,8 +159,24 @@ let websocket_config =
 
 Requests with missing or non-matching origins are rejected with HTTP 403 before
 the WebSocket handshake. Without an explicit allow-list, the default
-`SameOrigin` policy rejects cross-site browser handshakes while allowing
-non-browser clients that omit `Origin`.
+`SameAuthority` policy compares the `Origin` authority (host and explicit port)
+with the request `Host`, without regard to case. It ignores the scheme, so
+`http://app.example.com` and `https://app.example.com` both match
+`Host: app.example.com`. Explicit ports must match: default ports are not
+normalized, so `https://app.example.com:443` does not match that `Host`.
+Requests without `Origin`, such as those from native clients, are admitted.
+
+Behind a reverse proxy, preserve the public `Host` header or configure
+`with_allowed_origins` with the public origins. beryl does not trust
+`X-Forwarded-Host` or other forwarded-host headers. Ewe's HTTP/2 extended
+CONNECT path uses the parsed `:authority` when `Host` is absent.
+
+For both Mist and Ewe, replace explicit references to
+`beryl/transport/origin.SameOrigin` with `SameAuthority`. The old constructor
+was renamed to describe the existing rule, not to change it.
+`server.default_config` calls need no changes. Use `with_allowed_origins`
+when the scheme must also match; its exact-match and absent-header rules
+are unchanged.
 
 If you cannot use an origin allow-list, avoid cookie-based WebSocket
 authentication. Use a token passed explicitly to `on_connect` and reject invalid

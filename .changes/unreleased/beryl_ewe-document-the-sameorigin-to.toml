@@ -1,0 +1,3 @@
+package = "beryl_ewe"
+kind = "Fixed"
+body = "Document the SameOrigin to SameAuthority naming migration and the unchanged default origin policy in the Ewe API reference."

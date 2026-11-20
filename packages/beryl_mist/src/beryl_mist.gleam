@@ -9,6 +9,14 @@
 //// [`handler`](#handler) or [`upgrade`](#upgrade). This module supplies only
 //// the Mist-specific glue: the WebSocket upgrade call, frame sending, and
 //// peer IP extraction.
+////
+//// Origin policy migration: `beryl/transport/origin.SameOrigin` is now
+//// `SameAuthority`. Update explicit constructor references; calls to
+//// `server.default_config` need no change. The default still compares host
+//// and explicit port, ignores scheme, and admits requests without `Origin`.
+//// It does not normalize default ports or trust forwarded-host headers.
+//// Use `server.with_allowed_origins` for exact scheme/host/port matching;
+//// that policy rejects requests without `Origin`.
 
 import beryl/transport.{type Sockets}
 import beryl/transport/server.{type ConnectionState, type SendRequest}

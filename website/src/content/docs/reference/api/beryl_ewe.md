@@ -30,6 +30,14 @@ Ewe WebSocket transport for beryl
  the Ewe-specific glue: the WebSocket upgrade call, frame sending, and
  peer IP extraction.
 
+ Origin policy migration: `beryl/transport/origin.SameOrigin` is now
+ `SameAuthority`. Update explicit constructor references; calls to
+ `server.default_config` need no change. The default still compares host
+ and explicit port, ignores scheme, and admits requests without `Origin`.
+ It does not normalize default ports or trust forwarded-host headers.
+ Use `server.with_allowed_origins` for exact scheme/host/port matching;
+ that policy rejects requests without `Origin`.
+
 <nav class="api-symbol-index" aria-label="Module contents">
 <section class="api-symbol-index__group">
   <a class="api-symbol-index__section" href="#functions">Functions</a>
