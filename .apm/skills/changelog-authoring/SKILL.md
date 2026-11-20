@@ -65,7 +65,8 @@ Use short, direct sentences and write the product name as `beryl`.
 
 The repository's `change_format` template renders the body without a list
 marker under a `### Kind` heading and adds a blank line between entries.
-Keep the `####` heading, paragraphs, and any code fences at column one.
+Start the `####` heading, paragraphs, and any code fences at the beginning
+of the line, with no leading spaces.
 Do not add a list marker or indent the entry as a list item. Do not use `##`:
 Trellis reserves that level for release versions. The `dependency_body`
 template gives generated dependency entries the same heading-and-paragraph
