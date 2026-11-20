@@ -63,12 +63,14 @@ impact. For an API break, explain what callers must replace and how. Avoid a
 bare title, commit-message fragments, or an internal implementation log.
 Use short, direct sentences and write the product name as `beryl`.
 
-Trellis currently renders each body with `- {{ body }}` under a `### Kind`
-heading. Do not put a list marker in the body. Leave the first `####` at
-column one; indent every later nonempty line by two spaces so paragraphs and
-any code fence stay inside that entry's list item. Leave a blank line after
-the final paragraph so the next entry remains separate. Do not use `##`:
-Trellis reserves that level for release versions.
+The repository's `change_format` template renders the body without a list
+marker under a `### Kind` heading and adds a blank line between entries.
+Start the `####` heading, paragraphs, and any code fences at the beginning
+of the line, with no leading spaces.
+Do not add a list marker or indent the entry as a list item. Do not use `##`:
+Trellis reserves that level for release versions. The `dependency_body`
+template gives generated dependency entries the same heading-and-paragraph
+format.
 
 Prefer a TOML multiline literal string (`'''`) for Markdown. Quotes,
 backticks, backslashes, and line breaks stay literal; the newline immediately
@@ -86,9 +88,8 @@ kind = "Fixed"
 body = '''
 #### Connection cleanup releases its slot.
 
-  Closed connections no longer count against the connection limit. Clients
-  can reconnect without waiting for the application to restart.
-
+Closed connections no longer count against the connection limit. Clients
+can reconnect without waiting for the application to restart.
 '''
 ```
 
@@ -105,13 +106,12 @@ kind = "Changed"
 body = '''
 #### The origin policy uses the name SameAuthority.
 
-  Replace `transport.SameOrigin` with `transport.SameAuthority`. The policy
-  still compares the host and port; admission rules do not change.
+Replace `transport.SameOrigin` with `transport.SameAuthority`. The policy
+still compares the host and port; admission rules do not change.
 
-  ```gleam
-  transport.SameAuthority
-  ```
-
+```gleam
+transport.SameAuthority
+```
 '''
 ````
 
@@ -125,12 +125,13 @@ shell expansion of backticks and double quotes. For example:
 ```sh
 trellis changelog new --package beryl --kind Fixed --body '#### Connection cleanup releases its slot.
 
-  Closed connections no longer count against the connection limit. Clients
-  can reconnect without waiting for the application to restart.'
+Closed connections no longer count against the connection limit. Clients
+can reconnect without waiting for the application to restart.'
 ```
 
-The command trims the body. Edit the resulting TOML to add the final blank
-line shown above and to use the preferred multiline literal format.
+The command trims the body. Use the preferred multiline literal TOML format
+when editing the resulting file. The template supplies entry separation;
+the body needs no trailing blank line.
 Keep shell quoting separate from TOML escaping; do not interpolate untrusted
 entry text into a shell command.
 
@@ -151,15 +152,16 @@ paths, not user impact. A documentation-only package change can warn without
 needing an entry. Invalid fragments still fail. Apply the policy above rather
 than creating an unnecessary release to silence an advisory warning.
 
-The preview should contain this shape without changing release templates:
+The preview should contain this shape, with an actual H4 heading rather than
+`- ####`:
 
 ```markdown
 ### Fixed
 
-- #### Connection cleanup releases its slot.
+#### Connection cleanup releases its slot.
 
-  Closed connections no longer count against the connection limit. Clients
-  can reconnect without waiting for the application to restart.
+Closed connections no longer count against the connection limit. Clients
+can reconnect without waiting for the application to restart.
 ```
 
 Edit this skill under `.apm/skills/changelog-authoring/`, then deploy with

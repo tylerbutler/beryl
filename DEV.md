@@ -383,6 +383,10 @@ Development, test, CI, tooling, website, example, and benchmark changes need
 no fragment. Neither do internal refactors or formatting with no
 consumer-visible effect. Use the `changelog-authoring` skill for the fragment
 format, sentence heading and paragraphs, package/kind choices, and previews.
+The `[tools.trellis.changelog]` templates in `gleam.toml` render each entry
+as an H4 Markdown heading (`####`) followed by paragraphs, without a list
+marker. They also format generated dependency entries and separate entries
+with a blank line.
 
 ### Steps
 
