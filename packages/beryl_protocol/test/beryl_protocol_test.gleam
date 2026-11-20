@@ -43,7 +43,7 @@ fn request_join(
   state: protocol.State,
   topic: String,
   join_ref: String,
-) -> #(protocol.State, protocol.Channel, protocol.Operation) {
+) -> #(protocol.State, protocol.Channel, protocol.Operation(protocol.JoinKind)) {
   let #(state, actions) =
     apply(
       state,
@@ -66,7 +66,7 @@ fn join(
   mode: protocol.CloseMode,
 ) -> #(protocol.State, protocol.Channel) {
   let #(state, channel, operation) = request_join(state, topic, join_ref)
-  let assert #(state, [protocol.AdmitJoin(..)]) =
+  let assert #(state, [protocol.AdmitJoin(_, admission, _)]) =
     apply(state, protocol.AcceptJoin(operation, json.object([]), mode), 0)
   let assert #(
     state,
@@ -74,7 +74,7 @@ fn join(
       protocol.Joined(..),
       protocol.Send(protocol.ReplyMessage(_, _, _, protocol.StatusOk, _)),
     ],
-  ) = apply(state, protocol.AdmissionFinished(operation, True), 0)
+  ) = apply(state, protocol.AdmissionFinished(admission, True), 0)
   #(state, channel)
 }
 
@@ -82,7 +82,7 @@ fn request(
   state: protocol.State,
   topic: String,
   ref: String,
-) -> #(protocol.State, protocol.Operation) {
+) -> #(protocol.State, protocol.Operation(protocol.ReplyKind)) {
   let #(state, actions) =
     apply(
       state,
@@ -148,7 +148,7 @@ pub fn join_authorization_admission_and_push_order_test() -> Nil {
   let #(state, channel, operation) = request_join(initial(), "room:a", "j1")
   let assert #(state, []) =
     apply(state, protocol.Push(channel, "early", json.null()), 0)
-  let assert #(state, [protocol.AdmitJoin(..)]) =
+  let assert #(state, [protocol.AdmitJoin(_, admission, _)]) =
     apply(
       state,
       protocol.AcceptJoin(
@@ -162,7 +162,7 @@ pub fn join_authorization_admission_and_push_order_test() -> Nil {
   let assert #(state, []) =
     apply(state, protocol.CallbackFinished(operation), 0)
   let #(state, actions) =
-    apply(state, protocol.AdmissionFinished(operation, True), 0)
+    apply(state, protocol.AdmissionFinished(admission, True), 0)
   let assert [
     protocol.Joined(..),
     protocol.Send(protocol.ReplyMessage(
@@ -211,13 +211,12 @@ pub fn rejected_join_and_late_decision_cannot_answer_retry_test() -> Nil {
       protocol.AcceptJoin(old, json.null(), protocol.InvalidateImmediately),
       0,
     )
-  let assert #(state, [protocol.AdmitJoin(_, operation, _)]) =
+  let assert #(state, [protocol.AdmitJoin(..)]) =
     apply(
       state,
       protocol.AcceptJoin(current, json.null(), protocol.InvalidateImmediately),
       0,
     )
-  operation |> should.equal(current)
   protocol.pending_count(state) |> should.equal(1)
 }
 
@@ -727,7 +726,7 @@ pub fn negative_monotonic_clock_origins_are_supported_test() -> Nil {
 
 pub fn failed_join_admission_closes_without_sending_a_join_reply_test() -> Nil {
   let #(state, _, operation) = request_join(initial(), "room:a", "j1")
-  let assert #(state, [protocol.AdmitJoin(..)]) =
+  let assert #(state, [protocol.AdmitJoin(_, admission, _)]) =
     apply(
       state,
       protocol.AcceptJoin(
@@ -740,9 +739,58 @@ pub fn failed_join_admission_closes_without_sending_a_join_reply_test() -> Nil {
   let assert #(
     state,
     [protocol.CloseConnection(protocol.Fault("admission_rejected"))],
-  ) = apply(state, protocol.AdmissionFinished(operation, False), 0)
+  ) = apply(state, protocol.AdmissionFinished(admission, False), 0)
   protocol.pending_count(state) |> should.equal(0)
   protocol.topics(state) |> should.equal([])
+}
+
+pub fn stale_admission_cannot_complete_a_replacement_join_test() -> Nil {
+  let #(state, _, operation) = request_join(initial(), "room:a", "same")
+  let assert #(state, [protocol.AdmitJoin(_, old_admission, _)]) =
+    apply(
+      state,
+      protocol.AcceptJoin(
+        operation,
+        json.null(),
+        protocol.InvalidateImmediately,
+      ),
+      0,
+    )
+  protocol.join_wire_key(state, operation)
+  |> should.equal(Ok(#("room:a", Some("same"), Some("join"))))
+  let assert #(
+    state,
+    [
+      protocol.Send(protocol.ReplyMessage(..)),
+      protocol.DeliverJoin(_, current, _, _),
+    ],
+  ) =
+    apply(
+      state,
+      protocol.Receive(protocol.Join(
+        "room:a",
+        dynamic.nil(),
+        Some("same"),
+        Some("join"),
+      )),
+      0,
+    )
+  let assert #(state, [protocol.AdmitJoin(_, admission, _)]) =
+    apply(
+      state,
+      protocol.AcceptJoin(current, json.null(), protocol.InvalidateImmediately),
+      0,
+    )
+  let assert #(state, []) =
+    apply(state, protocol.AdmissionFinished(old_admission, True), 0)
+  protocol.channel(state, "room:a") |> should.be_error
+  protocol.join_wire_key(state, operation) |> should.be_error
+  let assert #(state, [protocol.Joined(..), protocol.Send(..)]) =
+    apply(state, protocol.AdmissionFinished(admission, True), 0)
+  let assert #(_, []) =
+    apply(state, protocol.AdmissionFinished(admission, False), 0)
+  protocol.channel(state, "room:a") |> should.be_ok
+  Nil
 }
 
 pub fn closed_connection_snapshot_replays_interrupted_transport_close_test() -> Nil {

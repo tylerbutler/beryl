@@ -622,8 +622,11 @@ type SocketState(model, message) {
     model: model,
     subscribed_topics: Set(String),
     protocol: protocol.State,
-    join_operations: Dict(JoinReference, protocol.Operation),
-    reply_operations: Dict(ReplyReference, protocol.Operation),
+    join_operations: Dict(JoinReference, protocol.Operation(protocol.JoinKind)),
+    reply_operations: Dict(
+      ReplyReference,
+      protocol.Operation(protocol.ReplyKind),
+    ),
     join_started_at: Dict(String, Int),
     closing_topics: Set(String),
     teardown_reason: Option(StopReason),
@@ -3822,7 +3825,7 @@ fn deliver_client_message(
   topic_name: String,
   event_name: String,
   payload: Dynamic,
-  operation: Option(protocol.Operation),
+  operation: Option(protocol.Operation(protocol.ReplyKind)),
   started_at: Int,
   kind: telemetry.MessageKind,
 ) -> Execution(model, message) {
@@ -5526,7 +5529,7 @@ fn join_operation(
   state: State(model, message),
   socket_id: String,
   reference: JoinReference,
-) -> Result(protocol.Operation, Nil) {
+) -> Result(protocol.Operation(protocol.JoinKind), Nil) {
   use socket <- result.try(dict.get(state.sockets, socket_id))
   dict.get(socket.join_operations, reference)
 }
@@ -5636,7 +5639,7 @@ fn complete_reply(
   state: State(model, message),
   socket_id: String,
   reference: ReplyReference,
-  input: fn(protocol.Operation) -> protocol.Input,
+  input: fn(protocol.Operation(protocol.ReplyKind)) -> protocol.Input,
 ) -> State(model, message) {
   let pending = {
     use socket <- result.try(dict.get(state.sockets, socket_id))
@@ -5673,7 +5676,7 @@ fn release_completed_reply(
   state: State(model, message),
   socket_id: String,
   reference: ReplyReference,
-  operation: protocol.Operation,
+  operation: protocol.Operation(protocol.ReplyKind),
   reservation: work_queue.Reservation,
 ) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
@@ -5756,7 +5759,7 @@ fn register_reply_reference(
   state: State(model, message),
   socket_id: String,
   topic_name: String,
-  operation: protocol.Operation,
+  operation: protocol.Operation(protocol.ReplyKind),
 ) -> Result(
   #(State(model, message), Option(ReplyReference)),
   overload.AdmissionError,
