@@ -419,6 +419,7 @@ acknowledgment.
 | Callback | Input | Signature |
 |---|---|---|
 | `on_message` | A client message on this topic | `fn(state, channel.Message) -> Next(state)` |
+| `on_decoded_message` | An application-decoded client command or decode error | Registers `decode`, `handle`, and `on_error`; see [Typed client commands](#typed-client-commands) |
 | `on_info` | A `notify` addressed to this join | `fn(state, info) -> Next(state)` |
 | `on_presence` | This topic's initial roster and later changes | `fn(state, presence.Event) -> Next(state)` |
 | `on_terminate` | A live worker handling this channel's close | `fn(state, socket.StopReason) -> List(Action(Closing))` |
@@ -476,6 +477,62 @@ the capability.
 
 `close` applies its actions first and then closes the topic, so a
 farewell broadcast still reaches the topic's subscribers.
+
+### Typed client commands
+
+Use `on_decoded_message` to separate event and payload decoding from your
+application callback:
+
+```gleam
+channel.accept(initial_state)
+|> channel.on_decoded_message(
+  decode: decode_command,
+  handle: handle_command,
+  on_error: handle_invalid_message,
+)
+```
+
+Provide these functions with your own command and error types:
+
+| Function | Signature |
+|---|---|
+| `decode_command` | `fn(String, Dynamic) -> Result(Command, CommandError)` |
+| `handle_command` | `fn(State, Command, Option(ReplyReference)) -> Next(State)` |
+| `handle_invalid_message` | `fn(State, CommandError, Option(ReplyReference)) -> Next(State)` |
+
+The decoder receives the event name and payload together. beryl calls it in
+the topic worker, after protocol routing and admission. Successful decoding
+calls `handle`; failed decoding calls only `on_error`. Both callbacks receive
+the exact original optional reply handle. Reply, discard it, or store it for a
+later turn. An unanswered handle still consumes socket capacity.
+
+You must supply `on_error`, including a policy for messages without a reply
+reference. You can push an error, ignore the input, or close this topic.
+The adapter does not close the connection on decode failure. Your actions keep
+the existing order and phase restrictions; decoder and callback panics use
+the same topic-local crash handling as `on_message`.
+
+`on_message` and `on_decoded_message` replace the same callback. The last
+registration wins in either direction, including repeated calls to the same
+builder. A rejected join stays rejected. Command and error types stay in
+closures, so channels with unrelated types can share one `List(Handler)`.
+
+The [Live Poll channel](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/channel_handler.gleam)
+uses this adapter for `GetState`, `Vote(Choice)`, and `Close`. Its
+[decoder](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/poll.gleam)
+reports unknown events and invalid vote choices. The channel keeps the
+tutorial's policy of discarding unsupported input, with or without a reference.
+
+For outbound messages, keep domain types and total encoders in your
+application. Live Poll's `encode_event` returns `#(String, Json)` for each
+`ServerEvent`. It passes that pair to the existing `push`, `broadcast`, or
+`broadcast_from` action. Its reply encoders return `Json`, and `reply_ok`
+and `reply_error` retain status and correlation. Presence actions still use
+their own schemas and apply-time encoders.
+
+These types check the server callback boundary. They do not prove that clients
+conform, that subscribers agree on a schema, or that a reply has a
+request-specific type.
 
 ## Handle channel termination
 

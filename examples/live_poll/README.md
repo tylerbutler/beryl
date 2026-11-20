@@ -33,3 +33,10 @@ From the repository root: `cd examples/live_poll && gleam build`.
 For an interactive stage, run `gleam run -m live_poll/step_01` from that
 directory, substituting `step_02` through `step_05` for later checkpoints.
 The manifest declares `unitest`; no browser-test script is declared here.
+
+`channel_handler.gleam` registers `poll.decode_command` with
+`channel.on_decoded_message` for typed `GetState`, `Vote`, and `Close` commands.
+Its required error callback discards unsupported input with or without a reply
+reference. The application-owned `ServerEvent` type and total `encode_event`
+function supply event names and JSON to `push`, `broadcast`, and
+`broadcast_from`; reply encoders return JSON.

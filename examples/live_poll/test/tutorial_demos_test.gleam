@@ -12,6 +12,7 @@ import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
+import live_poll/channel_handler
 import live_poll/poll
 import live_poll/raw
 import live_poll/store
@@ -277,6 +278,64 @@ fn composition_scenario(mode: Mode) -> List(String) {
 /// Both checked composition adapters produce the same Phoenix frames.
 pub fn tutorial_composition_parity_test() -> Nil {
   composition_scenario(Raw) |> should.equal(composition_scenario(Channels))
+}
+
+pub fn live_poll_typed_channel_keeps_replies_and_outbound_recipients_test() -> Nil {
+  let assert Ok(polls) = store.start()
+  let assert Ok(clock) = timer.start()
+  let assert Ok(#(sockets, specification)) =
+    channel.child_spec(
+      beryl.config(wire.phoenix_codec()),
+      handlers: channel_handler.handlers(polls, clock, 60_000),
+    )
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(specification)
+    |> static_supervisor.start()
+  let alice = connect(sockets, "alice")
+  let bob = connect(sockets, "bob")
+  send(sockets, "alice", "poll:demo", "phx_join", empty())
+  recv(alice) |> contains("\"status\":\"ok\"")
+  send(sockets, "bob", "poll:demo", "phx_join", empty())
+  recv(bob) |> contains("\"status\":\"ok\"")
+  send(sockets, "alice", "guide", "phx_join", empty())
+  recv(alice) |> contains("\"status\":\"ok\"")
+  recv(alice) |> contains("\"tip\",{\"text\":")
+
+  // Invalid requests keep the tutorial's discard policy and release their key.
+  send(sockets, "alice", "poll:demo", "vote", empty())
+  send(sockets, "alice", "poll:demo", "unknown", empty())
+  list.each(["vote", "unknown"], fn(event) {
+    let assert Ok(decoded) =
+      wire.decode_message(
+        "[\"poll:demo\",null,\"poll:demo\",\"" <> event <> "\",{}]",
+      )
+    transport.route_decoded(sockets, "alice", decoded)
+    |> should.equal(Ok(Nil))
+  })
+  no_frame(alice)
+  no_frame(bob)
+  send(
+    sockets,
+    "alice",
+    "poll:demo",
+    "vote",
+    json.object([
+      #("option", json.string("gleam")),
+    ]),
+  )
+  recv(alice) |> contains("\"status\":\"ok\",\"response\":")
+  recv(bob) |> contains("\"poll_state\",")
+  no_frame(alice)
+  send(sockets, "alice", "poll:demo", "get_state", empty())
+  recv(alice) |> contains("\"gleam\":1")
+  send(sockets, "alice", "poll:demo", "close_poll", empty())
+  recv(alice) |> contains("\"status\":\"ok\",\"response\":")
+  recv(alice) |> contains("\"poll_closed\",")
+  recv(bob) |> contains("\"poll_closed\",")
+  no_frame(alice)
+  no_frame(bob)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
 /// The browser simulation follows the real Voting checkpoint's recipients.

@@ -33,6 +33,30 @@ pub fn protocol_commands_are_explicit_test() -> Nil {
   poll.command("vote", dynamic.properties([])) |> should.equal(poll.Unsupported)
 }
 
+pub fn typed_commands_report_unknown_events_and_invalid_choices_test() -> Nil {
+  poll.decode_command("get_state", dynamic.nil())
+  |> should.equal(Ok(poll.GetState))
+  poll.decode_command("close_poll", dynamic.nil())
+  |> should.equal(Ok(poll.Close))
+  let payload =
+    dynamic.properties([
+      #(dynamic.string("option"), dynamic.string("gleam")),
+    ])
+  poll.decode_command("vote", payload)
+  |> should.equal(Ok(poll.Vote(poll.Gleam)))
+  poll.decode_command("vote", dynamic.nil())
+  |> should.equal(Error(poll.InvalidChoice))
+  poll.decode_command(
+    "vote",
+    dynamic.properties([
+      #(dynamic.string("option"), dynamic.string("unknown")),
+    ]),
+  )
+  |> should.equal(Error(poll.InvalidChoice))
+  poll.decode_command("unknown", dynamic.nil())
+  |> should.equal(Error(poll.UnknownEvent("unknown")))
+}
+
 pub fn empty_rooms_are_removed_test() -> Nil {
   let assert Ok(polls) = store.start()
   store.join(polls, "demo")
