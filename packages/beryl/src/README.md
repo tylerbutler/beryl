@@ -20,7 +20,7 @@ integration, and telemetry. The bundled `beryl_heirloom` package wraps ETS owner
   `beryl.gleam:with_worker_queue_limits`, `beryl.gleam:with_effect_limits`,
   `beryl.gleam:with_pubsub`, `beryl.gleam:with_presence_handle`,
   `beryl.gleam:with_telemetry`, `beryl.gleam:with_logging`,
-  `beryl.gleam:with_payload_preview_bytes`, `beryl.gleam:with_heartbeat`,
+  `beryl.gleam:with_payload_preview_graphemes`, `beryl.gleam:with_heartbeat`,
   `beryl.gleam:with_max_connections_per_ip`,
   `beryl.gleam:with_connection_rate_per_ip`, `beryl.gleam:with_max_connections`,
   `beryl.gleam:with_frame_rate`, `beryl.gleam:with_message_rate`,
@@ -46,6 +46,11 @@ integration, and telemetry. The bundled `beryl_heirloom` package wraps ETS owner
 
 ## Invariants
 
+- Payload previews are opt-in. `with_payload_preview_graphemes(graphemes: n)`
+  limits whole grapheme clusters, not UTF-8 bytes. The deprecated
+  `with_payload_preview_bytes(bytes: n)` keeps the same behavior. Preview
+  limits are separate from the 256-byte diagnostic-field cap
+  (`beryl.gleam:with_payload_preview_graphemes`).
 - A codec is required. Configuration validation requires heartbeat timeout
   at least 2, rates at most 1,000,000,000, and valid topic-rate patterns.
   Non-positive rates mean unlimited; the first matching topic rule wins

@@ -238,7 +238,7 @@ pub opaque type Config {
 /// Build a logging configuration.
 ///
 /// Payloads are excluded by default to avoid accidental sensitive-data
-/// exposure. Use `with_payload_preview_bytes` to adjust the bounded preview
+/// exposure. Use `with_payload_preview_graphemes` to adjust the bounded preview
 /// size when payload previews are enabled.
 ///
 /// With `include_payloads: True`, debug text-frame decode failures include a
@@ -520,16 +520,30 @@ pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
 
 /// Configure the maximum payload and frame preview length for logs.
 ///
-/// Despite its name, `bytes` is measured in grapheme clusters, not UTF-8 bytes.
+/// `graphemes` counts grapheme clusters, not UTF-8 bytes. The default is 200.
 /// Zero (or a negative value) produces an empty preview. Truncation preserves
-/// whole grapheme clusters and does not append a marker. This existing preview
+/// whole grapheme clusters and does not append a marker. This preview
 /// contract is separate from the 256-byte diagnostic-field limit: a preview
 /// can exceed 256 bytes. Only opted-in debug text-frame decode failures use it.
+pub fn with_payload_preview_graphemes(
+  logging: LoggingConfig,
+  graphemes graphemes: Int,
+) -> LoggingConfig {
+  LoggingConfig(..logging, payload_preview_bytes: int.max(graphemes, 0))
+}
+
+// nolint: unused_exports -- deprecated compatibility API; tested through its Erlang export
+/// Compatibility alias for `with_payload_preview_graphemes`.
+///
+/// Replace `with_payload_preview_bytes(bytes: n)` with
+/// `with_payload_preview_graphemes(graphemes: n)`. Despite its name, `bytes`
+/// counts grapheme clusters, not UTF-8 bytes. The preview behavior is unchanged.
+@deprecated("Use with_payload_preview_graphemes(graphemes:) instead; the limit counts grapheme clusters, not bytes.")
 pub fn with_payload_preview_bytes(
   logging: LoggingConfig,
   bytes bytes: Int,
 ) -> LoggingConfig {
-  LoggingConfig(..logging, payload_preview_bytes: int.max(bytes, 0))
+  with_payload_preview_graphemes(logging, graphemes: bytes)
 }
 
 /// Configure per-connection frame-rate limiting at the transport edge.

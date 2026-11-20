@@ -601,7 +601,7 @@ pub fn handler_text_decode_preview_uses_shared_logging_config_test() -> Nil {
       beryl.config(wire.phoenix_codec())
       |> beryl.with_logging(
         beryl.logging_config(beryl.DebugLevel, True)
-        |> beryl.with_payload_preview_bytes(2),
+        |> beryl.with_payload_preview_graphemes(graphemes: 2),
       ),
     )
   let config =
