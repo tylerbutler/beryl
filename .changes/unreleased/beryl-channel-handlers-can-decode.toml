@@ -1,0 +1,11 @@
+package = "beryl"
+kind = "Added"
+body = '''
+#### Channel handlers can decode typed application commands.
+
+  Register `channel.on_decoded_message` with an event and payload decoder,
+  a command callback, and a required error callback. Both callbacks receive
+  the original optional reply handle. Channels with unrelated command and
+  error types can share one handler list; raw message callbacks remain available.
+
+'''
