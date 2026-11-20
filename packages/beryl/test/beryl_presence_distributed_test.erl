@@ -6,7 +6,7 @@
          start_reply_gate/1, held_reply_count/1, release_replies/1,
          start_lagging_replica/2, start_held_replica/2, legacy_snapshot/1,
          start_subscriber/1, broadcast_matrix/1, detailed_view/1,
-         detailed_diffs/1]).
+         detailed_diffs/1, start_supervised_replica/3]).
 
 -define(TOPIC, <<"room:distributed">>).
 -define(SYNC_TOPIC, <<"beryl:presence:sync">>).
@@ -266,6 +266,73 @@ quiet_pg_recovery_test_() ->
             await_members(A, 2),
             await_members(B, 2),
             await_view(B, Receiver, [<<"during-outage">>])
+        end)
+    end}.
+
+registry_replacement_recovers_supervised_presence_test_() ->
+    {timeout, 30, fun() ->
+        with_peers(2, fun([A, B]) ->
+            connect(A, B),
+            Source = call(A, ?MODULE, start_supervised_replica,
+                [?SCOPE, <<"source">>, 30]),
+            Receiver = start(B, <<"receiver">>, 30),
+            Supervisor = maps:get(supervisor, Source),
+            OldPid = maps:get(pid, Source),
+            OldPubSub = presence_pubsub(A),
+            Scope = binary_to_existing_atom(?SCOPE, utf8),
+            {ok, Registry} = call(A, beryl_pubsub_ffi, start_pg_scope, [Scope]),
+            OldRegistry = call(A, 'beryl@pubsub_membership', pid, [Registry]),
+            {ok, OldRef} = track(A, Source, <<"before-restart">>),
+            {ok, _} = track(B, Receiver, <<"survivor">>),
+            await_view(A, Source, [<<"before-restart">>, <<"survivor">>]),
+            await_view(B, Receiver, [<<"before-restart">>, <<"survivor">>]),
+
+            %% Replace the registry, not merely pg. Captured PubSub handles
+            %% cannot adopt this new registry; the child must start afresh
+            %% from the scope config in its original application supervisor.
+            nil = call(A, beryl_pubsub_test_ffi, kill_registry, [Scope]),
+            Subject = presence_call(A, subject, [handle(Source)]),
+            await({presence_restarted, element(2, A)}, fun() ->
+                case call(A, 'gleam@erlang@process', subject_owner, [Subject]) of
+                    {ok, Pid} when Pid =/= OldPid ->
+                        call(A, erlang, is_process_alive, [Pid]);
+                    _ -> false
+                end
+            end),
+            {ok, NewPid} = call(A, 'gleam@erlang@process', subject_owner, [Subject]),
+            %% Keep the original name-backed handle, refreshing only the PID
+            %% used by the private CRDT inspection helpers.
+            Restarted = Source#{pid := NewPid},
+            ?assertNot(call(A, erlang, is_process_alive, [OldPid])),
+            ?assert(call(A, erlang, is_process_alive, [Supervisor])),
+            [{_, NewPid, worker, _}] =
+                call(A, supervisor, which_children, [Supervisor]),
+            {ok, NewRegistry} = call(A, beryl_pubsub_ffi, start_pg_scope, [Scope]),
+            ?assertNotEqual(OldRegistry,
+                call(A, 'beryl@pubsub_membership', pid, [NewRegistry])),
+            ?assertNot(call(A, erlang, is_process_alive, [OldRegistry])),
+            Unavailable = {error, {membership_call_failed, call_unavailable}},
+            ?assertEqual(Unavailable,
+                call(A, 'beryl@pubsub', subscribers, [OldPubSub, ?SYNC_TOPIC])),
+            await_members(A, 2),
+            await_members(B, 2),
+            await_view(A, Restarted, [<<"survivor">>]),
+            await_view(B, Receiver, [<<"survivor">>]),
+            %% A pre-restart ref is gone, but untrack remains idempotent.
+            {ok, nil} = presence_call(A, untrack, [handle(Source), OldRef]),
+            {ok, RefA} = track(A, Source, <<"after-a">>),
+            {ok, RefB} = track(B, Receiver, <<"after-b">>),
+            lists:foreach(fun({Peer, Instance}) ->
+                await_view(Peer, Instance,
+                    [<<"after-a">>, <<"after-b">>, <<"survivor">>])
+            end, [{A, Restarted}, {B, Receiver}]),
+            {ok, nil} = presence_call(A, untrack, [handle(Source), RefA]),
+            {ok, nil} = presence_call(B, untrack, [handle(Receiver), RefB]),
+            await_view(A, Restarted, [<<"survivor">>]),
+            await_view(B, Receiver, [<<"survivor">>]),
+            ?assertEqual(Unavailable,
+                call(A, 'beryl@pubsub', subscriber_count, [OldPubSub, ?SYNC_TOPIC])),
+            ?assert(call(A, erlang, is_process_alive, [Supervisor]))
         end)
     end}.
 
@@ -630,20 +697,38 @@ await_frame_barrier(Peer, Client, Replica, Side, Key, Ref, Count) ->
     end).
 
 start_replica(Scope, Replica, Interval) ->
-    {ok, PubSub} = 'beryl@pubsub':start('beryl@pubsub':config_with_scope(Scope)),
     Collector = spawn(fun() -> collect_diffs([]) end),
-    Config0 = 'beryl@presence':default_config(Replica),
-    Config1 = 'beryl@presence':with_pubsub(Config0, PubSub),
-    Config2 = 'beryl@presence':with_broadcast_interval(Config1, Interval),
-    Config = 'beryl@presence':with_on_diff(Config2, fun(Diff) ->
-        Collector ! {presence_diff, Diff},
-        nil
-    end),
+    Config = replica_config(Scope, Replica, Interval, Collector),
     {ok, Presence} = 'beryl@presence':start(Config),
     {ok, Pid} = 'gleam@erlang@process':subject_owner(
         'beryl@presence':subject(Presence)),
     unlink(Pid),
     #{handle => Presence, pid => Pid, collector => Collector}.
+
+start_supervised_replica(Scope, Replica, Interval) ->
+    Collector = spawn(fun() -> collect_diffs([]) end),
+    Config = replica_config(Scope, Replica, Interval, Collector),
+    {Presence, Spec} = 'beryl@presence':child_spec(Config),
+    Builder = 'gleam@otp@static_supervisor':add(
+        'gleam@otp@static_supervisor':new(one_for_one), Spec),
+    {ok, {started, Supervisor, _}} = 'gleam@otp@static_supervisor':start(Builder),
+    %% peer:call workers are transient. The surrounding with_peers owns
+    %% this fixture's lifetime, including assertion-failure cleanup.
+    unlink(Supervisor),
+    {ok, Pid} = 'gleam@erlang@process':subject_owner(
+        'beryl@presence':subject(Presence)),
+    #{handle => Presence, pid => Pid, collector => Collector,
+      supervisor => Supervisor}.
+
+replica_config(Scope, Replica, Interval, Collector) ->
+    PubSubConfig = 'beryl@pubsub':config_with_scope(Scope),
+    Config0 = 'beryl@presence':default_config(Replica),
+    Config1 = 'beryl@presence':with_pubsub(Config0, PubSubConfig),
+    Config2 = 'beryl@presence':with_broadcast_interval(Config1, Interval),
+    'beryl@presence':with_on_diff(Config2, fun(Diff) ->
+        Collector ! {presence_diff, Diff},
+        nil
+    end).
 
 handle(#{handle := Presence}) -> Presence.
 
@@ -735,7 +820,7 @@ view(#{handle := Presence, pid := Pid}) ->
 
 sync_round(#{pid := Pid}) ->
     %% Inspect the private sync bookkeeping only for an ordered tick barrier.
-    {some, Sync} = element(5, sys:get_state(Pid)),
+    {some, Sync} = element(6, sys:get_state(Pid)),
     element(4, Sync).
 
 replica(#{pid := Pid}) ->
@@ -747,7 +832,7 @@ crdt(#{pid := Pid}) ->
 retained(#{pid := Pid}) ->
     Actor = sys:get_state(Pid),
     Crdt = element(2, Actor),
-    {some, Sync} = element(5, Actor),
+    {some, Sync} = element(6, Actor),
     Values = 'lattice_presence@presence_state':internal_values(Crdt),
     #{clocks => 'lattice_presence@presence_state':compacted_clocks(Crdt),
       entries => 'lattice_presence@presence_state':entry_count(Crdt),
@@ -761,7 +846,7 @@ request_round(#{handle := Presence, pid := Pid}) ->
     nil.
 
 pending_request(#{pid := Pid}, Owner) ->
-    {some, Sync} = element(5, sys:get_state(Pid)),
+    {some, Sync} = element(6, sys:get_state(Pid)),
     maps:is_key(Owner, element(3, Sync)).
 
 start_reply_gate(#{pid := Pid}) ->

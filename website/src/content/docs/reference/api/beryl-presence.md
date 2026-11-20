@@ -51,10 +51,10 @@ Distributed presence tracking with a CRDT
  ## Example
 
  ```gleam
- let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
+ let replication = pubsub.config_with_scope("my_app_presence")
  let config =
    presence.default_config("node1")
-   |> presence.with_pubsub(pubsub_handle)
+   |> presence.with_pubsub(replication)
    |> presence.with_broadcast_interval(1500)
  let #(presence_handle, presence_specification) = presence.child_spec(config)
  let assert Ok(_root) =
@@ -733,7 +733,7 @@ Set the callback for diffs from local changes, remote merges, or replica
 ```gleam
 pub fn with_pubsub(
   Config,
-  pubsub.PubSub(SyncPayload)
+  pubsub.PubSubConfig
 ) -> Config
 ```
 
@@ -744,6 +744,16 @@ Enable PubSub replication for presence.
  broadcasts. Different topics do not isolate incompatible payload types.
  The PubSub same-scope caller obligation also applies to presence; its
  envelope version is not runtime validation of arbitrary BEAM terms.
+
+ Pass a `pubsub.PubSubConfig`, not a running PubSub handle. Presence starts
+ or attaches to this scope in each actor initializer and rejoins after a
+ supervised restart, including after registry replacement. The original
+ `Presence` handle works again; local entries and refs reset on restart.
+ Application-held stale PubSub handles remain invalid.
+
+ To migrate from the handle-based builder, pass the configuration previously
+ supplied to `pubsub.start` directly to `with_pubsub`. No application type
+ annotation for the internal replication payload is needed.
 
  Remote visibility follows monitored actor ownership and the local `pg`
  membership view. Actor exit, node disconnection, or membership loss hides

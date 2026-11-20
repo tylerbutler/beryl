@@ -15,14 +15,19 @@ pub fn main() -> Nil {
 // ── Helper ──────────────────────────────────────────────────────────
 
 /// Create a unique PubSub scope per test to avoid cross-test interference
-fn test_pubsub(name: String) -> pubsub.PubSub(presence.SyncPayload) {
-  let config = pubsub.config_with_scope("test_presence_repl_" <> name)
+fn test_pubsub(name: String) -> pubsub.PubSubConfig {
+  pubsub.config_with_scope("test_presence_repl_" <> name)
+}
+
+fn sync_pubsub(
+  config: pubsub.PubSubConfig,
+) -> pubsub.PubSub(presence.SyncPayload) {
   let assert Ok(instance) = pubsub.start(config)
   instance
 }
 
 fn test_config(
-  pubsub_instance: pubsub.PubSub(presence.SyncPayload),
+  pubsub_instance: pubsub.PubSubConfig,
   replica: String,
   interval_ms: Int,
 ) -> presence.Config {
@@ -52,7 +57,7 @@ pub fn broadcast_tick_requests_state_test() -> Nil {
     )
 
   // Subscribe to the sync topic to observe broadcasts
-  let subscriber = pubsub.subscriber(pubsub_instance)
+  let subscriber = pubsub.subscriber(sync_pubsub(pubsub_instance))
   pubsub.join(subscriber, "beryl:presence:sync") |> should.equal(Ok(Nil))
 
   // Poll until a PubSub message arrives from the broadcast tick
@@ -371,7 +376,7 @@ pub fn survives_unknown_envelope_version_test() -> Nil {
   |> should.equal(1)
 
   // Send a sync envelope with a version this node does not understand
-  let other_handle = test_pubsub("malform_version")
+  let other_handle = sync_pubsub(test_pubsub("malform_version"))
   let replies = process.new_subject()
   pubsub.broadcast(
     other_handle,

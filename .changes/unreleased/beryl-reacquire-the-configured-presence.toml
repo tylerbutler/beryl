@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Reacquire the configured presence replication scope after PubSub registry replacement. The presence.with_pubsub builder now accepts PubSubConfig instead of a running handle."

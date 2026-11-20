@@ -1,8 +1,11 @@
 import beryl/error
+import beryl/presence
 import beryl/pubsub
 import gleam/erlang/atom
 import gleam/erlang/process
+import gleam/json
 import gleam/list
+import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
 import test_helper
@@ -388,6 +391,122 @@ pub fn pubsub_scope_recovery_invalidates_handles_after_registry_loss_test() -> N
   |> should.equal(Error(unavailable))
   pubsub.local_broadcast(instance, "room:old", "event", "payload")
   |> should.equal(Error(unavailable))
+}
+
+pub fn presence_recovers_after_pubsub_registry_loss_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(15_000)
+  let scope = atom.create("test_presence_pubsub_registry_loss")
+  let config = pubsub.config_with_scope(atom.to_string(scope))
+  let old_pubsub: pubsub.PubSub(presence.SyncPayload) =
+    pubsub.start(config) |> should.be_ok
+  let #(tracker, spec) =
+    presence.default_config("registry-recovery-local")
+    |> presence.with_pubsub(config)
+    |> presence.with_broadcast_interval(30)
+    |> presence.child_spec
+  let #(peer, peer_spec) =
+    presence.default_config("registry-recovery-peer")
+    |> presence.with_pubsub(config)
+    |> presence.with_broadcast_interval(30)
+    |> presence.child_spec
+  let root =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(spec)
+    |> static_supervisor.add(peer_spec)
+    |> static_supervisor.start
+    |> should.be_ok
+  let old_pid = process.subject_owner(presence.subject(tracker)) |> should.be_ok
+  let old_peer = process.subject_owner(presence.subject(peer)) |> should.be_ok
+  let old_ref =
+    presence.track(tracker, "room:recovery", "before", "before", json.null())
+    |> should.be_ok
+  await_presence_keys(peer, ["before"])
+
+  kill_registry(scope)
+  test_helper.wait_until(
+    fn() {
+      case
+        process.subject_owner(presence.subject(tracker)),
+        process.subject_owner(presence.subject(peer))
+      {
+        Ok(pid), Ok(peer_pid) ->
+          pid != old_pid
+          && peer_pid != old_peer
+          && process.is_alive(pid)
+          && process.is_alive(peer_pid)
+        _, _ -> False
+      }
+    },
+    5000,
+    10,
+  )
+  process.is_alive(root.pid) |> should.be_true
+  process.is_alive(old_pid) |> should.be_false
+  process.is_alive(old_peer) |> should.be_false
+  let unavailable = pubsub.MembershipCallFailed(error.CallUnavailable)
+  pubsub.subscribers(old_pubsub, "beryl:presence:sync")
+  |> should.equal(Error(unavailable))
+  pubsub.join(pubsub.subscriber(old_pubsub), "beryl:presence:sync")
+  |> should.equal(Error(unavailable))
+  await_presence_keys(tracker, [])
+  await_presence_keys(peer, [])
+  // Restart discards refs; removing one remains an idempotent success.
+  presence.untrack(tracker, old_ref) |> should.equal(Ok(Nil))
+
+  let local_ref =
+    presence.track(tracker, "room:recovery", "local", "local", json.null())
+    |> should.be_ok
+  let peer_ref =
+    presence.track(peer, "room:recovery", "peer", "peer", json.null())
+    |> should.be_ok
+  list.each([tracker, peer], fn(tracker) {
+    await_presence_keys(tracker, ["local", "peer"])
+  })
+  presence.untrack(tracker, local_ref) |> should.equal(Ok(Nil))
+  presence.untrack(peer, peer_ref) |> should.equal(Ok(Nil))
+  list.each([tracker, peer], fn(tracker) { await_presence_keys(tracker, []) })
+  pubsub.subscriber_count(old_pubsub, "beryl:presence:sync")
+  |> should.equal(Error(unavailable))
+  process.is_alive(root.pid) |> should.be_true
+
+  // Stop the linked fixture before returning and consume only its monitor.
+  let monitor = process.monitor(root.pid)
+  process.unlink(root.pid)
+  process.send_abnormal_exit(root.pid, atom.create("shutdown"))
+  process.new_selector()
+  |> process.select_specific_monitor(monitor, fn(down) { down })
+  |> process.selector_receive(1000)
+  |> should.be_ok
+  process.demonitor_process(monitor)
+  test_helper.wait_until(
+    fn() {
+      process.subject_owner(presence.subject(tracker)) == Error(Nil)
+      && process.subject_owner(presence.subject(peer)) == Error(Nil)
+    },
+    1000,
+    10,
+  )
+  test_helper.mailbox_length(process.self()) |> should.equal(0)
+}
+
+fn await_presence_keys(tracker: presence.Presence, keys: List(String)) -> Nil {
+  test_helper.wait_until(
+    fn() {
+      case presence.list(tracker, "room:recovery") {
+        Ok(entries) -> {
+          let actual =
+            entries
+            |> list.map(fn(entry) { entry.key })
+            |> list.sort(string.compare)
+          actual == keys
+        }
+        Error(_) -> False
+      }
+    },
+    5000,
+    10,
+  )
 }
 
 pub fn pubsub_scope_recovery_concurrent_starts_share_membership_test() -> Nil {
