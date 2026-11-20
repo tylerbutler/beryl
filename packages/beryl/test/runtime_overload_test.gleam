@@ -14,6 +14,7 @@ import gleam/erlang/process
 import gleam/json
 import gleam/list
 import gleam/option
+import gleam/set
 import gleam/string
 import gleeunit/should
 import test_helper
@@ -976,26 +977,89 @@ pub fn saturated_router_rejects_admission_and_both_transport_frame_kinds_test() 
 }
 
 pub fn group_reports_partial_router_admission_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each([0, 1, 3], fn(admitted_count) {
+    use <- test_helper.with_isolated_caller(5000)
+    group_retries_original_remainder(admitted_count)
+  })
+}
+
+fn group_retries_original_remainder(admitted_count: Int) -> Nil {
   let assert Ok(sockets) =
     app_test_helper.start_app(
-      config() |> beryl.with_router_queue_limits(limits(1, 4096)),
+      config()
+        |> beryl.with_router_queue_limits(limits(3, 4096))
+        |> beryl.with_effect_limits(limits(8, 4096)),
       init: app_test_helper.accepting_init,
       update: app_test_helper.accepting_update,
     )
   let assert Ok(groups) = group.start()
   let assert Ok(Nil) = group.create(groups, "rooms")
-  let assert Ok(Nil) = group.add(groups, "rooms", "room:a")
-  let assert Ok(Nil) = group.add(groups, "rooms", "room:b")
-  let assert Ok(owner) = transport.runtime_pid(sockets)
-  with_suspended(owner, fn() {
-    group.broadcast(groups, sockets, "rooms", "event", json.null())
-    |> should.equal(
-      Error(group.BroadcastRejected(
-        1,
-        overload.Overloaded(overload.RouterQueue),
-      )),
-    )
+  group.broadcast(groups, sockets, "rooms", "event", json.null())
+  |> should.equal(Ok(Nil))
+  let topics = ["room:a", "room:b", "room:c", "room:d"]
+  let frames = helper.connect(sockets, "group-retry")
+  list.each(topics, fn(topic) {
+    group.add(groups, "rooms", topic) |> should.equal(Ok(Nil))
+    helper.join(sockets, "group-retry", topic, topic, topic)
+    helper.recv(frames)
+    |> string.contains("\"status\":\"ok\"")
+    |> should.be_true
   })
+  let assert Ok(original_topics) = group.topics(groups, "rooms")
+  let original_order = set.to_list(original_topics)
+  let assert Ok(owner) = transport.runtime_pid(sockets)
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(current) = snapshot.queue(sockets)
+      current.items == 0
+    },
+    1000,
+    5,
+  )
+  let remainder =
+    with_suspended(owner, fn() {
+      list.each(list.repeat(Nil, 3 - admitted_count), fn(_) {
+        beryl.broadcast(sockets, "unjoined", "filler", json.null())
+        |> should.equal(Ok(Nil))
+      })
+      let assert Error(group.BroadcastRejected(
+        admitted_topics: admitted,
+        rejected_topic: rejected,
+        remaining_topics: remaining,
+        reason: overload.Overloaded(overload.RouterQueue),
+      )) = group.broadcast(groups, sockets, "rooms", "event", json.null())
+      admitted |> should.equal(admitted_count)
+      let remainder = [rejected, ..remaining]
+      remainder |> should.equal(list.drop(original_order, admitted_count))
+      let assert Ok(current) = snapshot.queue(sockets)
+      current.items |> should.equal(3)
+      remainder
+    })
+  // Retry the captured traversal even after the group no longer exists.
+  group.delete(groups, "rooms") |> should.equal(Ok(Nil))
+  list.each(remainder, fn(topic) {
+    test_helper.wait_until(
+      fn() {
+        let assert Ok(current) = snapshot.queue(sockets)
+        current.items == 0
+      },
+      1000,
+      5,
+    )
+    beryl.broadcast(sockets, topic, "event", json.null())
+    |> should.equal(Ok(Nil))
+  })
+  let received = list.map(topics, fn(_) { helper.recv(frames) })
+  list.each(topics, fn(topic) {
+    received
+    |> list.filter(fn(frame) {
+      frame == "[null,null,\"" <> topic <> "\",\"event\",null]"
+    })
+    |> list.length
+    |> should.equal(1)
+  })
+  app_test_helper.recv_none(frames)
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 

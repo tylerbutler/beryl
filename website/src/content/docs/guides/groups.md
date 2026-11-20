@@ -113,7 +113,8 @@ let assert Ok(names) = group.list_groups(groups)  // ["team:engineering", "team:
 `group.broadcast` asks the groups actor for the topic set. The calling process
 waits for that lookup, then sends the event to each topic with
 `beryl.broadcast`. The actor does not send the broadcasts itself. The function
-returns an admission Result. A missing group returns
+returns a router admission Result, not confirmation of receipt by clients.
+A missing group returns
 `GroupLookupFailed(GroupNotFound(name))`.
 
 ```gleam
@@ -129,9 +130,15 @@ let assert Ok(Nil) = group.broadcast(
 This has the same effect as one `beryl.broadcast` call for each group topic.
 
 :::note[Fan-out can be partial]
-`BroadcastRejected(admitted_topics, reason)` reports how many earlier topics
-entered the router before rejection. Those admissions remain valid. An empty
-group returns `Ok(Nil)`. An actor-call failure returns
+`BroadcastRejected(admitted_topics, rejected_topic, remaining_topics, reason)`
+reports how many earlier topics entered the router, which topic was rejected,
+and which topics were not yet attempted. `remaining_topics` excludes the
+rejected topic and keeps the original traversal order. Earlier admissions remain
+valid. To retry only the remainder, call `beryl.broadcast` for each topic in
+`[rejected_topic, ..remaining_topics]` with the same event and payload. Handle
+each retry's admission result. Do not retry the full group or read its
+membership again: this can duplicate earlier admissions or use changed membership.
+An empty group returns `Ok(Nil)`. An actor-call failure returns
 `GroupLookupFailed(GroupCallFailed(reason))`.
 See [overload handling](/guides/overload/).
 :::

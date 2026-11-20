@@ -76,6 +76,8 @@ pub type BroadcastError {
   GroupLookupFailed(GroupError)
   BroadcastRejected(
     admitted_topics: Int,
+    rejected_topic: String,
+    remaining_topics: List(String),
     reason: overload.AdmissionError
   )
 }
@@ -90,11 +92,15 @@ A group lookup or one topic's local broadcast admission failed.
 ```gleam
 BroadcastRejected(
   admitted_topics: Int,
+  rejected_topic: String,
+  remaining_topics: List(String),
   reason: overload.AdmissionError
 )
 ```
 
-Earlier topics were admitted; the failing topic and later topics were not.
+Earlier topics were admitted to the router, not necessarily received by clients.
+ The rejected topic and remaining topics were not admitted. `remaining_topics`
+ preserves the original traversal order and excludes `rejected_topic`.
 
 <div class="api-entry-anchor" id="api-type-config" aria-hidden="true"></div>
 
@@ -217,8 +223,14 @@ Broadcast a message to all topics in a group.
  This function sends the message to each topic through `beryl.broadcast`.
  The groups actor performs the topic lookup. The caller performs the
  fan-out. A missing group returns `GroupLookupFailed`. On admission failure,
- `BroadcastRejected` reports the number of earlier topics admitted. Those
- admissions remain valid; fan-out is not transactional.
+ `BroadcastRejected` reports the number of earlier topics admitted, the rejected
+ topic, and the not-yet-attempted topics from the original traversal. Those
+ earlier admissions remain valid; fan-out is not transactional. To retry only
+ the remainder, call `beryl.broadcast` for `[rejected_topic, ..remaining_topics]`
+ with the same event and payload. Do not look up the group again: its membership
+ may have changed, and retrying the full group can duplicate earlier admissions.
+
+ Success means router admission, not receipt by clients. An empty group succeeds.
 
  Actor-call failures are returned inside `GroupLookupFailed`.
 
