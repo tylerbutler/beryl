@@ -177,6 +177,10 @@ pub opaque type PubSubConfig {
 /// All handles for one scope, across all connected nodes, must use the same
 /// payload type and compatible native term representation. This is a caller
 /// obligation, not a runtime-enforced guarantee.
+///
+/// Keep this handle on its origin node. Membership, broadcast, and subscriber
+/// queries from another node return `MembershipCallFailed(CallUnavailable)`.
+/// Start the same scope on each node instead of moving handles between nodes.
 pub opaque type PubSub(payload) {
   PubSub(scope: atom.Atom, registry: pubsub_membership.Registry)
 }

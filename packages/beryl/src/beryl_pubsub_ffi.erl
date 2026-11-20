@@ -120,6 +120,8 @@ checked_members(Scope, Table, Registry, PgPid, Members) ->
         {error, Reason} -> {error, Reason}
     end.
 
+ready_generation(_Table, Registry) when node(Registry) =/= node() ->
+    {error, registry_unavailable};
 ready_generation(Table, Registry) ->
     case is_process_alive(Registry) of
         false -> {error, registry_unavailable};

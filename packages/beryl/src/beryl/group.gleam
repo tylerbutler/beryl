@@ -22,7 +22,10 @@
 
 import beryl
 import beryl/error
+import beryl/internal
 import beryl/overload
+import beryl/pubsub_native
+import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/json
@@ -39,13 +42,13 @@ import gleam/set.{type Set}
 ///
 /// ## Node affinity
 ///
-/// The stable registered subject is resolved on the caller's node. Keep a
+/// The handle's origin is checked before resolving its registered subject. Keep a
 /// `Groups` handle on the node where its child specification runs. Calls from
 /// another BEAM node cannot reach the owning actor. All public operations,
 /// including `broadcast`, return a typed call failure if the actor is
 /// unavailable or the call times out.
 pub opaque type Groups {
-  Groups(subject: Subject(Message), call_timeout_ms: Int)
+  Groups(origin: process.Pid, subject: Subject(Message), call_timeout_ms: Int)
 }
 
 /// Configuration for starting a groups actor.
@@ -130,6 +133,7 @@ pub fn child_spec_with_config(
   let name = process.new_name("beryl_groups")
   #(
     Groups(
+      origin: process.self(),
       subject: process.named_subject(name),
       call_timeout_ms: config.call_timeout_ms,
     ),
@@ -143,6 +147,7 @@ pub fn start() -> Result(Groups, actor.StartError) {
   start_named(name)
   |> result.map(fn(_started) {
     Groups(
+      origin: process.self(),
       subject: process.named_subject(name),
       call_timeout_ms: default_config().call_timeout_ms,
     )
@@ -178,6 +183,10 @@ fn call_operation(
   groups: Groups,
   request: fn(Subject(Result(reply, GroupError))) -> Message,
 ) -> Result(reply, GroupError) {
+  use <- bool.guard(
+    when: !pubsub_native.is_local_pid(groups.origin),
+    return: internal.result_error(GroupCallFailed(error.CallUnavailable)),
+  )
   call(groups.subject, groups.call_timeout_ms, request)
   |> result.map_error(GroupCallFailed)
   |> result.flatten
@@ -239,6 +248,10 @@ pub fn topics(
 /// Returns `GroupCallFailed` if the actor is unavailable or does not reply within the
 /// configured call timeout (5 seconds by default).
 pub fn list_groups(groups: Groups) -> Result(List(String), GroupError) {
+  use <- bool.guard(
+    when: !pubsub_native.is_local_pid(groups.origin),
+    return: internal.result_error(GroupCallFailed(error.CallUnavailable)),
+  )
   call(groups.subject, groups.call_timeout_ms, fn(reply) { ListGroups(reply) })
   |> result.map_error(GroupCallFailed)
 }

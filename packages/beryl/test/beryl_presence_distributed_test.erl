@@ -15,6 +15,20 @@
 -define(PUBSUB_SCOPE, <<"beryl_distributed_pubsub">>).
 -define(ISOLATED_SCOPE, <<"beryl_distributed_isolated">>).
 
+foreign_handles_do_not_resolve_local_namesakes_test_() ->
+    {timeout, 30, fun() ->
+        with_peers(2, fun([A, B]) ->
+            connect(A, B),
+            Foreign = call(A, foreign_handle_test, start_fixture, []),
+            Local = call(B, foreign_handle_test, start_fixture, []),
+            %% Assertions run in Gleam, including every public error match
+            %% and the PubSub query that formerly raised badarg.
+            nil = call(B, foreign_handle_test, reject_foreign, [Foreign, Local]),
+            nil = call(A, foreign_handle_test, assert_unchanged, [Foreign]),
+            nil = call(B, foreign_handle_test, assert_unchanged, [Local])
+        end)
+    end}.
+
 pubsub_wire_scope_and_sender_exclusion_test_() ->
     {timeout, 30, fun() ->
         with_peers(2, fun([A, B]) ->

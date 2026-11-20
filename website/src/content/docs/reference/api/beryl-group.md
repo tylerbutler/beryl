@@ -163,7 +163,7 @@ A running groups instance.
 
  #### Node affinity
 
- The stable registered subject is resolved on the caller's node. Keep a
+ The handle's origin is checked before resolving its registered subject. Keep a
  `Groups` handle on the node where its child specification runs. Calls from
  another BEAM node cannot reach the owning actor. All public operations,
  including `broadcast`, return a typed call failure if the actor is

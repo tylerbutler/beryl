@@ -6,7 +6,48 @@
          with_malformed_messages/2, with_suspended_registry/2,
          membership_intent_size/1, nonlocal_leave_preserves_registry/1,
          call_target/1, operation_failure/1, with_unmanaged_scope/2,
-         with_unreconciled_scope/2]).
+         with_unreconciled_scope/2, registered_name/1, with_name_aliases/3]).
+
+registered_name(Pid) ->
+    {registered_name, Name} = process_info(Pid, registered_name),
+    Name.
+
+%% Real handles remain untouched. Only the destination node gets aliases:
+%% registered relays for actor calls and ETS aliases to its real local queues
+%% and read model. Without origin guards a foreign lookup reaches this fixture.
+with_name_aliases([], [], Action) ->
+    Action();
+with_name_aliases([Name | Names], [Name | LocalNames], Action) ->
+    with_name_aliases(Names, LocalNames, Action);
+with_name_aliases([Name | Names], [LocalName | LocalNames], Action) ->
+    undefined = whereis(Name),
+    undefined = ets:info(Name),
+    LocalPid = whereis(LocalName),
+    true = is_pid(LocalPid),
+    {Relay, Monitor} = spawn_monitor(fun() -> relay_to(LocalPid) end),
+    try
+        true = register(Name, Relay),
+        case ets:info(LocalName) of
+            undefined -> ok;
+            _ ->
+                Name = ets:new(Name, [named_table, set, protected]),
+                true = ets:insert(Name, ets:tab2list(LocalName))
+        end,
+        with_name_aliases(Names, LocalNames, Action)
+    after
+        case ets:info(Name, owner) of
+            Owner when Owner =:= self() -> ets:delete(Name);
+            _ -> ok
+        end,
+        exit(Relay, kill),
+        receive {'DOWN', Monitor, process, Relay, killed} -> ok end
+    end.
+
+relay_to(Target) ->
+    receive Message ->
+        Target ! Message,
+        relay_to(Target)
+    end.
 
 with_unreconciled_scope(Scope, Action) ->
     with_suspended_registry(Scope, fun(_RegistryPid) ->

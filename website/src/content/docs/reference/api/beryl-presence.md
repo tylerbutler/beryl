@@ -241,11 +241,11 @@ A running Presence instance.
  #### Node affinity
 
  The stable registered subject and ETS read model are resolved on the
- caller's node. Keep a `Presence` handle on the node where its child
- specification runs. From another BEAM node, synchronous mutations
- (`track`, `update`, `untrack`, and `untrack_all`) cannot reach the owning
- actor and return typed call errors, while `list`, `get_by_key`, and `count`
- return `Error(Nil)` because the read model is unavailable. Use PubSub
+ caller's node, after checking the handle's origin. Keep a `Presence` handle
+ on the node where its child specification runs. From another BEAM node,
+ synchronous mutations (`track`, `update`, `untrack`, and `untrack_all`)
+ return typed unavailable errors. Reads (`list`, `get_by_key`, and `count`)
+ return `Error(Nil)` without reading a local namesake. Use PubSub
  replication (`with_pubsub`) to share presence state across nodes instead of
  moving the handle itself.
 
