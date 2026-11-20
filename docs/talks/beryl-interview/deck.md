@@ -27,7 +27,8 @@ Set expectations up front:
   it has shipped and give the current status. The production record is still
   short, so ask for reports from real applications. State this limitation
   early.
-- Two packages: `beryl` (the core) and `beryl_mist` (the WebSocket transport).
+- Three packages: `beryl` (the core), `beryl_mist`, and `beryl_ewe`
+  (WebSocket transports).
   Explain the package split on the architecture slide.
 
 TRANSITION: "First, I will explain the problem because it explains each
@@ -249,7 +250,9 @@ mesh when they know each other's names and share a secret cookie.
 - This is pub/sub, the function that slide 3 used Redis to provide. It is in
   Erlang's standard library and uses the same mechanism that WhatsApp scaled.
 
-beryl's PubSub module is a thin, typed wrapper over pg. State the
+beryl's PubSub module is a thin, typed wrapper over pg, generic over its
+payload type. Broadcasts carry native Gleam values across nodes without an
+application encoding step; Erlang distribution serializes the terms. State the
 architectural rule slowly: "PubSub is the ONLY cross-node
 primitive in beryl. The app runtime, presence actors, groups, and rate
 limiters are node-local. Scaling out means starting more nodes and letting
@@ -276,7 +279,7 @@ supply static types. Gleam closes that gap."
 Describe Gleam for people who have not used it:
 - Gleam reached 1.0 in 2024. It is young but stable, has a welcoming
   community, and provides clear compiler error messages.
-- SOUND static types: no `any` escape hatch, no nil, and errors are
+- SOUND static types: no `any` escape hatch, no implicit null values, and errors are
   values (`Result(ok, err)`) rather than exceptions. The compiler rejects
   many type-related errors before the program runs.
 - Deliberately SMALL language: no macros, no inheritance, no operator
@@ -633,7 +636,7 @@ State these two design rules slowly:
 - "The transport talks to beryl only through the public
   `beryl/transport` SPI. beryl_mist is a plug-in. A
   different HTTP server, or a non-WebSocket transport, implements the
-  same contract." This design explains the two-package repository structure.
+  same contract." This design explains the core/transport package split.
 
 LIKELY QUESTION: "Is the shared router a bottleneck?" Explain that admission,
 ingress, and local fan-out are shared, while callbacks run in socket actors
@@ -672,13 +675,15 @@ Introduce the slide with this security boundary: "Each real-time endpoint is
 an open TCP connection. beryl supplies abuse controls and documents their
 limits."
 
-BUILT IN (config on the transport, name the real APIs):
-- `with_max_connections_per_ip`: per-IP connection caps, plus a
-  per-system total connection ceiling on each node so one system
+BUILT IN (caps and rate limits are on `beryl.Config`; the origin policy
+is on the transport config):
+- `with_max_connections_per_ip`: per-IP connection caps, plus
+  `with_max_connections`, a per-system total connection ceiling on each
+  node so one system
   cannot be socket-flooded past its capacity.
 - `with_message_rate`: token-bucket rate limiting per socket. This is
   what tamed the cursor firehose in the demo.
-- Origin checking defaults to SAME-ORIGIN. Browsers can open
+- Origin checking on the transport defaults to SAME-ORIGIN. Browsers can open
   cross-site WebSockets, so this closes cross-site hijacking by
   default rather than by remembering to configure it.
 
@@ -706,12 +711,9 @@ the library safely.
 
 ## Earde
 
-### Earde combines live communication with durable, searchable forums.
+### Earde is the community network for open source communities.
 
-Technical communities can chat in real time and save useful parts of a
-conversation as durable, searchable discussions.
-
-They can also decide if their knowledge must be indexed by search engines or kept private.
+It lets maintainers connect a project through GitHub and give it a verified community home, or connect it to a broader existing community or ecosystem. Each community combines Discord-like live interaction with the structure, searchability, and long-term memory of traditional forums.
 
 https://earde.com/
 
@@ -760,10 +762,6 @@ on the server and phoenix.js in the browser from the first day.
 <!-- _class: lead -->
 
 ## Try it and challenge the design
-
-`gleam add beryl beryl_mist`
-
-(`beryl_ewe` coming soon!)
 
 **Docs**: [beryl.tylerbutler.com](https://beryl.tylerbutler.com)
 **Discuss**: [earde.com/c/beryl/s/general](https://earde.com/c/beryl/s/general)
