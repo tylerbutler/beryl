@@ -8,8 +8,8 @@
 import app_test_helper
 import beryl
 import beryl/socket.{
-  type ReplyReference, AcceptJoin, DiscardReply, Info, Join, Message, Next,
-  ReplyError, ReplyOk,
+  type ReplyReference, AcceptJoin, Info, Join, Message, Next, ReplyError,
+  ReplyOk,
 }
 import beryl/wire
 import gleam/erlang/process
@@ -61,16 +61,9 @@ fn start_system(
           Message(_topic, "stash", _payload, Some(reference)) ->
             Next(Model(Some(reference), model.stashed), [])
           Info(DiscardStashed) ->
-            case model.stashed {
-              Some(reference) ->
-                Next(model, [DiscardReply(reference: reference)])
-              None -> Next(model, [])
-            }
+            Next(model, socket.discard_reply(model.stashed))
           Info(DiscardPrevious) ->
-            case model.previous {
-              Some(reference) -> Next(model, [DiscardReply(reference)])
-              None -> Next(model, [])
-            }
+            Next(model, socket.discard_reply(model.previous))
           Info(ReplyStashed) ->
             case model.stashed {
               Some(reference) ->
@@ -98,6 +91,26 @@ fn start_system(
 fn start() -> #(beryl.Sockets, process.Subject(socket.Sender(AppMessage))) {
   let senders = process.new_subject()
   #(start_system(senders), senders)
+}
+
+pub fn optional_reply_helpers_ignore_absent_references_test() -> Nil {
+  socket.reply_error(None, json.string("error")) |> should.equal([])
+  socket.discard_reply(None) |> should.equal([])
+}
+
+pub fn optional_reply_helpers_preserve_exact_reference_test() -> Nil {
+  let reference =
+    socket.make_reply_reference(
+      topic: "room:a",
+      join_ref: Some("jr-1"),
+      message_ref: Some("r-2"),
+    )
+  let payload = json.object([#("reason", json.string("denied"))])
+
+  socket.reply_error(Some(reference), payload)
+  |> should.equal([ReplyError(reference, payload)])
+  socket.discard_reply(Some(reference))
+  |> should.equal([socket.DiscardReply(reference)])
 }
 
 pub fn message_ref_is_single_use_test() -> Nil {

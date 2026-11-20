@@ -94,6 +94,10 @@ that order. For Mist and Ewe, these functions enqueue `SendText` or
 the transport's frame-write functions. The socket actor owns protocol/effect
 ordering; the connection process owns the WebSocket and performs the writes.
 
+`KickTopic` schedules its topic to close at the end of the effects list.
+On a joined topic, `[KickTopic(topic), Push(topic, "last", payload)]` sends
+the push before the `Closed` input and terminal close frame.
+
 Thus, an `AcceptJoin` is queued before a later `Push`, preserving wire order.
 A successful send-function result means the request was enqueued, not that a
 network write completed or that the client received it. A `Broadcast` goes

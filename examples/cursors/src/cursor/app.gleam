@@ -26,7 +26,7 @@ import gleam/dynamic.{type Dynamic}
 import gleam/io
 import gleam/json
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{Some}
 import gleam/result
 
 /// Per-topic state for one socket in a cursor room.
@@ -205,11 +205,11 @@ pub fn cursor_rooms_update(
                 ..state,
                 topics: dict.insert(state.topics, topic_name, model),
               ),
-              list.append(discard_reply(reference), effects),
+              list.append(socket.discard_reply(reference), effects),
             )
           }
           False, Ok(_) | False, Error(_) | True, Error(_) ->
-            socket.Next(state, discard_reply(reference))
+            socket.Next(state, socket.discard_reply(reference))
         }
 
       socket.Closed(topic_name, _reason) ->
@@ -241,13 +241,6 @@ pub fn cursor_rooms_update(
 
 fn unknown_topic() -> json.Json {
   json.object([#("reason", json.string("unknown_topic"))])
-}
-
-fn discard_reply(reply: Option(socket.ReplyReference)) -> List(Effect) {
-  case reply {
-    Some(reference) -> [socket.DiscardReply(reference)]
-    None -> []
-  }
 }
 
 fn decode_reaction(payload: Dynamic) -> Result(#(String, Float, Float), Nil) {

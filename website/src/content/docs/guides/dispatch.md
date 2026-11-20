@@ -159,10 +159,7 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
         model,
         [
           socket.BroadcastFrom(topic_name, "typing", json.object([])),
-          ..case reference {
-            Some(reference) -> [socket.DiscardReply(reference)]
-            None -> []
-          }
+          ..socket.discard_reply(reference)
         ],
       )
 
@@ -192,10 +189,8 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
     socket.Binary(_topic_name, _data) ->
       socket.Next(model, [])
 
-    socket.Message(_, _, _, Some(reference)) ->
-      socket.Next(model, [socket.DiscardReply(reference)])
-    socket.Message(_, _, _, None) ->
-      socket.Next(model, [])
+    socket.Message(_, _, _, reference) ->
+      socket.Next(model, socket.discard_reply(reference))
   }
 }
 ```
@@ -203,8 +198,8 @@ fn update(model: Model, input: socket.Input(Message)) -> socket.Next(Model) {
 A few important details:
 
 - Joins are explicit: return `socket.AcceptJoin(reference, reply)` or `socket.RejectJoin(reference, reason)`.
-- Message replies are explicit too: use `socket.ReplyOk` / `socket.ReplyError` when a reply reference is present.
-- Return `socket.DiscardReply(reference)` for messages you will not answer. Pending references consume socket capacity until you reply, discard them, or close the topic.
+- Message replies are explicit too: `socket.reply_ok` and `socket.reply_error` take the optional reference and return an effect list, empty for `None`.
+- Use `socket.discard_reply(reference)` for messages you will not answer. It also returns an empty list for `None`. Pending references consume socket capacity until you reply, discard them, or close the topic. An empty effects list alone does not discard a pending reference.
 - `socket.Closed(topic, reason)` replaces per-topic cleanup hooks. Prune topic-local state there.
 - `socket.Info(msg)` is a typed message from your own server code.
 
@@ -270,7 +265,8 @@ for producer-interface and lifecycle requirements.
 
 ## Effects run in list order
 
-The runtime applies effects in list order during one actor turn. Therefore:
+The runtime applies effects in list order, except that `KickTopic` closes its
+topic at the end of the list. Therefore:
 
 ```gleam
 socket.Next(model, [
@@ -285,6 +281,9 @@ The same rule matters for replies:
 
 - order `socket.Push` after the `socket.AcceptJoin` it depends on,
 - order `socket.ReplyOk` / `socket.ReplyError` where you want them emitted.
+
+On a joined topic, `[KickTopic(topic), Push(topic, "last", payload)]` sends
+the final push before the topic's `Closed` input and terminal close frame.
 
 ## Next steps
 
