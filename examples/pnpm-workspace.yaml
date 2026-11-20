@@ -4,6 +4,7 @@ packages:
   - collab_docs
   - lustre_presence
   - showcase
+  - todo
   - portable_channels
 allowBuilds:
   esbuild: true
