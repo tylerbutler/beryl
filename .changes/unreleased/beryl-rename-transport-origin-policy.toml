@@ -1,9 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = '''
-#### The transport origin policy uses the name SameAuthority.
-
-Replace `transport.SameOrigin` with `transport.SameAuthority`.
-Host-and-port matching, absent-Origin admission, and explicit allow-list
-rules keep their existing behavior.
-'''

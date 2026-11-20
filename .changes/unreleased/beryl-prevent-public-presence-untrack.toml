@@ -1,8 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = '''
-#### Public presence removal preserves runtime-owned entries.
-
-Calls to `presence.untrack` with runtime-owned refs now return `Ok(Nil)`
-without changing the live socket presence.
-'''

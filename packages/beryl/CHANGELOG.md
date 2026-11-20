@@ -1,5 +1,103 @@
 # beryl changelog
 
+## v0.6.1 - 2026-11-20
+
+### Added
+
+#### Socket helpers support optional error replies and reply discards.
+
+Use `socket.reply_error` and `socket.discard_reply` with optional reply
+references. Deferred replies keep their existing behavior.
+
+#### Log preview configuration names the grapheme limit.
+
+Use `with_payload_preview_graphemes(graphemes:)` to opt in to log previews.
+The `with_payload_preview_bytes(bytes:)` builder is deprecated but keeps
+its grapheme-based truncation behavior.
+
+#### Channel handlers can decode typed client commands.
+
+Use `channel.on_decoded_message` to decode client events and payloads into
+typed commands. Supply an explicit error callback to handle decode failures.
+Both callbacks receive the original optional reply handle.
+
+Channels with unrelated command and error types can share one handler list.
+Raw message callbacks remain available.
+
+#### Protocol builders let callers configure individual limits.
+
+Use the focused `beryl_protocol` builders to set topic bytes, event bytes,
+channels, pending operations, or heartbeat timeout. Each builder preserves
+other settings and prior overrides and uses the same validation as
+`with_limits`.
+
+
+### Changed
+
+#### Group broadcast rejections identify topics for retry.
+
+`BroadcastRejected` now includes `rejected_topic` and `remaining_topics`
+from the original group broadcast traversal. Callers can use these fields
+to retry only topics not admitted to the router.
+
+#### Portable protocol operations distinguish capability kinds.
+
+`Operation(kind)` distinguishes join, reply, admission, and cleanup
+capabilities. Hosts must return each action's handle in a matching input.
+Stale handles of the correct kind remain no-ops.
+
+#### The transport origin policy uses the name SameAuthority.
+
+Replace `transport.SameOrigin` with `transport.SameAuthority`.
+Host-and-port matching, absent-Origin admission, and explicit allow-list
+rules keep their existing behavior.
+
+
+### Fixed
+
+#### Public presence removal preserves runtime-owned entries.
+
+Calls to `presence.untrack` with runtime-owned refs now return `Ok(Nil)`
+without changing the live socket presence.
+
+#### Presence recovers its configured replication scope after registry replacement.
+
+Presence now reacquires the configured replication scope after PubSub
+registry replacement. Pass `PubSubConfig` to `presence.with_pubsub`
+instead of a running handle.
+
+#### Snapshot decoding keeps unsupported versions distinct from invalid data.
+
+The decoder now reads the snapshot version before decoding its
+version-specific layout. Callers can distinguish unsupported versions
+from invalid snapshots.
+
+#### Node-local handles reject use on another BEAM node.
+
+beryl now rejects these handles before accessing local state on the
+other node.
+
+#### Configuration validation rejects invalid connection and protocol limits.
+
+Negative total and per-IP connection ceilings now return
+`NegativeConnectionLimit`; zero remains unlimited. beryl validates
+translated protocol limits before building a child specification.
+`InvalidProtocolConfig` identifies the rejected limit and value.
+Add both variants to exhaustive `ConfigError` matches.
+
+`beryl_protocol.InvalidConfig` now includes a `ConfigLimit` and rejected
+value. Update matches from `InvalidConfig` to `InvalidConfig(limit, value)`.
+
+
+### Removed
+
+#### beryl removes the bridge forwarding API before 1.0.
+
+Replace `beryl/bridge` and its forwarding process API with `socket.notify`
+or `channel.notify` when the producer accepts a typed sender or callback.
+For Subject-only producers, the application must provide adaptation and
+lifecycle handling.
+
 ## v0.6.0 - 2026-11-18
 
 ### Added
