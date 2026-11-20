@@ -17,6 +17,13 @@ import gleeunit/should
 import test_helper.{type CapturedLog}
 import unitest
 
+// Intentionally test compatibility without deprecation warnings or disabling strict checks.
+@external(erlang, "beryl", "with_payload_preview_bytes")
+fn legacy_payload_preview(
+  logging: beryl.LoggingConfig,
+  bytes bytes: Int,
+) -> beryl.LoggingConfig
+
 // Opaque Erlang-owned snapshots/references never masquerade as Gleam records.
 type HostLogger
 
@@ -667,6 +674,12 @@ pub fn shared_text_decode_preview_honors_grapheme_limit_and_opt_in_test() -> Nil
   use <- unitest.tag("serial")
   use selector <- test_helper.with_capture()
   let combining = "e" <> string.repeat("\u{301}", 300)
+  use configure_preview <- list.each([
+    fn(logging, limit) {
+      beryl.with_payload_preview_graphemes(logging, graphemes: limit)
+    },
+    fn(logging, limit) { legacy_payload_preview(logging, bytes: limit) },
+  ])
   list.each(
     [
       #("abcdef", 3, "abc"),
@@ -680,7 +693,7 @@ pub fn shared_text_decode_preview_honors_grapheme_limit_and_opt_in_test() -> Nil
         beryl.config(wire.phoenix_codec())
         |> beryl.with_logging(
           beryl.logging_config(beryl.DebugLevel, True)
-          |> beryl.with_payload_preview_bytes(example.1),
+          |> configure_preview(example.1),
         )
       use channels <- with_config(config)
       use state <- with_transport(channels, "preview-enabled")
@@ -708,7 +721,7 @@ pub fn shared_text_decode_preview_does_not_retain_the_full_frame_test() -> Nil {
     beryl.config(wire.phoenix_codec())
     |> beryl.with_logging(
       beryl.logging_config(beryl.DebugLevel, True)
-      |> beryl.with_payload_preview_bytes(200),
+      |> beryl.with_payload_preview_graphemes(graphemes: 200),
     )
   use channels <- with_config(config)
   use state <- with_transport(channels, "detached-preview")

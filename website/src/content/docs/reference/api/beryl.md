@@ -145,6 +145,7 @@ beryl: type-safe real-time communication
 <li><a href="#api-function-with_max_topic_length"><code>with_max_topic_length</code></a></li>
 <li><a href="#api-function-with_message_rate"><code>with_message_rate</code></a></li>
 <li><a href="#api-function-with_payload_preview_bytes"><code>with_payload_preview_bytes</code></a></li>
+<li><a href="#api-function-with_payload_preview_graphemes"><code>with_payload_preview_graphemes</code></a></li>
 <li><a href="#api-function-with_presence_handle"><code>with_presence_handle</code></a></li>
 <li><a href="#api-function-with_pubsub"><code>with_pubsub</code></a></li>
 <li><a href="#api-function-with_router_queue_limits"><code>with_router_queue_limits</code></a></li>
@@ -509,7 +510,7 @@ pub fn logging_config(
 Build a logging configuration.
 
  Payloads are excluded by default to avoid accidental sensitive-data
- exposure. Use `with_payload_preview_bytes` to adjust the bounded preview
+ exposure. Use `with_payload_preview_graphemes` to adjust the bounded preview
  size when payload previews are enabled.
 
  With `include_payloads: True`, debug text-frame decode failures include a
@@ -931,11 +932,32 @@ pub fn with_payload_preview_bytes(
 ) -> LoggingConfig
 ```
 
+Compatibility alias for `with_payload_preview_graphemes`.
+
+ Replace `with_payload_preview_bytes(bytes: n)` with
+ `with_payload_preview_graphemes(graphemes: n)`. Despite its name, `bytes`
+ counts grapheme clusters, not UTF-8 bytes. The preview behavior is unchanged.
+
+:::caution[Deprecated]
+Use with_payload_preview_graphemes(graphemes:) instead; the limit counts grapheme clusters, not bytes.
+:::
+
+<div class="api-entry-anchor" id="api-function-with_payload_preview_graphemes" aria-hidden="true"></div>
+
+### `with_payload_preview_graphemes`
+
+```gleam
+pub fn with_payload_preview_graphemes(
+  LoggingConfig,
+  graphemes: Int
+) -> LoggingConfig
+```
+
 Configure the maximum payload and frame preview length for logs.
 
- Despite its name, `bytes` is measured in grapheme clusters, not UTF-8 bytes.
+ `graphemes` counts grapheme clusters, not UTF-8 bytes. The default is 200.
  Zero (or a negative value) produces an empty preview. Truncation preserves
- whole grapheme clusters and does not append a marker. This existing preview
+ whole grapheme clusters and does not append a marker. This preview
  contract is separate from the 256-byte diagnostic-field limit: a preview
  can exceed 256 bytes. Only opted-in debug text-frame decode failures use it.
 
