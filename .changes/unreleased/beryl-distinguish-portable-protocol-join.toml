@@ -1,9 +1,0 @@
-package = "beryl"
-kind = "Changed"
-body = '''
-#### Portable protocol operations distinguish capability kinds.
-
-`Operation(kind)` distinguishes join, reply, admission, and cleanup
-capabilities. Hosts must return each action's handle in a matching input.
-Stale handles of the correct kind remain no-ops.
-'''

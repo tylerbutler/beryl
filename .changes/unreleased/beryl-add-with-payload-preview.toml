@@ -1,9 +1,0 @@
-package = "beryl"
-kind = "Added"
-body = '''
-#### Log preview configuration names the grapheme limit.
-
-Use `with_payload_preview_graphemes(graphemes:)` to opt in to log previews.
-The `with_payload_preview_bytes(bytes:)` builder is deprecated but keeps
-its grapheme-based truncation behavior.
-'''

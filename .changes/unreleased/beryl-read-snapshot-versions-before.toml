@@ -1,9 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = '''
-#### Snapshot decoding keeps unsupported versions distinct from invalid data.
-
-The decoder now reads the snapshot version before decoding its
-version-specific layout. Callers can distinguish unsupported versions
-from invalid snapshots.
-'''

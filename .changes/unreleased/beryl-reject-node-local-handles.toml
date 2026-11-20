@@ -1,8 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = '''
-#### Node-local handles reject use on another BEAM node.
-
-beryl now rejects these handles before accessing local state on the
-other node.
-'''

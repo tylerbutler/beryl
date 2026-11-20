@@ -1,9 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = '''
-#### Presence recovers its configured replication scope after registry replacement.
-
-Presence now reacquires the configured replication scope after PubSub
-registry replacement. Pass `PubSubConfig` to `presence.with_pubsub`
-instead of a running handle.
-'''
