@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Added"
+body = "Add with_payload_preview_graphemes(graphemes:) for opt-in log previews. Deprecate with_payload_preview_bytes(bytes:) without changing its grapheme-based truncation behavior."

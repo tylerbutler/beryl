@@ -622,8 +622,11 @@ type SocketState(model, message) {
     model: model,
     subscribed_topics: Set(String),
     protocol: protocol.State,
-    join_operations: Dict(JoinReference, protocol.Operation),
-    reply_operations: Dict(ReplyReference, protocol.Operation),
+    join_operations: Dict(JoinReference, protocol.Operation(protocol.JoinKind)),
+    reply_operations: Dict(
+      ReplyReference,
+      protocol.Operation(protocol.ReplyKind),
+    ),
     join_started_at: Dict(String, Int),
     closing_topics: Set(String),
     teardown_reason: Option(StopReason),
@@ -2302,7 +2305,20 @@ fn new_protocol(
   config: Config,
   active_codec: Codec,
 ) -> Result(protocol.State, protocol.Error) {
-  use limits <- result.try(protocol.with_limits(
+  use limits <- result.try(protocol_config(config))
+  let limits =
+    protocol.with_topicless_events(limits, codec.topicless_events(active_codec))
+  let epoch =
+    crypto.strong_random_bytes(24) |> bit_array.base64_url_encode(False)
+  protocol.new(limits, epoch, monotonic_time_ms())
+}
+
+/// Translate and validate the same limits used during socket admission.
+@internal
+pub fn protocol_config(
+  config: Config,
+) -> Result(protocol.Config, protocol.Error) {
+  protocol.with_limits(
     protocol.config(),
     max_topic_bytes: int.max(0, config.max_topic_length),
     max_event_bytes: int.max(0, config.max_event_length),
@@ -2312,12 +2328,7 @@ fn new_protocol(
     },
     max_pending: overload.max_items(config.socket_queue_limits),
     heartbeat_timeout_ms: config.heartbeat_timeout_ms,
-  ))
-  let limits =
-    protocol.with_topicless_events(limits, codec.topicless_events(active_codec))
-  let epoch =
-    crypto.strong_random_bytes(24) |> bit_array.base64_url_encode(False)
-  protocol.new(limits, epoch, monotonic_time_ms())
+  )
 }
 
 fn protocol_reason(reason: StopReason) -> protocol.CloseReason {
@@ -3822,7 +3833,7 @@ fn deliver_client_message(
   topic_name: String,
   event_name: String,
   payload: Dynamic,
-  operation: Option(protocol.Operation),
+  operation: Option(protocol.Operation(protocol.ReplyKind)),
   started_at: Int,
   kind: telemetry.MessageKind,
 ) -> Execution(model, message) {
@@ -5526,7 +5537,7 @@ fn join_operation(
   state: State(model, message),
   socket_id: String,
   reference: JoinReference,
-) -> Result(protocol.Operation, Nil) {
+) -> Result(protocol.Operation(protocol.JoinKind), Nil) {
   use socket <- result.try(dict.get(state.sockets, socket_id))
   dict.get(socket.join_operations, reference)
 }
@@ -5636,7 +5647,7 @@ fn complete_reply(
   state: State(model, message),
   socket_id: String,
   reference: ReplyReference,
-  input: fn(protocol.Operation) -> protocol.Input,
+  input: fn(protocol.Operation(protocol.ReplyKind)) -> protocol.Input,
 ) -> State(model, message) {
   let pending = {
     use socket <- result.try(dict.get(state.sockets, socket_id))
@@ -5673,7 +5684,7 @@ fn release_completed_reply(
   state: State(model, message),
   socket_id: String,
   reference: ReplyReference,
-  operation: protocol.Operation,
+  operation: protocol.Operation(protocol.ReplyKind),
   reservation: work_queue.Reservation,
 ) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
@@ -5756,7 +5767,7 @@ fn register_reply_reference(
   state: State(model, message),
   socket_id: String,
   topic_name: String,
-  operation: protocol.Operation,
+  operation: protocol.Operation(protocol.ReplyKind),
 ) -> Result(
   #(State(model, message), Option(ReplyReference)),
   overload.AdmissionError,

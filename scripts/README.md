@@ -68,6 +68,11 @@ From the repository root:
   graph helper. `just portable-host-test` also runs the portable-host tests
   and the live package-metadata boundary check.
   [justfile:portable-host-test]
+- `just protocol-test` runs the protocol tests on Erlang and JavaScript.
+  It also compiles correct-kind host inputs and confirms that join, reply,
+  admission, and cleanup handles fail compilation in wrong-kind inputs.
+  Temporary packages are removed after the check.
+  [protocol-operation-kinds.test.mjs]
 - `just beam-check` builds packages and runs Dialyzer/Xref; install the root
   BEAM/Gleam toolchain and prepare dependencies first. The analysis writes
   build artifacts. [justfile:beam-check] [justfile:dialyzer] [justfile:xref]

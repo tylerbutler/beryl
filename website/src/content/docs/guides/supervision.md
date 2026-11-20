@@ -9,6 +9,24 @@ OTP supervisor. The specification contains your `init` and `update` functions.
 `channel.child_spec` returns the same handle and specification shape. It first
 converts the handler table to a core `init` and `update` pair.
 
+## Construct once and reuse
+
+A successful `beryl.child_spec` or `channel.child_spec` call allocates three
+Erlang atoms for registered names before the supervisor starts. Enabling the
+connection limiter adds a fourth name. These atoms remain for the lifetime
+of the BEAM node, even if you discard the specification without starting it.
+
+Construct a specification once per long-lived system and give it to the
+application supervisor. Reuse that specification for supervised restarts.
+The restart uses the existing names and allocates no new registered-name
+atoms. Do not construct specifications per request or use either constructor
+as a repeated configuration check.
+
+For a core configuration check, call `beryl.validate_config(config)`. It
+allocates no registered-name atoms and starts no processes. It does not check
+channel handlers. `channel.child_spec` also checks handler pattern syntax and
+duplicate registrations before it checks the core configuration.
+
 ## Processes in the child specification
 
 ```text
@@ -172,6 +190,10 @@ case beryl.child_spec(config, init: init, update: update) {
   Error(beryl.HeartbeatTimeoutTooLow(_minimum)) ->
     // heartbeat_timeout_ms below 2 would silently disable eviction
     panic as "fix the heartbeat config"
+  Error(beryl.NegativeConnectionLimit(_limit, _value)) ->
+    panic as "use zero or a positive connection ceiling"
+  Error(beryl.InvalidProtocolConfig(_reason)) ->
+    panic as "use supported protocol limits"
   Error(beryl.RateLimitTooHigh(_maximum)) ->
     panic as "reduce the per-second rate"
   Error(beryl.InvalidRateLimitBurst(_burst)) ->
@@ -190,6 +212,7 @@ returns `Error(NotRunning)`. Other operations after `stop` do nothing.
 ## Deployment checklist
 
 - Add the returned specification to your long-lived application supervisor.
+- Construct it once per system and reuse it across supervised restarts.
 - Add application-owned presence and group child specifications alongside the
   beryl child.
 - Configure PubSub when running more than one BEAM node.

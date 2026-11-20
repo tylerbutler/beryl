@@ -163,7 +163,7 @@ Debug logs cover frame decode, join delivery, effect outcomes, reply/push send o
 ```gleam
 let logging =
   beryl.logging_config(level: beryl.DebugLevel, include_payloads: True)
-  |> beryl.with_payload_preview_bytes(bytes: 100)
+  |> beryl.with_payload_preview_graphemes(graphemes: 100)
 
 let config = beryl.config(wire.phoenix_codec()) |> beryl.with_logging(logging)
 ```
@@ -173,13 +173,17 @@ diagnostics. The setting is off by default. Successful frames and binary
 frames never include previews, and beryl does not add authentication headers
 or connect metadata.
 
-Despite the builder's name, `bytes` counts **grapheme clusters**, not UTF-8 bytes.
+The `graphemes` argument counts **grapheme clusters**, not UTF-8 bytes.
 The default limit is 200 graphemes. Zero (or a negative value) gives an empty
 preview; truncation preserves whole graphemes and adds no marker. This
 compatibility contract is separate from the 256-byte diagnostic-field limit,
 so a preview can exceed 256 bytes, especially with combining Unicode text.
 Both the beryl system and the host logger must permit debug. Enable previews
 only where recording malformed text cannot expose secrets.
+
+The old `with_payload_preview_bytes(bytes: n)` builder is deprecated. Replace
+it with `with_payload_preview_graphemes(graphemes: n)` using the same value.
+The old builder still counts grapheme clusters and produces the same preview.
 
 Expected client rejections use debug, including malformed text/binary frames,
 invalid topics/events, stale joins, duplicate reply refs, and message, join,

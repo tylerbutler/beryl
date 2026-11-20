@@ -436,7 +436,7 @@ pub fn presence_update_unknown_or_stale_ref_is_error_test() -> Nil {
   |> should.equal(Ok(Nil))
 }
 
-pub fn presence_update_rejects_runtime_owned_ref_test() -> Nil {
+pub fn public_mutations_preserve_runtime_owned_refs_test() -> Nil {
   let assert Ok(tracker) = presence.start(test_config("node1"))
   let reply = process.new_subject()
   let assert Ok(_) =
@@ -453,14 +453,45 @@ pub fn presence_update_rejects_runtime_owned_ref_test() -> Nil {
       reply,
     )
   let assert Ok(presence.MutationAck(
-    outcome: presence.Tracked(runtime_ref, _),
+    outcome: presence.Tracked(runtime_ref, runtime_meta),
     ..,
   )) = process.receive(reply, 1000)
 
+  let runtime_entry = presence.PresenceEntry("socket-1", "user:1", runtime_meta)
+  let assert Ok(public_ref) =
+    presence.track(tracker, "room:lobby", "user:1", "socket-1", json.null())
+  presence_entries(tracker, "room:lobby")
+  |> list.contains(runtime_entry)
+  |> should.be_true
+
+  let assert Ok(updated_ref) =
+    presence.update(tracker, public_ref, json.string("public"))
+  let public_entry =
+    presence.PresenceEntry("socket-1", "user:1", json.string("public"))
+  let entries = presence_entries(tracker, "room:lobby")
+  entries |> list.contains(runtime_entry) |> should.be_true
+  entries |> list.contains(public_entry) |> should.be_true
+  list.length(entries) |> should.equal(2)
+
   presence.update(tracker, runtime_ref, json.null())
   |> should.equal(Error(presence.UnknownRef(runtime_ref)))
-  let assert [entry] = presence_entries(tracker, "room:lobby")
-  json.to_string(entry.meta) |> string.contains("online") |> should.be_true
+  presence_entries(tracker, "room:lobby") |> should.equal(entries)
+
+  presence.untrack(tracker, runtime_ref) |> should.equal(Ok(Nil))
+  presence_entries(tracker, "room:lobby") |> should.equal(entries)
+
+  presence.untrack(tracker, updated_ref) |> should.equal(Ok(Nil))
+  presence_entries(tracker, "room:lobby") |> should.equal([runtime_entry])
+
+  presence.untrack(tracker, updated_ref) |> should.equal(Ok(Nil))
+  presence_entries(tracker, "room:lobby") |> should.equal([runtime_entry])
+
+  presence.untrack(tracker, "unknown") |> should.equal(Ok(Nil))
+  presence_entries(tracker, "room:lobby") |> should.equal([runtime_entry])
+
+  presence.untrack_all(tracker, "socket-1") |> should.equal(Ok(Nil))
+  presence_entries(tracker, "room:lobby") |> should.equal([])
+  test_helper.kill_presence(tracker)
 }
 
 pub fn presence_untrack_all_test() -> Nil {

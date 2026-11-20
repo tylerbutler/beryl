@@ -6,6 +6,7 @@ import beryl
 import beryl/channel
 import beryl/topic
 import beryl/wire
+import beryl_protocol as protocol
 import channel_dispatch_helper as helper
 import gleam/erlang/process
 import gleam/json
@@ -48,6 +49,19 @@ pub fn child_spec_nests_the_core_config_error_verbatim_test() -> Nil {
 
   channel.child_spec(config, handlers: [ok_handler("room:*")])
   |> should.equal(Error(channel.InvalidConfig(beryl.HeartbeatTimeoutTooLow(2))))
+}
+
+pub fn child_spec_rejects_translated_protocol_limits_before_start_test() -> Nil {
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_topic_length(9_007_199_254_740_992)
+  let expected =
+    beryl.InvalidProtocolConfig(protocol.InvalidConfig(
+      protocol.MaxTopicBytes,
+      9_007_199_254_740_992,
+    ))
+  channel.child_spec(config, handlers: [ok_handler("room:*")])
+  |> should.equal(Error(channel.InvalidConfig(expected)))
 }
 
 // --- a supervised system dispatches ----------------------------------------

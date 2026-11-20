@@ -104,6 +104,7 @@ import beryl/socket
 import beryl/topic
 import beryl/wire/codec
 import beryl/work_queue
+import beryl_protocol as protocol
 import gleam/bool
 import gleam/erlang/process.{type Subject}
 import gleam/int
@@ -238,7 +239,7 @@ pub opaque type Config {
 /// Build a logging configuration.
 ///
 /// Payloads are excluded by default to avoid accidental sensitive-data
-/// exposure. Use `with_payload_preview_bytes` to adjust the bounded preview
+/// exposure. Use `with_payload_preview_graphemes` to adjust the bounded preview
 /// size when payload previews are enabled.
 ///
 /// With `include_payloads: True`, debug text-frame decode failures include a
@@ -425,6 +426,8 @@ pub fn with_heartbeat(config: Config, timeout_ms timeout_ms: Int) -> Config {
 /// transport admits a new connection only while the peer is below the limit.
 /// It rejects other connections. The transport frees the slot when the
 /// connection closes.
+/// Negative ceilings are rejected by `validate_config` with
+/// `NegativeConnectionLimit`.
 ///
 /// ## Which IP is used
 ///
@@ -480,6 +483,8 @@ pub fn with_connection_rate_per_ip(
 /// dies, or its handshake or setup fails. The limiter actor performs the check
 /// and increment atomically. Concurrent opens cannot materially exceed the
 /// ceiling.
+/// Negative ceilings are rejected by `validate_config` with
+/// `NegativeConnectionLimit`.
 ///
 /// Each independently constructed `Sockets` system owns a separate limiter.
 /// Two systems on the same node therefore each have their own configured
@@ -520,16 +525,30 @@ pub fn with_logging(config: Config, logging: LoggingConfig) -> Config {
 
 /// Configure the maximum payload and frame preview length for logs.
 ///
-/// Despite its name, `bytes` is measured in grapheme clusters, not UTF-8 bytes.
+/// `graphemes` counts grapheme clusters, not UTF-8 bytes. The default is 200.
 /// Zero (or a negative value) produces an empty preview. Truncation preserves
-/// whole grapheme clusters and does not append a marker. This existing preview
+/// whole grapheme clusters and does not append a marker. This preview
 /// contract is separate from the 256-byte diagnostic-field limit: a preview
 /// can exceed 256 bytes. Only opted-in debug text-frame decode failures use it.
+pub fn with_payload_preview_graphemes(
+  logging: LoggingConfig,
+  graphemes graphemes: Int,
+) -> LoggingConfig {
+  LoggingConfig(..logging, payload_preview_bytes: int.max(graphemes, 0))
+}
+
+// nolint: unused_exports -- deprecated compatibility API; tested through its Erlang export
+/// Compatibility alias for `with_payload_preview_graphemes`.
+///
+/// Replace `with_payload_preview_bytes(bytes: n)` with
+/// `with_payload_preview_graphemes(graphemes: n)`. Despite its name, `bytes`
+/// counts grapheme clusters, not UTF-8 bytes. The preview behavior is unchanged.
+@deprecated("Use with_payload_preview_graphemes(graphemes:) instead; the limit counts grapheme clusters, not bytes.")
 pub fn with_payload_preview_bytes(
   logging: LoggingConfig,
   bytes bytes: Int,
 ) -> LoggingConfig {
-  LoggingConfig(..logging, payload_preview_bytes: int.max(bytes, 0))
+  with_payload_preview_graphemes(logging, graphemes: bytes)
 }
 
 /// Configure per-connection frame-rate limiting at the transport edge.
@@ -638,7 +657,6 @@ pub fn with_max_event_length(
   Config(..config, max_event_length: max_length)
 }
 
-// nolint: unused_exports -- enforced in sibling transport handler tests
 /// Configure the maximum allowed inbound WebSocket frame size in bytes.
 ///
 /// beryl enforces the limit **post-assembly**. The transport (Mist or Ewe)
@@ -822,6 +840,12 @@ pub type ConfigError {
   /// disable heartbeat eviction. The wrapped `Int` is the
   /// smallest accepted timeout.
   HeartbeatTimeoutTooLow(minimum: Int)
+  /// A concurrent connection ceiling was negative. Only 0 means unlimited.
+  NegativeConnectionLimit(limit: ConnectionLimit, value: Int)
+  /// A translated protocol limit cannot be represented by the portable core.
+  /// `beryl_protocol.InvalidConfig` identifies the rejected limit and value:
+  /// topic/event bytes, joined topics, socket queue items, or heartbeat timeout.
+  InvalidProtocolConfig(reason: protocol.Error)
   /// A configured per-second rate was above the largest value that can still
   /// consume at least one token. The wrapped `Int` is the maximum accepted
   /// rate.
@@ -842,6 +866,12 @@ pub type ConfigError {
   InvalidTopicPattern(pattern: String, reason: topic.TopicError)
 }
 
+/// A concurrent connection ceiling in this system's configuration.
+pub type ConnectionLimit {
+  PerIpConnections
+  TotalConnections
+}
+
 /// Errors when stopping a beryl system with [`stop`](#stop).
 pub type StopError {
   /// The handle referred to a system that was not running: it was never
@@ -854,17 +884,41 @@ pub type StopError {
   StopTimeout
 }
 
-/// Validate a [`Config`](#config) without starting any process.
+/// Validate a [`Config`](#config) without starting processes or allocating
+/// registered-name atoms.
 ///
 /// This checks that `heartbeat_timeout_ms` is at least 2, that every
 /// enabled rate limit is representable and has a non-negative burst, and
 /// that every per-topic rate-limit pattern is valid. A burst of 0 defaults
 /// to the per-second rate. Non-positive rates disable limiting and ignore
 /// their bursts.
+///
+/// Concurrent connection ceilings must be non-negative; 0 means unlimited.
+/// The translated topic, event, channel, pending-operation, and heartbeat
+/// limits must also pass the portable protocol's validation. This does not
+/// validate a `channel.child_spec` handler table.
 pub fn validate_config(config: Config) -> Result(Nil, ConfigError) {
   use <- bool.guard(
     when: config.heartbeat_timeout_ms < 2,
     return: internal.result_error(HeartbeatTimeoutTooLow(2)),
+  )
+  use <- bool.guard(
+    when: config.max_connections_per_ip < 0,
+    return: internal.result_error(NegativeConnectionLimit(
+      PerIpConnections,
+      config.max_connections_per_ip,
+    )),
+  )
+  use <- bool.guard(
+    when: config.max_connections < 0,
+    return: internal.result_error(NegativeConnectionLimit(
+      TotalConnections,
+      config.max_connections,
+    )),
+  )
+  use _ <- result.try(
+    runtime.protocol_config(to_runtime_config(config))
+    |> result.map_error(InvalidProtocolConfig),
   )
   use _ <- result.try(validate_rate_limit(
     config.connection_rate_per_ip,
@@ -957,6 +1011,13 @@ fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
 /// before the supervision tree that owns the returned child specification is
 /// started. Before startup, during a runtime restart window, and after
 /// shutdown, sends return admission errors and connection admission fails.
+///
+/// A successful call permanently allocates three Erlang registered-name
+/// atoms, or four when the connection limiter is enabled, before the
+/// supervisor starts. Dropping the specification does not reclaim them.
+/// Construct it once per long-lived system and reuse it across supervised
+/// restarts; restarting from the same specification allocates no new names.
+/// For config-only checks, use `validate_config`, which allocates no names.
 ///
 /// ## Example
 ///

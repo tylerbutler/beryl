@@ -16,14 +16,18 @@ pub type Transition {
 
 /// Work that the Durable Object executes in order.
 pub type Action {
-  Authorize(operation: protocol.Operation, topic: String, payload: Dynamic)
+  Authorize(
+    operation: protocol.Operation(protocol.JoinKind),
+    topic: String,
+    payload: Dynamic,
+  )
   Deliver(
-    operation: Option(protocol.Operation),
+    operation: Option(protocol.Operation(protocol.ReplyKind)),
     topic: String,
     event: String,
     payload: Dynamic,
   )
-  Cleanup(operation: protocol.Operation, topic: String)
+  Cleanup(operation: protocol.Operation(protocol.CleanupKind), topic: String)
   SendText(data: String)
   SendBinary(data: BitArray)
   Disconnect(reason: String)
@@ -112,7 +116,7 @@ fn receive(
 /// Accept authorization and admit the topic before sending its join reply.
 pub fn join_accepted(
   state: protocol.State,
-  operation: protocol.Operation,
+  operation: protocol.Operation(protocol.JoinKind),
   payload: String,
   now: Int,
 ) -> Result(Transition, HostError) {
@@ -129,7 +133,7 @@ pub fn join_accepted(
 /// Reject authorization without retaining credentials.
 pub fn join_rejected(
   state: protocol.State,
-  operation: protocol.Operation,
+  operation: protocol.Operation(protocol.JoinKind),
   now: Int,
 ) -> Result(Transition, HostError) {
   advance(
@@ -145,7 +149,7 @@ pub fn join_rejected(
 /// Consume an application's reply operation when the client supplied a ref.
 pub fn reply(
   state: protocol.State,
-  operation: Option(protocol.Operation),
+  operation: Option(protocol.Operation(protocol.ReplyKind)),
   payload: String,
   succeeded: Bool,
   now: Int,
@@ -187,7 +191,7 @@ pub fn push(
 /// Complete host cleanup before terminal frames or replacement authorization.
 pub fn cleaned_up(
   state: protocol.State,
-  operation: protocol.Operation,
+  operation: protocol.Operation(protocol.CleanupKind),
   now: Int,
 ) -> Result(Transition, HostError) {
   advance(state, protocol.CleanupFinished(operation), now)

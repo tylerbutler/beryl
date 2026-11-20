@@ -12,6 +12,7 @@ import beryl/socket.{
   PresenceUntrack, PushPresence,
 }
 import beryl/wire
+import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
@@ -121,6 +122,15 @@ pub fn presence_untrack_broadcasts_leave_and_empty_snapshot_test() -> Nil {
   let _reply = app_test_helper.recv(frames)
   let _join_diff = app_test_helper.recv(frames)
   let _join_snapshot = app_test_helper.recv(frames)
+
+  let assert [entry] = presence_entries(presence_handle, "room:a")
+  let assert Ok(runtime_ref) =
+    json.parse(
+      json.to_string(entry.meta),
+      decode.field("phx_ref", decode.string, decode.success),
+    )
+  presence.untrack(presence_handle, runtime_ref) |> should.equal(Ok(Nil))
+  presence_entries(presence_handle, "room:a") |> should.equal([entry])
 
   app_test_helper.push(channels, "s1", "room:a", "untrack", "r-2")
 

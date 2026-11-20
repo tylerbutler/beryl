@@ -6,7 +6,7 @@ import app_test_helper
 import beryl
 import beryl/socket.{
   type JoinReference, AcceptJoin, Closed, Info, Join, Message, Next, RejectJoin,
-  ReplyError, ReplyOk,
+  ReplyOk,
 }
 import beryl/transport
 import beryl/wire
@@ -142,13 +142,14 @@ fn start_observed(
                 payload: json.object([#("echoed", json.bool(True))]),
               ),
             ])
-          Message(_topic, "fail", _payload, Some(reference)) ->
-            Next(model, [
-              ReplyError(
-                reference: reference,
-                payload: json.object([#("no", json.bool(True))]),
+          Message(_topic, "fail", _payload, reference) ->
+            Next(
+              model,
+              socket.reply_error(
+                reference,
+                json.object([#("no", json.bool(True))]),
               ),
-            ])
+            )
           Info(Note(text)) ->
             Next(model, [
               socket.Push(
@@ -228,9 +229,11 @@ pub fn reply_ok_and_error_correlate_to_ref_test() -> Nil {
   reply |> string.contains("r-2") |> should.be_true
 
   app_test_helper.push(channels, "s1", "room:a", "fail", "r-3")
-  let error_reply = app_test_helper.recv(frames)
-  error_reply |> string.contains("\"status\":\"error\"") |> should.be_true
-  error_reply |> string.contains("r-3") |> should.be_true
+  app_test_helper.recv(frames)
+  |> should.equal(
+    "[\"jr-1\",\"r-3\",\"room:a\",\"phx_reply\","
+    <> "{\"status\":\"error\",\"response\":{\"no\":true}}]",
+  )
 }
 
 pub fn sender_delivers_typed_info_test() -> Nil {

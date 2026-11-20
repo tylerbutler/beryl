@@ -19,9 +19,15 @@ module depends on `gleam_stdlib` and `gleam_json`, without BEAM process APIs.
   `beryl_protocol.gleam:Outbound`, `beryl_protocol.gleam:Action`,
   `beryl_protocol.gleam:CloseMode`, `beryl_protocol.gleam:CloseReason`,
   `beryl_protocol.gleam:Status`).
-- `config`, `with_limits`, `with_topicless_events`, and `new` construct
-  configuration and state. `step` returns the next state and actions
+- `config`, `with_limits`, focused limit builders, `with_topicless_events`, and
+  `new` construct configuration and state. Use `with_heartbeat_timeout` to
+  change only the heartbeat window. `step` returns the next state and actions
   (`beryl_protocol.gleam:config`, `beryl_protocol.gleam:with_limits`,
+  `beryl_protocol.gleam:with_max_topic_bytes`,
+  `beryl_protocol.gleam:with_max_event_bytes`,
+  `beryl_protocol.gleam:with_max_channels`,
+  `beryl_protocol.gleam:with_max_pending`,
+  `beryl_protocol.gleam:with_heartbeat_timeout`,
   `beryl_protocol.gleam:with_topicless_events`, `beryl_protocol.gleam:new`,
   `beryl_protocol.gleam:step`).
 - Validation covers topics, patterns, events, byte limits, and reserved names:
@@ -50,6 +56,7 @@ module depends on `gleam_stdlib` and `gleam_json`, without BEAM process APIs.
   (`beryl_protocol.gleam:export`, `beryl_protocol.gleam:restore`,
   `beryl_protocol.gleam:Error`, `beryl_protocol.gleam:ValidationError`,
   `beryl_protocol.gleam:describe_error`).
+  `InvalidConfig(ConfigLimit, Int)` identifies the rejected limit and value.
 
 ## Invariants
 

@@ -425,6 +425,16 @@ Build a channel system's supervision child specification for embedding
  then validates `beryl.Config`. You can use the returned `beryl.Sockets`
  after the owning tree starts.
 
+ A successful call permanently allocates three Erlang registered-name
+ atoms, or four when the connection limiter is enabled, before the
+ supervisor starts. Dropping the specification does not reclaim them.
+ Construct it once per long-lived system and reuse it across supervised
+ restarts; restarting from the same specification allocates no new names.
+
+ For config-only checks, use `beryl.validate_config`, which allocates no
+ names. It validates only the core configuration, not handler patterns or
+ duplicate registrations. This constructor validates both.
+
  #### Example
 
  ```gleam
