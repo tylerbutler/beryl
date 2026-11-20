@@ -60,6 +60,7 @@ import beryl/internal
 import beryl/log
 import beryl/overload
 import beryl/pubsub.{type PubSub}
+import beryl/pubsub_native
 import beryl/telemetry
 import beryl/wire
 import beryl/work_queue
@@ -122,15 +123,16 @@ fn monotonic_time_ms() -> Int {
 /// ## Node affinity
 ///
 /// The stable registered subject and ETS read model are resolved on the
-/// caller's node. Keep a `Presence` handle on the node where its child
-/// specification runs. From another BEAM node, synchronous mutations
-/// (`track`, `update`, `untrack`, and `untrack_all`) cannot reach the owning
-/// actor and return typed call errors, while `list`, `get_by_key`, and `count`
-/// return `Error(Nil)` because the read model is unavailable. Use PubSub
+/// caller's node, after checking the handle's origin. Keep a `Presence` handle
+/// on the node where its child specification runs. From another BEAM node,
+/// synchronous mutations (`track`, `update`, `untrack`, and `untrack_all`)
+/// return typed unavailable errors. Reads (`list`, `get_by_key`, and `count`)
+/// return `Error(Nil)` without reading a local namesake. Use PubSub
 /// replication (`with_pubsub`) to share presence state across nodes instead of
 /// moving the handle itself.
 pub opaque type Presence {
   Presence(
+    origin: process.Pid,
     subject: Subject(Message),
     read_name: process.Name(Message),
     call_timeout_ms: Int,
@@ -255,6 +257,10 @@ pub fn subscribe(
   events: Subject(Delivery),
   failures: Subject(ObservationFailure),
 ) -> Result(Subscription, Nil) {
+  use <- bool.guard(
+    when: !pubsub_native.is_local_pid(presence.origin),
+    return: internal.result_error(Nil),
+  )
   use #(subject, owner) <- result.try(pin_subject(presence.subject))
   let id = reference.new()
   let subscription = Subscription(id, subject, process.monitor(owner))
@@ -702,6 +708,10 @@ fn read_entries(
   presence: Presence,
   topic: String,
 ) -> Result(List(PresenceEntry), Nil) {
+  use <- bool.guard(
+    when: !pubsub_native.is_local_pid(presence.origin),
+    return: internal.result_error(Nil),
+  )
   case ffi_get_topic(presence.read_name, topic) {
     Found(entries) -> Ok(entries)
     NotFound -> Ok([])
@@ -953,12 +963,13 @@ pub fn start(config: Config) -> Result(Presence, actor.StartError) {
 pub fn queue_snapshot(
   presence: Presence,
 ) -> Result(overload.Occupancy, overload.AdmissionError) {
-  use queue <- result.try(work_queue.lookup(presence.read_name))
+  use queue <- result.try(lookup_queue(presence))
   work_queue.snapshot(queue)
 }
 
 fn from_name(name: process.Name(Message), call_timeout_ms: Int) -> Presence {
   Presence(
+    origin: process.self(),
     subject: process.named_subject(name),
     read_name: name,
     call_timeout_ms: call_timeout_ms,
@@ -1520,7 +1531,7 @@ pub fn track_async(
   operation_id operation_id: Int,
   reply reply: Subject(MutationAck),
 ) -> Result(Nil, overload.AdmissionError) {
-  use queue <- result.try(work_queue.lookup(presence.read_name))
+  use queue <- result.try(lookup_queue(presence))
   work_queue.publish_with_cleanup(
     queue,
     owner,
@@ -1551,7 +1562,7 @@ pub fn untrack_async(
   operation_id operation_id: Int,
   reply reply: Subject(MutationAck),
 ) -> Result(Nil, overload.AdmissionError) {
-  use queue <- result.try(work_queue.lookup(presence.read_name))
+  use queue <- result.try(lookup_queue(presence))
   work_queue.send(
     queue,
     UntrackAsync(refs: refs, tag: tag, operation_id: operation_id, reply: reply),
@@ -1567,7 +1578,7 @@ pub fn untrack_runtime_owner_async(
   owner: process.Pid,
 ) -> Nil {
   let result = {
-    use queue <- result.try(work_queue.lookup(presence.read_name))
+    use queue <- result.try(lookup_queue(presence))
     work_queue.activate_cleanup(queue, owner)
   }
   case result {
@@ -1590,6 +1601,10 @@ pub fn untrack_runtime_owner_async(
 /// waiting out an acknowledgement that can never arrive.
 @internal
 pub fn is_running(presence: Presence) -> Bool {
+  use <- bool.guard(
+    when: !pubsub_native.is_local_pid(presence.origin),
+    return: False,
+  )
   case process.subject_owner(presence.subject) {
     Ok(pid) -> process.is_alive(pid)
     Error(Nil) -> False
@@ -1655,6 +1670,10 @@ pub fn get_by_key(
 /// from a process on another BEAM node than the one it was started on (see
 /// the node affinity note on `Presence`).
 pub fn count(presence: Presence, topic: String) -> Result(Int, Nil) {
+  use <- bool.guard(
+    when: !pubsub_native.is_local_pid(presence.origin),
+    return: internal.result_error(Nil),
+  )
   case ffi_get_count(presence.read_name, topic) {
     CountFound(count) -> Ok(count)
     CountTableGone -> Error(Nil)
@@ -1663,12 +1682,22 @@ pub fn count(presence: Presence, topic: String) -> Result(Int, Nil) {
 
 // ── Actor loop ──────────────────────────────────────────────────────────────
 
+fn lookup_queue(
+  presence: Presence,
+) -> Result(work_queue.Queue(Message), overload.AdmissionError) {
+  use <- bool.guard(
+    when: !pubsub_native.is_local_pid(presence.origin),
+    return: internal.result_error(overload.Unavailable),
+  )
+  work_queue.lookup(presence.read_name)
+}
+
 fn call(
   presence: Presence,
   request: fn(fn(reply) -> Nil) -> Message,
 ) -> Result(reply, overload.CallError) {
   use queue <- result.try(
-    work_queue.lookup(presence.read_name)
+    lookup_queue(presence)
     |> result.map_error(overload.AdmissionRejected),
   )
   work_queue.call(queue, presence.call_timeout_ms, request)

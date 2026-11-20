@@ -97,6 +97,7 @@ import beryl/overload
 import beryl/presence.{type Diff}
 import beryl/presence/wire as presence_wire
 import beryl/pubsub.{type PubSub}
+import beryl/pubsub_native
 import beryl/rate_limit
 import beryl/runtime
 import beryl/socket
@@ -728,8 +729,12 @@ pub fn frame_limits(channels: Sockets) -> Option(rate_limit.RateLimitConfig) {
 /// generic over the application's `model`/`message`, but those types are sealed
 /// inside monomorphic closures at construction time. They
 /// never appear in this handle or in any transport signature.
+///
+/// Keep the handle on the BEAM node that created it. Foreign handles return
+/// unavailable errors without resolving local names or accessing local state.
 pub opaque type Sockets {
   Sockets(
+    origin: process.Pid,
     config: Config,
     connection_limiter: Option(connection_limit.ConnectionLimiter),
     app: AppHandle,
@@ -1078,6 +1083,7 @@ fn build_app_subtree(
 
   let handle =
     Sockets(
+      origin: process.self(),
       config: config,
       connection_limiter: option.map(limiter_name, connection_limit.from_name),
       app: app_handle(
@@ -1263,6 +1269,7 @@ fn app_handle(
   start_socket_actor: fn(runtime.SocketSpawn(message)) ->
     Result(actor.Started(runtime.Inbox(message)), actor.StartError),
 ) -> AppHandle {
+  let origin = process.self()
   let subject = process.named_subject(name)
   AppHandle(
     admit_socket: fn(
@@ -1274,7 +1281,7 @@ fn app_handle(
       seed,
       close,
     ) {
-      let owner_matches = case process.subject_owner(subject) {
+      let owner_matches = case local_subject_owner(origin, subject) {
         Ok(current_owner) -> current_owner == owner
         Error(Nil) -> False
       }
@@ -1319,7 +1326,7 @@ fn app_handle(
       }
     },
     socket_disconnected: fn(socket_id) {
-      case work_queue.lookup(name) {
+      case lookup_runtime(origin, name) {
         Ok(queue) -> work_queue.close_target(queue, socket_id)
         Error(error) ->
           logger
@@ -1329,37 +1336,45 @@ fn app_handle(
       }
     },
     route_decoded: fn(socket_id, message) {
-      send_runtime(name, runtime.RouteDecoded(socket_id, message))
+      send_runtime(origin, name, runtime.RouteDecoded(socket_id, message))
     },
     route_decoded_binary: fn(socket_id, message) {
-      send_runtime(name, runtime.RouteDecodedBinary(socket_id, message))
+      send_runtime(origin, name, runtime.RouteDecodedBinary(socket_id, message))
     },
     route_binary: fn(socket_id, data) {
-      send_runtime(name, runtime.HandleBinary(socket_id, data))
+      send_runtime(origin, name, runtime.HandleBinary(socket_id, data))
     },
     broadcast: fn(topic_name, event_name, payload, except) {
       // The runtime owns local and distributed fan-out so every sender uses
       // one ordered path and PubSub attribution always uses the runtime pid.
       send_runtime(
+        origin,
         name,
         runtime.Broadcast(topic_name, event_name, payload, except),
       )
     },
     broadcast_local: fn(topic_name, event_name, payload) {
       send_runtime(
+        origin,
         name,
         runtime.LocalBroadcast(topic_name, event_name, payload),
       )
     },
-    stop: fn() { request_runtime_stop(supervisor) },
-    runtime_owner: fn() { process.subject_owner(subject) },
-    socket_factory_owner: fn() { process.subject_owner(factory) },
+    stop: fn() {
+      use <- bool.guard(
+        when: !pubsub_native.is_local_pid(origin),
+        return: internal.result_error(NotRunning),
+      )
+      request_runtime_stop(supervisor)
+    },
+    runtime_owner: fn() { local_subject_owner(origin, subject) },
+    socket_factory_owner: fn() { local_subject_owner(origin, factory) },
     queue_snapshot: fn() {
-      use queue <- result.try(work_queue.lookup(name))
+      use queue <- result.try(lookup_runtime(origin, name))
       work_queue.snapshot(queue)
     },
     stats: fn() {
-      case work_queue.lookup(name) {
+      case lookup_runtime(origin, name) {
         Error(error) -> Error(StatsAdmissionRejected(error))
         Ok(queue) ->
           case work_queue.call(queue, 1000, runtime.GetStats) {
@@ -1372,6 +1387,28 @@ fn app_handle(
       }
     },
   )
+}
+
+fn local_subject_owner(
+  origin: process.Pid,
+  subject: Subject(message),
+) -> Result(process.Pid, Nil) {
+  use <- bool.guard(
+    when: !pubsub_native.is_local_pid(origin),
+    return: internal.result_error(Nil),
+  )
+  process.subject_owner(subject)
+}
+
+fn lookup_runtime(
+  origin: process.Pid,
+  name: process.Name(runtime.Message(message)),
+) -> Result(work_queue.Queue(runtime.Message(message)), overload.AdmissionError) {
+  use <- bool.guard(
+    when: !pubsub_native.is_local_pid(origin),
+    return: internal.result_error(overload.Unavailable),
+  )
+  work_queue.lookup(name)
 }
 
 // The caller owns the reply alias only for the callback's duration. Receive
@@ -1422,10 +1459,11 @@ fn stop_runtime(
 
 /// Reserve work on the current runtime owner, or return an admission error.
 fn send_runtime(
+  origin: process.Pid,
   name: process.Name(runtime.Message(message)),
   message: runtime.Message(message),
 ) -> Result(Nil, overload.AdmissionError) {
-  use queue <- result.try(work_queue.lookup(name))
+  use queue <- result.try(lookup_runtime(origin, name))
   work_queue.send(queue, message)
 }
 
@@ -1437,7 +1475,17 @@ pub fn app_runtime_pid(channels: Sockets) -> Result(process.Pid, Nil) {
 /// The pid of the app subtree's optional connection limiter, if running.
 @internal
 pub fn app_limiter_pid(channels: Sockets) -> Result(process.Pid, Nil) {
+  use <- bool.guard(
+    when: !is_local(channels),
+    return: internal.result_error(Nil),
+  )
   app_limiter_owner(channels.connection_limiter)
+}
+
+/// Whether this socket system belongs to the calling BEAM node.
+@internal
+pub fn is_local(sockets: Sockets) -> Bool {
+  pubsub_native.is_local_pid(sockets.origin)
 }
 
 /// The pid of the app subtree's socket factory supervisor, if running.

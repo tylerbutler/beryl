@@ -107,6 +107,10 @@ fn call_operation(
   registry: Registry,
   request: fn(process.Subject(Result(reply, RegistryError))) -> Message,
 ) -> Result(reply, RegistryError) {
+  use _ <- result.try(case pubsub_native.is_local_pid(pid(registry)) {
+    True -> Ok(Nil)
+    False -> Error(CallFailed(error.CallUnavailable))
+  })
   call(registry.subject, call_timeout_ms, request)
   |> result.map_error(CallFailed)
   |> result.flatten
@@ -166,7 +170,7 @@ pub fn pid(registry: Registry) -> process.Pid {
 /// Check whether the registry process is alive.
 pub fn is_alive(registry: Registry) -> Bool {
   case process.subject_owner(registry.subject) {
-    Ok(owner) -> process.is_alive(owner)
+    Ok(owner) -> pubsub_native.is_local_pid(owner) && process.is_alive(owner)
     Error(Nil) -> False
   }
 }

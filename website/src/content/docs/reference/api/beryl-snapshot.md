@@ -129,8 +129,9 @@ pub fn get(beryl.Sockets) -> Result(Snapshot, SnapshotError)
 Request a snapshot from the local runtime.
 
  The request waits for about one second at most. During a runtime restart,
- this function returns `RuntimeUnavailable` or `RequestTimedOut`. An
- full runtime queue returns `AdmissionRejected`.
+ this function returns `RuntimeUnavailable` or `RequestTimedOut`. A
+ full runtime queue returns `AdmissionRejected`. A handle from another BEAM
+ node returns `RuntimeUnavailable` without reading a local namesake.
  Neither condition panics. This API reports only the node represented by
  `sockets`; aggregate multi-node statistics outside beryl.
 

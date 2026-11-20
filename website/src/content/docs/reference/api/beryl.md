@@ -309,6 +309,9 @@ A runtime system handle.
  inside monomorphic closures at construction time. They
  never appear in this handle or in any transport signature.
 
+ Keep the handle on the BEAM node that created it. Foreign handles return
+ unavailable errors without resolving local names or accessing local state.
+
 <div class="api-entry-anchor" id="api-type-stoperror" aria-hidden="true"></div>
 
 ### `StopError`

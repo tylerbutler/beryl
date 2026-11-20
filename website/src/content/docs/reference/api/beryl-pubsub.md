@@ -179,6 +179,10 @@ A running PubSub instance.
  payload type and compatible native term representation. This is a caller
  obligation, not a runtime-enforced guarantee.
 
+ Keep this handle on its origin node. Membership, broadcast, and subscriber
+ queries from another node return `MembershipCallFailed(CallUnavailable)`.
+ Start the same scope on each node instead of moving handles between nodes.
+
 <div class="api-entry-anchor" id="api-type-pubsubconfig" aria-hidden="true"></div>
 
 ### `PubSubConfig`

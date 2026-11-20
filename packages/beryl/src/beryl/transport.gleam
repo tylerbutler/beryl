@@ -9,6 +9,7 @@
 
 import beryl
 import beryl/connection_limit
+import beryl/internal
 import beryl/overload
 import beryl/socket
 import beryl/telemetry
@@ -46,6 +47,10 @@ pub fn acquire_connection_slot(
   sockets: Sockets,
   ip: String,
 ) -> Result(ConnectionPermit, Nil) {
+  use <- bool.guard(
+    when: !beryl.is_local(sockets),
+    return: internal.result_error(Nil),
+  )
   connection_limit.acquire_optional(
     beryl.configured_connection_limiter(sockets),
     ip,
