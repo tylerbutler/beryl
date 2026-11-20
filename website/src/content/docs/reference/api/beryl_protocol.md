@@ -659,6 +659,10 @@ pub fn restore(
 Restore using elapsed wall-clock milliseconds validated by the host. A
  backward or unavailable wall clock must close/reconnect, not resume.
 
+ Check the size bound before decoding. Read the version before its layout:
+ unsupported versions return `UnsupportedVersion`, while a missing or invalid
+ version or malformed version-1 layout returns `InvalidSnapshot`.
+
  Established channels without lost work retain their generation. Channels
  with unrecoverable authorization, replies or cleanup are invalidated and
  receive `phx_error`, requiring fresh authorization on rejoin. Counters never
