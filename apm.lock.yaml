@@ -1,11 +1,11 @@
 lockfile_version: '1'
-generated_at: '2026-11-15T03:25:27.620526+00:00'
+generated_at: '2026-11-20T20:09:15.028718+00:00'
 apm_version: 0.35.1
 dependencies:
 - repo_url: google/elephant-goldfish-model
   name: egm
   host: github.com
-  resolved_commit: e4747323aab66157812cd3a71755f6447b2803a2
+  resolved_commit: 49d3f80280437be03d315ff68e69941ee55b5d8b
   version: 0.1.1
   package_type: marketplace_plugin
   deployed_files:
@@ -36,6 +36,12 @@ dependencies:
   - .agents/skills/egm-drift-report/agents/openai.yaml
   - .agents/skills/egm-drift-report/assets/icon.svg
   - .agents/skills/egm-drift-report/test_scenarios.yaml
+  - .agents/skills/egm-lite
+  - .agents/skills/egm-lite/SKILL.md
+  - .agents/skills/egm-lite/TEST.md
+  - .agents/skills/egm-lite/agents/openai.yaml
+  - .agents/skills/egm-lite/assets/icon.svg
+  - .agents/skills/egm-lite/test_scenarios.yaml
   - .agents/skills/egm-resolve
   - .agents/skills/egm-resolve/SKILL.md
   - .agents/skills/egm-resolve/TEST.md
@@ -91,6 +97,12 @@ dependencies:
   - .claude/skills/egm-drift-report/agents/openai.yaml
   - .claude/skills/egm-drift-report/assets/icon.svg
   - .claude/skills/egm-drift-report/test_scenarios.yaml
+  - .claude/skills/egm-lite
+  - .claude/skills/egm-lite/SKILL.md
+  - .claude/skills/egm-lite/TEST.md
+  - .claude/skills/egm-lite/agents/openai.yaml
+  - .claude/skills/egm-lite/assets/icon.svg
+  - .claude/skills/egm-lite/test_scenarios.yaml
   - .claude/skills/egm-resolve
   - .claude/skills/egm-resolve/SKILL.md
   - .claude/skills/egm-resolve/TEST.md
@@ -143,6 +155,11 @@ dependencies:
     .agents/skills/egm-drift-report/agents/openai.yaml: sha256:b54c32c1badc9a73e507f097377324dc31f2839cfef9c426d4dba1c622d5673c
     .agents/skills/egm-drift-report/assets/icon.svg: sha256:47bc4ecbe493f4454f9b7642f42de9fe41f8a93cbb86aa3ffbb5d58532ea0e2d
     .agents/skills/egm-drift-report/test_scenarios.yaml: sha256:e688d8129d32bc90ad23a86da017175036695fa0872a04dbce591a890ea70788
+    .agents/skills/egm-lite/SKILL.md: sha256:76e658d85f2ec4ce1785b6a5624fc4ebb66b27807a3c47221361b4862ef1948c
+    .agents/skills/egm-lite/TEST.md: sha256:26ec87def46d05ac8edecc0fd54cf72a142c4a5d6c0bcc10f3f491eda47e3893
+    .agents/skills/egm-lite/agents/openai.yaml: sha256:f01b6d29d142a293ba3c4966e6894f892e29b47ff96e694bd37f3bc26ef9ac09
+    .agents/skills/egm-lite/assets/icon.svg: sha256:ca4569a1b5a8bd9eef3ab4f48acc26ce88c154eb2c420cd2ced70b5026d64d90
+    .agents/skills/egm-lite/test_scenarios.yaml: sha256:556dda1450cff6db766d417949ec3f52f6ee41fef553cd10684a93bad9b9179c
     .agents/skills/egm-resolve/SKILL.md: sha256:2fe7d9573d39c9dc612049efff1c178332b75b97257602b93c46fd69558883ad
     .agents/skills/egm-resolve/TEST.md: sha256:ee61f28caf337c2b25b0c589e32a980dfcb80e4d0ef80b9abf35e72c67ae1308
     .agents/skills/egm-resolve/agents/openai.yaml: sha256:7ad63dc69777e6e8b2e3d33cf4105149043038ffb489e750b3f483be7836cf30
@@ -191,6 +208,11 @@ dependencies:
     .claude/skills/egm-drift-report/agents/openai.yaml: sha256:b54c32c1badc9a73e507f097377324dc31f2839cfef9c426d4dba1c622d5673c
     .claude/skills/egm-drift-report/assets/icon.svg: sha256:47bc4ecbe493f4454f9b7642f42de9fe41f8a93cbb86aa3ffbb5d58532ea0e2d
     .claude/skills/egm-drift-report/test_scenarios.yaml: sha256:e688d8129d32bc90ad23a86da017175036695fa0872a04dbce591a890ea70788
+    .claude/skills/egm-lite/SKILL.md: sha256:76e658d85f2ec4ce1785b6a5624fc4ebb66b27807a3c47221361b4862ef1948c
+    .claude/skills/egm-lite/TEST.md: sha256:26ec87def46d05ac8edecc0fd54cf72a142c4a5d6c0bcc10f3f491eda47e3893
+    .claude/skills/egm-lite/agents/openai.yaml: sha256:f01b6d29d142a293ba3c4966e6894f892e29b47ff96e694bd37f3bc26ef9ac09
+    .claude/skills/egm-lite/assets/icon.svg: sha256:ca4569a1b5a8bd9eef3ab4f48acc26ce88c154eb2c420cd2ced70b5026d64d90
+    .claude/skills/egm-lite/test_scenarios.yaml: sha256:556dda1450cff6db766d417949ec3f52f6ee41fef553cd10684a93bad9b9179c
     .claude/skills/egm-resolve/SKILL.md: sha256:2fe7d9573d39c9dc612049efff1c178332b75b97257602b93c46fd69558883ad
     .claude/skills/egm-resolve/TEST.md: sha256:ee61f28caf337c2b25b0c589e32a980dfcb80e4d0ef80b9abf35e72c67ae1308
     .claude/skills/egm-resolve/agents/openai.yaml: sha256:7ad63dc69777e6e8b2e3d33cf4105149043038ffb489e750b3f483be7836cf30
@@ -216,7 +238,7 @@ dependencies:
     .github/agents/style.agent.md: sha256:9330780622baaef8dc683ea78efb3ff8e4583e3dde7ab6092b84df50e8c9ea58
     .github/agents/synthesizer.agent.md: sha256:44d1288c03ec829acafd8af0226ce1d0603f4cf04e9f8438b5b36a451be8f8b6
     .github/agents/zoom_out.agent.md: sha256:adc9d7b7db4c304866e61d5e5e446502231abe188ce64656939305e07ae7995f
-  content_hash: sha256:ad1e07dae59dec66dfab7f26a9fda69d945ba3d29a6b740212bba16b6216c83a
+  content_hash: sha256:772a3f8e88e218cd9aeb8f8ce64534524d187d39b9c16c899eae35e381296860
   is_dev: true
   discovered_via: egm
   marketplace_plugin_name: egm
@@ -268,7 +290,7 @@ dependencies:
 - repo_url: tylerbutler/apm-base
   name: apm-base
   host: github.com
-  resolved_commit: bc2598b13910c37caba38eca68478117be74f177
+  resolved_commit: f378e96515f8e105f3178a7fd414cfa896ef7d6e
   version: 0.2.5
   package_type: apm_package
   deployed_files:
@@ -307,12 +329,12 @@ dependencies:
     .github/instructions/use-ste.instructions.md: sha256:686d7f6f6172dd5c238371076383b2f67c0f4937465e6e53633936d294c9adbc
     .github/prompts/create-pr.prompt.md: sha256:5fcb1b64247130aec3a0ebd114ae6d127de44f7e824087033c468d8debb593a2
     .github/prompts/merge-upstream.prompt.md: sha256:bf990755d11f1e73610d9cde3b656aa175c7f63cdd8d069158302c6496a5b77e
-  content_hash: sha256:d80d2a6162685cfb2a027ccfc9439613edda386eb5fd8b8e00fc3d03f1b77680
+  content_hash: sha256:a2f47f1b38a9c2d2e058eb8ac8ccd2496c56421b2b3b4d937b14a6477a614dc4
   is_dev: true
 - repo_url: cursor/plugins
   name: unslop
   host: github.com
-  resolved_commit: 3dbd22ff12742fb28c9700b9760baa29ed41dc13
+  resolved_commit: aaeb0ea3a0584995aa8f55ce44c6c5259414b896
   version: unknown
   virtual_path: pstack/skills/unslop
   is_virtual: true
@@ -325,9 +347,9 @@ dependencies:
   - .claude/skills/unslop
   - .claude/skills/unslop/SKILL.md
   deployed_file_hashes:
-    .agents/skills/unslop/SKILL.md: sha256:ccab208e315ce05e2fab8eeee2f7879f1289b5c6844840b2d307adf31c79144f
-    .claude/skills/unslop/SKILL.md: sha256:ccab208e315ce05e2fab8eeee2f7879f1289b5c6844840b2d307adf31c79144f
-  content_hash: sha256:eca0ad9fa3a3867c83f3aaf3a058e247a569c8976a68ca423a569b93eb86de5d
+    .agents/skills/unslop/SKILL.md: sha256:2b823fd069e031c1420180be8e0d4f5e2fd25bf2c428049e5c835c59a489b5e0
+    .claude/skills/unslop/SKILL.md: sha256:2b823fd069e031c1420180be8e0d4f5e2fd25bf2c428049e5c835c59a489b5e0
+  content_hash: sha256:9bace43ba8cc2c76bfd18ce3f508381f490013cac2116d747553cfcd5cb44c88
   is_dev: true
 - repo_url: dietrichgebert/ponytail
   materialization_repo_url: DietrichGebert/ponytail
@@ -426,7 +448,7 @@ dependencies:
   materialization_repo_url: JuliusBrussee/caveman
   name: caveman-commit
   host: github.com
-  resolved_commit: b4ee71d557d96e3cbc14f88fa6e953a1362865f5
+  resolved_commit: a192894723a8f47e7f504c7b5041967ff1f18e55
   version: unknown
   virtual_path: skills/caveman-commit
   is_virtual: true
@@ -872,6 +894,60 @@ deployments:
   - google/elephant-goldfish-model
   active_owner: google/elephant-goldfish-model
   content_hash: sha256:e688d8129d32bc90ad23a86da017175036695fa0872a04dbce591a890ea70788
+- kind: project-relative
+  target: claude
+  value: .claude/skills/egm-lite
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/egm-lite/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:76e658d85f2ec4ce1785b6a5624fc4ebb66b27807a3c47221361b4862ef1948c
+- kind: project-relative
+  target: claude
+  value: .claude/skills/egm-lite/TEST.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:26ec87def46d05ac8edecc0fd54cf72a142c4a5d6c0bcc10f3f491eda47e3893
+- kind: project-relative
+  target: claude
+  value: .claude/skills/egm-lite/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:f01b6d29d142a293ba3c4966e6894f892e29b47ff96e694bd37f3bc26ef9ac09
+- kind: project-relative
+  target: claude
+  value: .claude/skills/egm-lite/assets/icon.svg
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:ca4569a1b5a8bd9eef3ab4f48acc26ce88c154eb2c420cd2ced70b5026d64d90
+- kind: project-relative
+  target: claude
+  value: .claude/skills/egm-lite/test_scenarios.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:556dda1450cff6db766d417949ec3f52f6ee41fef553cd10684a93bad9b9179c
 - kind: project-relative
   target: claude
   value: .claude/skills/egm-resolve
@@ -1357,7 +1433,7 @@ deployments:
   owners:
   - cursor/plugins/pstack/skills/unslop
   active_owner: cursor/plugins/pstack/skills/unslop
-  content_hash: sha256:ccab208e315ce05e2fab8eeee2f7879f1289b5c6844840b2d307adf31c79144f
+  content_hash: sha256:2b823fd069e031c1420180be8e0d4f5e2fd25bf2c428049e5c835c59a489b5e0
 - kind: project-relative
   target: copilot
   value: .agents/skills/caveman-commit
@@ -1646,6 +1722,60 @@ deployments:
   - google/elephant-goldfish-model
   active_owner: google/elephant-goldfish-model
   content_hash: sha256:e688d8129d32bc90ad23a86da017175036695fa0872a04dbce591a890ea70788
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-lite
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-lite/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:76e658d85f2ec4ce1785b6a5624fc4ebb66b27807a3c47221361b4862ef1948c
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-lite/TEST.md
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:26ec87def46d05ac8edecc0fd54cf72a142c4a5d6c0bcc10f3f491eda47e3893
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-lite/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:f01b6d29d142a293ba3c4966e6894f892e29b47ff96e694bd37f3bc26ef9ac09
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-lite/assets/icon.svg
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:ca4569a1b5a8bd9eef3ab4f48acc26ce88c154eb2c420cd2ced70b5026d64d90
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/egm-lite/test_scenarios.yaml
+  runtime: null
+  scope: project
+  owners:
+  - google/elephant-goldfish-model
+  active_owner: google/elephant-goldfish-model
+  content_hash: sha256:556dda1450cff6db766d417949ec3f52f6ee41fef553cd10684a93bad9b9179c
 - kind: project-relative
   target: copilot
   value: .agents/skills/egm-resolve
@@ -2131,7 +2261,7 @@ deployments:
   owners:
   - cursor/plugins/pstack/skills/unslop
   active_owner: cursor/plugins/pstack/skills/unslop
-  content_hash: sha256:ccab208e315ce05e2fab8eeee2f7879f1289b5c6844840b2d307adf31c79144f
+  content_hash: sha256:2b823fd069e031c1420180be8e0d4f5e2fd25bf2c428049e5c835c59a489b5e0
 - kind: project-relative
   target: copilot
   value: .github/agents/beam-vm-reviewer.agent.md
