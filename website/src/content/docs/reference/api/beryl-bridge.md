@@ -29,10 +29,16 @@ Forward an external OTP actor's message stream to a socket through its
  socket model, subscribe the returned `Subject` to your domain actor, and
  stop the bridge when the socket or topic closes.
 
- Calling `stop` when the socket/topic ends is **required** for cleanup:
- the forwarder monitors the process that started it only as a backstop for
- that owner's death, not as a per-topic lifecycle. A bridge whose `stop`
- is never called keeps running until its owner exits.
+ The first rejected `socket.notify` ends forwarding permanently, including
+ a queue admission failure while the owner and socket remain alive. The
+ bridge does not retry the rejected value or forward subsequent values.
+ It also exits when its owner (the process that started it) exits or when
+ it handles an explicit `stop` request.
+
+ Call `stop` when the socket or topic ends. The owner monitor is only a
+ cleanup backstop; it does not track socket or topic lifecycles. `stop`
+ requests termination without waiting for exit. A producer that needs to
+ observe when forwarding ends must monitor `pid(handle)` (see `pid`).
 
  ## Example
 
@@ -137,8 +143,19 @@ pub fn pid(Bridge(a)) -> process.Pid
 
 Return the forwarder process ID.
 
- Use this value for diagnostics and supervision. Most callers need only
- `subject` and `stop`.
+ A producer can monitor this process to observe when forwarding ends,
+ whether from a rejected notification, owner exit, or an explicit stop.
+ Select the specific monitor in the producer's receive loop, or wait for
+ exit as follows:
+
+ ```gleam
+ import gleam/erlang/process
+
+ let monitor = process.monitor(bridge.pid(handle))
+ process.new_selector()
+ |> process.select_specific_monitor(monitor, fn(_down) { Nil })
+ |> process.selector_receive_forever
+ ```
 
 <div class="api-entry-anchor" id="api-function-start" aria-hidden="true"></div>
 
@@ -162,10 +179,15 @@ Start a bridge from an external `Subject` to a socket's `update` function.
  server-side `message` type (the `Info` payload). If no translation is needed,
  pass the identity function `fn(value) { value }`.
 
- Always call `stop` when the owning socket or topic ends. The forwarder
- also monitors the calling process. This monitor stops the forwarder if
- the owner dies without calling `stop`, but it does not track topic
- lifecycles.
+ The first rejected `socket.notify`, including a queue admission failure,
+ ends forwarding permanently. The forwarder does not retry or forward
+ subsequent values, even if the owner and socket remain alive.
+
+ The forwarder also exits when the calling process exits or when it handles
+ a `stop` request. Call `stop` when the owning socket or topic ends; the owner
+ monitor does not track those lifecycles. `stop` does not wait for exit.
+ Producers that need to observe forwarding end can monitor `pid(handle)`;
+ see `pid` for an example.
 
 <div class="api-entry-anchor" id="api-function-stop" aria-hidden="true"></div>
 
@@ -175,10 +197,18 @@ Start a bridge from an external `Subject` to a socket's `update` function.
 pub fn stop(Bridge(a)) -> Nil
 ```
 
-Stop the bridge's forwarder.
+Request termination of the bridge's forwarder.
 
  Call this when the owning socket or topic ends. It is safe to call more
  than once and after the forwarder has already exited.
+
+ This sends a stop request and returns without waiting for exit. It does not
+ confirm that forwarding has ended. Monitor `pid(bridge)` before calling
+ `stop` if you need to observe exit (see `pid`).
+
+ The forwarder can also exit before this request: the first rejected
+ `socket.notify`, including a queue admission failure, ends forwarding
+ permanently without retry. Owner exit also stops the forwarder.
 
 <div class="api-entry-anchor" id="api-function-subject" aria-hidden="true"></div>
 

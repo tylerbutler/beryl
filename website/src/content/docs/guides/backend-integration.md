@@ -158,10 +158,33 @@ For typed updates from a long-lived application actor, use the socket's
 `socket.Sender(message)` with `beryl/bridge`. The bridge forwards messages from
 the actor to `socket.Info(message)`.
 
-The bridge forwarder follows the lifetime of the process that started it. That
-monitor is only a backstop. When you start a bridge for one socket or one
-joined topic, keep the handle and call `bridge.stop` when that socket or topic
-ends. If you skip `stop`, the forwarder keeps running until the owner exits.
+The first rejected `socket.notify` ends forwarding permanently, including a
+queue admission failure while the owner and socket remain alive. The bridge
+does not retry the rejected value or forward subsequent values. A producer
+that retains the bridge subject cannot use it to resume delivery.
+
+The forwarder also exits when its owner (the process that started it) exits or
+when it handles a `bridge.stop` request. Keep the handle and call `bridge.stop`
+when the socket or joined topic ends. The owner monitor is only a cleanup
+backstop; it does not track socket or topic lifecycles.
+
+`bridge.stop` requests termination and returns without waiting for exit. A
+producer that needs to observe when forwarding ends can monitor
+`bridge.pid(handle)`:
+
+```gleam
+import beryl/bridge
+import gleam/erlang/process
+
+let monitor = process.monitor(bridge.pid(handle))
+process.new_selector()
+|> process.select_specific_monitor(monitor, fn(_down) { Nil })
+|> process.selector_receive_forever
+```
+
+This example waits for exit. A producer that must keep handling other work can
+add the specific monitor to its existing selector instead. To confirm exit
+after an explicit stop, create the monitor before calling `bridge.stop`.
 
 ## Why publish from the backend
 
