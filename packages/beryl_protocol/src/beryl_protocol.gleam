@@ -1192,7 +1192,6 @@ type ExportedReply {
 
 type ExportedState {
   ExportedState(
-    version: Int,
     config: Config,
     epoch: String,
     next_channel: Int,
@@ -1375,7 +1374,6 @@ fn reply_decoder() -> decode.Decoder(ExportedReply) {
 }
 
 fn state_decoder() -> decode.Decoder(ExportedState) {
-  use version <- decode.field("version", decode.int)
   use config <- decode.field("config", config_decoder())
   use epoch <- decode.field("epoch", decode.string)
   use next_channel <- decode.field("next_channel", decode.int)
@@ -1389,7 +1387,6 @@ fn state_decoder() -> decode.Decoder(ExportedState) {
   use closing <- decode.field("closing", decode.optional(decode.string))
   use closed <- decode.field("closed", decode.bool)
   decode.success(ExportedState(
-    version,
     config,
     epoch,
     next_channel,
@@ -1404,6 +1401,10 @@ fn state_decoder() -> decode.Decoder(ExportedState) {
 
 /// Restore using elapsed wall-clock milliseconds validated by the host. A
 /// backward or unavailable wall clock must close/reconnect, not resume.
+///
+/// Check the size bound before decoding. Read the version before its layout:
+/// unsupported versions return `UnsupportedVersion`, while a missing or invalid
+/// version or malformed version-1 layout returns `InvalidSnapshot`.
 ///
 /// Established channels without lost work retain their generation. Channels
 /// with unrecoverable authorization, replies or cleanup are invalidated and
@@ -1422,13 +1423,21 @@ pub fn restore(
     when: elapsed_ms < 0 || !safe_integer(elapsed_ms),
     return: Error(InvalidClock),
   )
-  use exported <- result.try(
-    json.parse(snapshot, state_decoder())
+  use value <- result.try(
+    json.parse(snapshot, decode.dynamic)
+    |> result.replace_error(InvalidSnapshot),
+  )
+  use version <- result.try(
+    decode.run(value, decode.at(["version"], decode.int))
     |> result.replace_error(InvalidSnapshot),
   )
   use <- bool.guard(
-    when: exported.version != 1,
-    return: Error(UnsupportedVersion(exported.version)),
+    when: version != 1,
+    return: Error(UnsupportedVersion(version)),
+  )
+  use exported <- result.try(
+    decode.run(value, state_decoder())
+    |> result.replace_error(InvalidSnapshot),
   )
   use _ <- result.try(validate_export(exported))
   use initial <- result.try(new(exported.config, exported.epoch, now_ms))

@@ -627,6 +627,50 @@ pub fn sleeping_past_deadline_closes_before_accepting_commands_test() -> Nil {
   Nil
 }
 
+pub fn snapshot_rejects_unknown_versions_without_requiring_v1_fields_test() -> Nil {
+  protocol.restore("{\"version\":2,\"channels\":[]}", 0, 0)
+  |> should.equal(Error(protocol.UnsupportedVersion(2)))
+}
+
+pub fn snapshot_rejects_missing_or_invalid_versions_and_malformed_v1_test() -> Nil {
+  list.each(
+    [
+      "{}",
+      "{\"version\":null}",
+      "{\"version\":\"2\"}",
+      "{\"version\":true}",
+      "{\"version\":[]}",
+      "{\"version\":1.5}",
+      "{\"version\":2,",
+      "{\"version\":1,\"channels\":[]}",
+    ],
+    fn(snapshot) {
+      protocol.restore(snapshot, 0, 0)
+      |> should.equal(Error(protocol.InvalidSnapshot))
+    },
+  )
+}
+
+pub fn snapshot_size_bound_precedes_version_dispatch_test() -> Nil {
+  let assert Ok(snapshot) = protocol.export(initial(), 0)
+  let bounded =
+    snapshot <> string.repeat(" ", 1_048_576 - string.byte_size(snapshot))
+  let assert Ok(#(_, [protocol.Deadline(Some(60_001))])) =
+    protocol.restore(bounded, 0, 0)
+  let future = "{\"version\":2,\"channels\":[]}"
+  let bounded_future =
+    future <> string.repeat(" ", 1_048_576 - string.byte_size(future))
+  protocol.restore(bounded_future, 0, 0)
+  |> should.equal(Error(protocol.UnsupportedVersion(2)))
+  list.each(
+    [bounded <> " ", bounded_future <> " ", string.repeat("x", 1_048_577)],
+    fn(snapshot) {
+      protocol.restore(snapshot, 0, 0)
+      |> should.equal(Error(protocol.SnapshotTooLarge))
+    },
+  )
+}
+
 pub fn snapshot_rejects_unknown_versions_bad_counters_and_clock_data_test() -> Nil {
   let assert Ok(snapshot) = protocol.export(initial(), 0)
   snapshot

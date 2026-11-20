@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Read snapshot versions before decoding version-specific layouts so unsupported versions remain distinct from invalid snapshots."
