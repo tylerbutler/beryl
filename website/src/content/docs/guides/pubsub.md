@@ -133,6 +133,11 @@ again, create new subscribers, and rejoin. Selector-only receivers do not get a
 separate recovery notification. Service and node failures do not preserve
 subscriptions.
 
+Supervised presence manages this step itself: `presence.with_pubsub` accepts
+the scope's `PubSubConfig` and reacquires the scope when its actor restarts.
+Keep its original `Presence` handle, but re-track local entries after a restart.
+This does not make stale application-held PubSub handles valid again.
+
 ## Message format
 
 Subscribers receive typed `Message(payload)` records:

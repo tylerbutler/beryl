@@ -30,10 +30,10 @@ let #(presence_handle, presence_specification) =
   presence.child_spec(presence.default_config("node1"))
 
 // With PubSub for cross-node replication
-let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
+let replication = pubsub.config_with_scope("my_app_presence")
 let config =
   presence.default_config("node1")
-  |> presence.with_pubsub(pubsub_handle)
+  |> presence.with_pubsub(replication)
   |> presence.with_broadcast_interval(1500)
 let #(presence_handle, presence_specification) = presence.child_spec(config)
 
@@ -163,6 +163,18 @@ replacement actor and read model after a supervised restart. Presence entries
 and tracking refs are in-memory state and reset on restart; connected clients
 must re-track their presence.
 
+Presence starts or attaches to its configured PubSub scope in each actor
+initializer. If the membership registry is replaced, supervision restarts
+presence with a fresh subscription. Keep the original `Presence` handle and
+application supervisor; re-track local entries after recovery. Application-held
+stale PubSub handles remain invalid.
+
+To migrate from the handle-based `presence.with_pubsub` builder, pass the
+`pubsub.PubSubConfig` previously given to `pubsub.start`, not its returned
+handle. Presence owns its replication subscription. Callers do not need to
+name or annotate its internal payload type. Reserve a separate fixed scope
+for presence; do not share the JSON broadcast scope used by `beryl.with_pubsub`.
+
 ## Use presence for online state, not ownership
 
 Presence tracks who is online now. It does not lock anything. Do not use it as
@@ -214,7 +226,7 @@ For the exact `on_diff` latency and failure contract, track
 ```gleam
 let config =
   presence.default_config("node1")
-  |> presence.with_pubsub(pubsub_handle)
+  |> presence.with_pubsub(replication)
   |> presence.with_broadcast_interval(1500)
   |> presence.with_on_diff(fn(diff) {
     diff
@@ -243,7 +255,7 @@ import gleam/io
 
 let config =
   presence.default_config("node1")
-  |> presence.with_pubsub(pubsub_handle)
+  |> presence.with_pubsub(replication)
   |> presence.with_broadcast_interval(1500)
   |> presence.with_on_diff(fn(diff) {
     // Keep the original diff so the helper can apply its delivery scope.

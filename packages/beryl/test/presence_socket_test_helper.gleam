@@ -73,10 +73,9 @@ pub fn start_presence(
   scope: String,
   replica: String,
 ) -> #(presence.Presence, process.Pid) {
-  let assert Ok(pubsub) = pubsub.start(pubsub.config_with_scope(scope))
   let config =
     presence.default_config(replica)
-    |> presence.with_pubsub(pubsub)
+    |> presence.with_pubsub(pubsub.config_with_scope(scope))
     |> presence.with_broadcast_interval(30)
     |> presence.with_on_diff(fn(diff) {
       let assert Ok(Nil) =

@@ -35,10 +35,10 @@
 //// ## Example
 ////
 //// ```gleam
-//// let assert Ok(pubsub_handle) = pubsub.start(pubsub.default_config())
+//// let replication = pubsub.config_with_scope("my_app_presence")
 //// let config =
 ////   presence.default_config("node1")
-////   |> presence.with_pubsub(pubsub_handle)
+////   |> presence.with_pubsub(replication)
 ////   |> presence.with_broadcast_interval(1500)
 //// let #(presence_handle, presence_specification) = presence.child_spec(config)
 //// let assert Ok(_root) =
@@ -431,8 +431,8 @@ pub type SyncReply {
 /// beryl can then add options without exposing record fields as public API.
 pub opaque type Config {
   Config(
-    /// PubSub instance for cross-node replication
-    pubsub: Option(PubSub(SyncPayload)),
+    /// PubSub scope configuration for cross-node replication
+    pubsub: Option(pubsub.PubSubConfig),
     /// This node's replica base name. Must identify at most one live node
     /// in the cluster. Each actor start derives a unique incarnation name
     /// from it, so restarting a node never reuses the previous
@@ -769,6 +769,7 @@ type ActorState {
   ActorState(
     crdt: State,
     config: Config,
+    pubsub: Option(PubSub(SyncPayload)),
     /// The actor's own subject, used by timers and owner monitors.
     self_subject: Option(Subject(Message)),
     sync: Option(SyncState),
@@ -824,6 +825,16 @@ pub fn with_local_clock_lookup(
 /// The PubSub same-scope caller obligation also applies to presence; its
 /// envelope version is not runtime validation of arbitrary BEAM terms.
 ///
+/// Pass a `pubsub.PubSubConfig`, not a running PubSub handle. Presence starts
+/// or attaches to this scope in each actor initializer and rejoins after a
+/// supervised restart, including after registry replacement. The original
+/// `Presence` handle works again; local entries and refs reset on restart.
+/// Application-held stale PubSub handles remain invalid.
+///
+/// To migrate from the handle-based builder, pass the configuration previously
+/// supplied to `pubsub.start` directly to `with_pubsub`. No application type
+/// annotation for the internal replication payload is needed.
+///
 /// Remote visibility follows monitored actor ownership and the local `pg`
 /// membership view. Actor exit, node disconnection, or membership loss hides
 /// that replica and emits leaves. Its causal state remains available for repair.
@@ -844,7 +855,7 @@ pub fn with_local_clock_lookup(
 /// a new request with its current full local snapshot, so delayed replies and
 /// lagging peers cannot reintroduce compacted history. The retention check also
 /// runs when periodic snapshot requests are disabled. Actor work can delay it.
-pub fn with_pubsub(config: Config, pubsub: PubSub(SyncPayload)) -> Config {
+pub fn with_pubsub(config: Config, pubsub: pubsub.PubSubConfig) -> Config {
   Config(..config, pubsub: Some(pubsub))
 }
 
@@ -1017,6 +1028,7 @@ fn build_presence(
       ActorState(
         crdt: crdt,
         config: config,
+        pubsub: None,
         self_subject: Some(subject),
         sync: None,
         refs: dict.new(),
@@ -1029,7 +1041,11 @@ fn build_presence(
       )
 
     case config.pubsub {
-      Some(pubsub_instance) -> {
+      Some(pubsub_config) -> {
+        use pubsub_instance <- result.try(
+          pubsub.start(pubsub_config)
+          |> result.map_error(pubsub.describe_error),
+        )
         // Subscribe to the well-known sync topic for replication
         let subscriber = pubsub.subscriber(pubsub_instance)
         use _ <- result.try(
@@ -1040,6 +1056,7 @@ fn build_presence(
         let initial =
           ActorState(
             ..initial,
+            pubsub: Some(pubsub_instance),
             sync: Some(SyncState(
               reply: reply,
               requests: dict.new(),
@@ -1270,7 +1287,7 @@ fn schedule_retirement_tick(subject: Subject(Message)) -> Nil {
 fn retire_unavailable(
   actor_state: ActorState,
 ) -> Result(ActorState, pubsub.PubSubError) {
-  use members <- result.try(case actor_state.config.pubsub {
+  use members <- result.try(case actor_state.pubsub {
     Some(pubsub_instance) -> pubsub.subscribers(pubsub_instance, sync_topic)
     None -> Ok([])
   })
@@ -1872,7 +1889,7 @@ fn handle_message(
       }
 
     BroadcastTick -> {
-      case actor_state.config.pubsub, actor_state.self_subject {
+      case actor_state.pubsub, actor_state.self_subject {
         Some(pubsub_instance), Some(subject) -> {
           let new_state = request_snapshots(actor_state, pubsub_instance)
           schedule_broadcast_tick(
@@ -2393,7 +2410,7 @@ fn request_snapshot_back(
   actor_state: ActorState,
   from: pubsub.PubSubFrom,
 ) -> Result(ActorState, pubsub.PubSubError) {
-  case actor_state.config.pubsub, actor_state.sync, from {
+  case actor_state.pubsub, actor_state.sync, from {
     Some(pubsub_instance), Some(sync), pubsub.FromPid(owner) -> {
       use members <- result.try(pubsub.subscribers(pubsub_instance, sync_topic))
       Ok(case owner != process.self() && list.contains(members, owner) {

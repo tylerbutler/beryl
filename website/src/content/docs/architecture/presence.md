@@ -81,7 +81,7 @@ PubSub copies presence state between nodes.
 | Function | Description |
 |---|---|
 | `default_config(replica)` | Create a config with no PubSub and a 1500 ms interval that remains unused until PubSub is attached |
-| `with_pubsub(config, ps)` | Attach a PubSub instance for cross-node state replication |
+| `with_pubsub(config, pubsub_config)` | Configure a PubSub scope reacquired on each presence actor start |
 | `with_broadcast_interval(config, ms)` | Set the snapshot repair cadence in ms; `0` disables periodic requests |
 | `with_on_diff(config, callback)` | Register a callback invoked whenever a local change or merge produces a non-empty diff |
 | `with_queue_limits(config, limits)` | Set positive local mutation and cleanup budgets |
