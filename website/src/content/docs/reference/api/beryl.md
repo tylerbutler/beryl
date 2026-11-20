@@ -111,6 +111,7 @@ beryl: type-safe real-time communication
   <ul>
 <li><a href="#api-type-config"><code>Config</code></a></li>
 <li><a href="#api-type-configerror"><code>ConfigError</code></a></li>
+<li><a href="#api-type-connectionlimit"><code>ConnectionLimit</code></a></li>
 <li><a href="#api-type-loggingconfig"><code>LoggingConfig</code></a></li>
 <li><a href="#api-type-loglevel"><code>LogLevel</code></a></li>
 <li><a href="#api-type-sockets"><code>Sockets</code></a></li>
@@ -180,6 +181,11 @@ Configuration for an app-side socket runtime.
 ```gleam
 pub type ConfigError {
   HeartbeatTimeoutTooLow(minimum: Int)
+  NegativeConnectionLimit(
+    limit: ConnectionLimit,
+    value: Int
+  )
+  InvalidProtocolConfig(reason: beryl_protocol.Error)
   RateLimitTooHigh(maximum: Int)
   InvalidRateLimitBurst(burst: Int)
   InvalidTopicPattern(
@@ -208,6 +214,27 @@ HeartbeatTimeoutTooLow(minimum: Int)
  division). A timeout of 1 would round down to a check interval of 0 and
  disable heartbeat eviction. The wrapped `Int` is the
  smallest accepted timeout.
+
+##### `NegativeConnectionLimit`
+
+```gleam
+NegativeConnectionLimit(
+  limit: ConnectionLimit,
+  value: Int
+)
+```
+
+A concurrent connection ceiling was negative. Only 0 means unlimited.
+
+##### `InvalidProtocolConfig`
+
+```gleam
+InvalidProtocolConfig(reason: beryl_protocol.Error)
+```
+
+A translated protocol limit cannot be represented by the portable core.
+ `beryl_protocol.InvalidConfig` identifies the rejected limit and value:
+ topic/event bytes, joined topics, socket queue items, or heartbeat timeout.
 
 ##### `RateLimitTooHigh`
 
@@ -247,6 +274,19 @@ A per-topic-pattern rate limit used a pattern string that is not a valid
  [`topic.TopicError`](https://beryl.tylerbutler.com/reference/api/beryl-topic/#topicerror)
  variant explicitly. Adding a variant affects API compatibility and
  requires updating exhaustive matches.
+
+<div class="api-entry-anchor" id="api-type-connectionlimit" aria-hidden="true"></div>
+
+### `ConnectionLimit`
+
+```gleam
+pub type ConnectionLimit {
+  PerIpConnections
+  TotalConnections
+}
+```
+
+A concurrent connection ceiling in this system's configuration.
 
 <div class="api-entry-anchor" id="api-type-loggingconfig" aria-hidden="true"></div>
 
@@ -469,6 +509,13 @@ Build the app-side dispatch supervision child specification.
  started. Before startup, during a runtime restart window, and after
  shutdown, sends return admission errors and connection admission fails.
 
+ A successful call permanently allocates three Erlang registered-name
+ atoms, or four when the connection limiter is enabled, before the
+ supervisor starts. Dropping the specification does not reclaim them.
+ Construct it once per long-lived system and reuse it across supervised
+ restarts; restarting from the same specification allocates no new names.
+ For config-only checks, use `validate_config`, which allocates no names.
+
  #### Example
 
  ```gleam
@@ -550,13 +597,19 @@ Stop a beryl system.
 pub fn validate_config(Config) -> Result(Nil, ConfigError)
 ```
 
-Validate a [`Config`](#config) without starting any process.
+Validate a [`Config`](#config) without starting processes or allocating
+ registered-name atoms.
 
  This checks that `heartbeat_timeout_ms` is at least 2, that every
  enabled rate limit is representable and has a non-negative burst, and
  that every per-topic rate-limit pattern is valid. A burst of 0 defaults
  to the per-second rate. Non-positive rates disable limiting and ignore
  their bursts.
+
+ Concurrent connection ceilings must be non-negative; 0 means unlimited.
+ The translated topic, event, channel, pending-operation, and heartbeat
+ limits must also pass the portable protocol's validation. This does not
+ validate a `channel.child_spec` handler table.
 
 <div class="api-entry-anchor" id="api-function-with_channel_rate" aria-hidden="true"></div>
 
@@ -760,6 +813,8 @@ Configure the maximum number of concurrent connections for this beryl
  dies, or its handshake or setup fails. The limiter actor performs the check
  and increment atomically. Concurrent opens cannot materially exceed the
  ceiling.
+ Negative ceilings are rejected by `validate_config` with
+ `NegativeConnectionLimit`.
 
  Each independently constructed `Sockets` system owns a separate limiter.
  Two systems on the same node therefore each have their own configured
@@ -801,6 +856,8 @@ Configure the maximum number of concurrent connections allowed per client
  transport admits a new connection only while the peer is below the limit.
  It rejects other connections. The transport frees the slot when the
  connection closes.
+ Negative ceilings are rejected by `validate_config` with
+ `NegativeConnectionLimit`.
 
  #### Which IP is used
 

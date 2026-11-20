@@ -12,6 +12,24 @@ The BEAM `beryl` package uses the same transitions while retaining its actors,
 supervision, queue budgets, PubSub, and presence. Mist and Ewe continue to use
 the public transport SPI.
 
+## Configure one limit
+
+Use a focused builder to change one setting and keep the other defaults:
+
+```gleam
+import beryl_protocol as protocol
+
+let assert Ok(config) =
+  protocol.config()
+  |> protocol.with_heartbeat_timeout(timeout_ms: 15_000)
+```
+
+`with_max_topic_bytes`, `with_max_event_bytes`, `with_max_channels`, and
+`with_max_pending` follow the same pattern. Each builder preserves prior
+overrides and the topicless-event setting. Use `with_limits` to set all five
+limits together. Both forms return `Error(InvalidConfig(limit, value))` for an
+unsupported value, with a typed `ConfigLimit` that identifies the setting.
+
 ## Framing
 
 The core works with normalized messages rather than bytes. The BEAM runtime

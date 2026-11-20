@@ -122,6 +122,129 @@ pub fn validation_preserves_public_scope_and_utf8_byte_limits_test() -> Nil {
   protocol.valid_event(config, "éé") |> should.be_false
 }
 
+pub fn focused_limit_builders_preserve_custom_settings_test() -> Nil {
+  let assert Ok(original) =
+    protocol.with_limits(protocol.config(), 13, 14, 2, 2, 20)
+  let original = protocol.with_topicless_events(original, True)
+  list.each(
+    [
+      #(protocol.with_max_topic_bytes, 7, #(7, 14, 2, 2, 20)),
+      #(protocol.with_max_event_bytes, 8, #(13, 8, 2, 2, 20)),
+      #(protocol.with_max_channels, 1, #(13, 14, 1, 2, 20)),
+      #(protocol.with_max_pending, 1, #(13, 14, 2, 1, 20)),
+      #(protocol.with_heartbeat_timeout, 10, #(13, 14, 2, 2, 10)),
+    ],
+    fn(entry) {
+      let #(builder, value, limits) = entry
+      let assert Ok(expected) =
+        protocol.with_limits(
+          original,
+          limits.0,
+          limits.1,
+          limits.2,
+          limits.3,
+          limits.4,
+        )
+      builder(original, value) |> should.equal(Ok(expected))
+    },
+  )
+}
+
+pub fn focused_limit_builders_compose_and_enforce_prior_overrides_test() -> Nil {
+  let config = protocol.with_topicless_events(protocol.config(), True)
+  let assert Ok(config) = protocol.with_max_topic_bytes(config, 6)
+  let assert Ok(config) = protocol.with_max_event_bytes(config, 4)
+  let assert Ok(config) = protocol.with_max_channels(config, 1)
+  let assert Ok(config) = protocol.with_max_pending(config, 1)
+  let assert Ok(config) = protocol.with_heartbeat_timeout(config, 10)
+
+  protocol.valid_topic(config, "room:aa") |> should.be_false
+  protocol.valid_topic(config, "room:a") |> should.be_true
+  protocol.valid_event(config, "longer") |> should.be_false
+  let assert Ok(state) = protocol.new(config, "focused-limits", 0)
+  protocol.next_deadline(state) |> should.equal(Some(11))
+  let #(state, _) = join(state, "room:a", "j1", protocol.InvalidateImmediately)
+  protocol.can_join(state, "room:b") |> should.be_false
+  let assert #(
+    state,
+    [protocol.DeliverMessage(_, "room:a", "ping", _, Some(_))],
+  ) =
+    apply(
+      state,
+      protocol.Receive(protocol.Message(
+        "",
+        "ping",
+        dynamic.nil(),
+        None,
+        Some("first"),
+      )),
+      0,
+    )
+  protocol.pending_count(state) |> should.equal(1)
+  let assert #(
+    _,
+    [protocol.CloseChannel(_, _, _, protocol.Fault("pending_capacity"))],
+  ) =
+    apply(
+      state,
+      protocol.Receive(protocol.Message(
+        "room:a",
+        "ping",
+        dynamic.nil(),
+        None,
+        Some("second"),
+      )),
+      0,
+    )
+  Nil
+}
+
+pub fn focused_limit_builders_use_the_full_policy_boundaries_test() -> Nil {
+  list.each(
+    [
+      #(
+        protocol.with_max_topic_bytes,
+        protocol.MaxTopicBytes,
+        0,
+        9_007_199_254_740_991,
+      ),
+      #(
+        protocol.with_max_event_bytes,
+        protocol.MaxEventBytes,
+        0,
+        9_007_199_254_740_991,
+      ),
+      #(
+        protocol.with_max_channels,
+        protocol.MaxChannels,
+        1,
+        9_007_199_254_740_991,
+      ),
+      #(
+        protocol.with_max_pending,
+        protocol.MaxPending,
+        1,
+        9_007_199_254_740_991,
+      ),
+      #(
+        protocol.with_heartbeat_timeout,
+        protocol.HeartbeatTimeoutMs,
+        1,
+        9_007_199_254_740_990,
+      ),
+    ],
+    fn(entry) {
+      let #(builder, limit, minimum, maximum) = entry
+      builder(protocol.config(), minimum) |> should.be_ok
+      builder(protocol.config(), maximum) |> should.be_ok
+      list.each([minimum - 1, maximum + 1], fn(value) {
+        builder(protocol.config(), value)
+        |> should.equal(Error(protocol.InvalidConfig(limit, value)))
+      })
+    },
+  )
+}
+
 pub fn invalid_and_reserved_joins_reply_without_app_delivery_test() -> Nil {
   list.each(["", ":room", "beryl:system"], fn(topic) {
     let #(state, actions) =
@@ -885,7 +1008,12 @@ pub fn recovery_actions_are_topic_sorted_regardless_of_snapshot_array_order_test
 
 pub fn largest_safe_heartbeat_duration_round_trips_without_unsafe_integers_test() -> Nil {
   protocol.with_limits(protocol.config(), 256, 64, 2, 2, 9_007_199_254_740_991)
-  |> should.equal(Error(protocol.InvalidConfig))
+  |> should.equal(
+    Error(protocol.InvalidConfig(
+      protocol.HeartbeatTimeoutMs,
+      9_007_199_254_740_991,
+    )),
+  )
   let assert Ok(config) =
     protocol.with_limits(
       protocol.config(),

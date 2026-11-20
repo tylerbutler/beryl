@@ -180,9 +180,19 @@ pub type Action {
   Deadline(deadline_ms: Option(Int))
 }
 
+/// A configurable protocol limit.
+pub type ConfigLimit {
+  MaxTopicBytes
+  MaxEventBytes
+  MaxChannels
+  MaxPending
+  HeartbeatTimeoutMs
+}
+
 /// A rejected transition commits no state or actions.
 pub type Error {
-  InvalidConfig
+  /// The named limit is outside its supported range.
+  InvalidConfig(limit: ConfigLimit, value: Int)
   InvalidIdentity
   InvalidClock
   CounterExhausted
@@ -201,7 +211,16 @@ pub type ValidationError {
 /// Describe a rejected transition without application data.
 pub fn describe_error(error: Error) -> String {
   case error {
-    InvalidConfig -> "invalid protocol limits"
+    InvalidConfig(limit, value) -> {
+      let field = case limit {
+        MaxTopicBytes -> "max_topic_bytes"
+        MaxEventBytes -> "max_event_bytes"
+        MaxChannels -> "max_channels"
+        MaxPending -> "max_pending"
+        HeartbeatTimeoutMs -> "heartbeat_timeout_ms"
+      }
+      "invalid protocol limit " <> field <> ": " <> int.to_string(value)
+    }
     InvalidIdentity -> "invalid connection epoch"
     InvalidClock -> "invalid or backward clock"
     CounterExhausted -> "protocol identity counter exhausted"
@@ -265,6 +284,11 @@ pub fn config() -> Config {
 
 /// Set finite limits. Pending operations include joins and deferred replies;
 /// cleanup barriers are bounded separately by the channel limit.
+///
+/// Topic and event byte limits must be 0..9_007_199_254_740_991. Channel and
+/// pending-operation limits must be 1..9_007_199_254_740_991. The heartbeat
+/// timeout must be 1..9_007_199_254_740_990 milliseconds. Invalid values return
+/// `InvalidConfig` with the rejected limit and value.
 pub fn with_limits(
   config: Config,
   max_topic_bytes max_topic_bytes: Int,
@@ -274,17 +298,24 @@ pub fn with_limits(
   heartbeat_timeout_ms heartbeat_timeout_ms: Int,
 ) -> Result(Config, Error) {
   use <- bool.guard(
-    when: max_topic_bytes < 0
-      || max_event_bytes < 0
-      || max_channels < 1
-      || max_pending < 1
-      || heartbeat_timeout_ms < 1
-      || !safe_integer(max_topic_bytes)
-      || !safe_integer(max_event_bytes)
-      || !safe_integer(max_channels)
-      || !safe_integer(max_pending)
-      || heartbeat_timeout_ms >= maximum_integer,
-    return: Error(InvalidConfig),
+    when: max_topic_bytes < 0 || !safe_integer(max_topic_bytes),
+    return: Error(InvalidConfig(MaxTopicBytes, max_topic_bytes)),
+  )
+  use <- bool.guard(
+    when: max_event_bytes < 0 || !safe_integer(max_event_bytes),
+    return: Error(InvalidConfig(MaxEventBytes, max_event_bytes)),
+  )
+  use <- bool.guard(
+    when: max_channels < 1 || !safe_integer(max_channels),
+    return: Error(InvalidConfig(MaxChannels, max_channels)),
+  )
+  use <- bool.guard(
+    when: max_pending < 1 || !safe_integer(max_pending),
+    return: Error(InvalidConfig(MaxPending, max_pending)),
+  )
+  use <- bool.guard(
+    when: heartbeat_timeout_ms < 1 || heartbeat_timeout_ms >= maximum_integer,
+    return: Error(InvalidConfig(HeartbeatTimeoutMs, heartbeat_timeout_ms)),
   )
   Ok(
     Config(
@@ -295,6 +326,91 @@ pub fn with_limits(
       max_pending: max_pending,
       heartbeat_timeout_ms: heartbeat_timeout_ms,
     ),
+  )
+}
+
+/// Set the topic byte limit without changing other settings.
+///
+/// Uses the ranges and errors documented by `with_limits`.
+pub fn with_max_topic_bytes(
+  config: Config,
+  max_topic_bytes max_topic_bytes: Int,
+) -> Result(Config, Error) {
+  with_limits(
+    config,
+    max_topic_bytes,
+    config.max_event_bytes,
+    config.max_channels,
+    config.max_pending,
+    config.heartbeat_timeout_ms,
+  )
+}
+
+/// Set the event byte limit without changing other settings.
+///
+/// Uses the ranges and errors documented by `with_limits`.
+pub fn with_max_event_bytes(
+  config: Config,
+  max_event_bytes max_event_bytes: Int,
+) -> Result(Config, Error) {
+  with_limits(
+    config,
+    config.max_topic_bytes,
+    max_event_bytes,
+    config.max_channels,
+    config.max_pending,
+    config.heartbeat_timeout_ms,
+  )
+}
+
+/// Set the channel limit without changing other settings.
+///
+/// Uses the ranges and errors documented by `with_limits`.
+pub fn with_max_channels(
+  config: Config,
+  max_channels max_channels: Int,
+) -> Result(Config, Error) {
+  with_limits(
+    config,
+    config.max_topic_bytes,
+    config.max_event_bytes,
+    max_channels,
+    config.max_pending,
+    config.heartbeat_timeout_ms,
+  )
+}
+
+/// Set the pending-operation limit without changing other settings.
+///
+/// Uses the ranges and errors documented by `with_limits`.
+pub fn with_max_pending(
+  config: Config,
+  max_pending max_pending: Int,
+) -> Result(Config, Error) {
+  with_limits(
+    config,
+    config.max_topic_bytes,
+    config.max_event_bytes,
+    config.max_channels,
+    max_pending,
+    config.heartbeat_timeout_ms,
+  )
+}
+
+/// Set the heartbeat timeout without changing other settings.
+///
+/// Uses the ranges and errors documented by `with_limits`.
+pub fn with_heartbeat_timeout(
+  config: Config,
+  timeout_ms timeout_ms: Int,
+) -> Result(Config, Error) {
+  with_limits(
+    config,
+    config.max_topic_bytes,
+    config.max_event_bytes,
+    config.max_channels,
+    config.max_pending,
+    timeout_ms,
   )
 }
 
@@ -439,7 +555,6 @@ pub fn channel(state: State, topic: String) -> Result(Channel, Nil) {
   }
 }
 
-// nolint: unused_exports -- host API for existing join-admission telemetry
 /// Whether a new join can fit, accounting for same-topic replacement.
 pub fn can_join(state: State, topic: String) -> Bool {
   dict.has_key(state.memberships, topic)

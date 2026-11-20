@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Document permanent registered-name atom allocation by successful beryl.child_spec and channel.child_spec calls. Construct once per long-lived system, reuse the specification across supervised restarts, and use name-allocation-free beryl.validate_config for core configuration checks."

@@ -11,6 +11,7 @@ import beryl/topic
 import beryl/transport
 import beryl/wire
 import beryl/wire/codec
+import beryl_protocol as protocol
 import gleam/erlang/process
 import gleam/list
 import gleam/otp/static_supervisor
@@ -34,6 +35,140 @@ pub fn validate_config_rejects_low_heartbeat_test() -> Nil {
   |> beryl.with_heartbeat(timeout_ms: 1)
   |> beryl.validate_config
   |> should.equal(Error(beryl.HeartbeatTimeoutTooLow(2)))
+}
+
+pub fn connection_ceiling_validation_boundaries_test() -> Nil {
+  list.each(
+    [
+      #(beryl.with_max_connections_per_ip, beryl.PerIpConnections),
+      #(beryl.with_max_connections, beryl.TotalConnections),
+    ],
+    fn(entry) {
+      let #(builder, limit) = entry
+      assert_invalid_config(
+        builder(beryl.config(wire.phoenix_codec()), -1),
+        beryl.NegativeConnectionLimit(limit, -1),
+      )
+      list.each([0, 1], fn(value) {
+        builder(beryl.config(wire.phoenix_codec()), value)
+        |> beryl.validate_config
+        |> should.equal(Ok(Nil))
+      })
+    },
+  )
+}
+
+pub fn translated_protocol_limit_validation_boundaries_test() -> Nil {
+  list.each(
+    [
+      #(
+        beryl.with_max_topic_length,
+        protocol.MaxTopicBytes,
+        9_007_199_254_740_991,
+      ),
+      #(
+        beryl.with_max_event_length,
+        protocol.MaxEventBytes,
+        9_007_199_254_740_991,
+      ),
+      #(
+        beryl.with_max_joined_topics_per_socket,
+        protocol.MaxChannels,
+        9_007_199_254_740_991,
+      ),
+      #(with_pending_limit, protocol.MaxPending, 9_007_199_254_740_991),
+      #(
+        beryl.with_heartbeat,
+        protocol.HeartbeatTimeoutMs,
+        9_007_199_254_740_990,
+      ),
+    ],
+    fn(entry) {
+      let #(builder, limit, maximum) = entry
+      let config = beryl.config(wire.phoenix_codec())
+      builder(config, maximum)
+      |> beryl.validate_config
+      |> should.equal(Ok(Nil))
+      assert_invalid_config(
+        builder(config, maximum + 1),
+        beryl.InvalidProtocolConfig(protocol.InvalidConfig(limit, maximum + 1)),
+      )
+    },
+  )
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_heartbeat(timeout_ms: 2)
+  |> beryl.with_max_topic_length(0)
+  |> beryl.with_max_event_length(0)
+  |> beryl.validate_config
+  |> should.equal(Ok(Nil))
+}
+
+fn with_pending_limit(config: beryl.Config, items: Int) -> beryl.Config {
+  let assert Ok(limits) = overload.limits(items: items, bytes: 8_388_608)
+  beryl.with_socket_queue_limits(config, limits)
+}
+
+fn assert_invalid_config(
+  config: beryl.Config,
+  expected: beryl.ConfigError,
+) -> Nil {
+  beryl.validate_config(config) |> should.equal(Error(expected))
+  let assert Error(error) =
+    beryl.child_spec(
+      config,
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
+    )
+  error |> should.equal(expected)
+}
+
+pub fn validation_preserves_documented_non_positive_settings_test() -> Nil {
+  beryl.config(wire.phoenix_codec())
+  |> beryl.with_frame_rate(per_second: -1, burst: -1)
+  |> beryl.with_message_rate(per_second: -1, burst: -1)
+  |> beryl.with_join_rate(per_second: -1, burst: -1)
+  |> beryl.with_channel_rate(per_second: -1, burst: -1)
+  |> beryl.with_connection_rate_per_ip(per_second: -1, burst: -1)
+  |> beryl.with_topic_rate(pattern: "room:*", per_second: -1, burst: -1)
+  |> beryl.with_channel_rate_max_keys_per_socket(-1)
+  |> beryl.with_max_inbound_frame_bytes(-1)
+  |> beryl.with_max_joined_topics_per_socket(-1)
+  |> beryl.validate_config
+  |> should.equal(Ok(Nil))
+}
+
+pub fn valid_protocol_limits_still_admit_and_dispatch_a_socket_test() -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
+  let config =
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_connections(1)
+    |> beryl.with_max_connections_per_ip(1)
+    |> beryl.with_max_topic_length(9_007_199_254_740_991)
+    |> beryl.with_max_event_length(9_007_199_254_740_991)
+    |> beryl.with_max_joined_topics_per_socket(9_007_199_254_740_991)
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      config,
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
+    )
+  let assert Ok(permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.1")
+  transport.bind_connection_slot(permit) |> should.equal(Ok(Nil))
+  let frames = app_test_helper.connect(sockets, "valid-limits")
+  app_test_helper.join_ok(
+    sockets,
+    frames,
+    "valid-limits",
+    "room:a",
+    "join-1",
+    "ref-1",
+  )
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  app_test_helper.recv(frames)
+  |> string.contains("\"phx_close\"")
+  |> should.be_true
+  transport.release_connection_slot(permit)
 }
 
 pub fn validate_config_accepts_max_rate_test() -> Nil {
