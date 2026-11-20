@@ -119,10 +119,15 @@ let assert Ok(Nil) = presence.untrack(presence_handle, new_ref)
 let assert Ok(Nil) = presence.untrack_all(presence_handle, socket_id)
 ```
 
-`track` returns a ref for the new presence entry. Keep the ref if you must
-remove that entry with `untrack`. To clear all entries for a disconnected
-socket, call `untrack_all` with the session ID. The `session_id` string
-identifies the logical session, not a BEAM process.
+`untrack` removes only entries created by public `track` or `update`. Keep the
+latest returned ref to remove that entry. An unknown, removed, or runtime-owned
+ref returns `Ok(Nil)` without changing presence. A published `phx_ref` does not
+permit public removal of a live socket's runtime-owned entry; use runtime
+presence effects instead.
+
+To clear all locally tracked entries for a disconnected socket, including
+runtime-owned entries, call `untrack_all` with the session ID. The `session_id`
+string identifies the logical session, not a BEAM process.
 
 ## Read presence
 

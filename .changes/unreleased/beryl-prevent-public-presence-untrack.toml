@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Fixed"
+body = "Prevent public presence.untrack from removing runtime-owned entries. Runtime-owned refs now return Ok(Nil) without changing the live socket presence."

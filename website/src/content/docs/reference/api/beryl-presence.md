@@ -573,7 +573,9 @@ pub fn untrack(
 
 Untrack a specific presence using the ref returned by `track`.
 
- Removing an unknown or already-removed ref is a harmless no-op.
+ Only entries created by public `track` or `update` can be removed here.
+ An unknown, already-removed, or runtime-owned ref is a no-op that returns
+ `Ok(Nil)`. Use runtime presence effects to remove runtime-owned entries.
 
  Returns `AdmissionRejected`, `OwnerUnavailable`, or `RequestTimedOut`
  directly. See **Mutation errors** on `Presence` for details.
