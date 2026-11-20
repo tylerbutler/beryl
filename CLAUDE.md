@@ -82,7 +82,6 @@ packages/
 │   │   ├── beryl_ffi.erl          # Erlang FFI (timing, admission atomics, validated PubSub coercion)
 │   │   ├── beryl_pubsub_ffi.erl   # Small PubSub startup and OTP compatibility FFI
 │   │   └── beryl/
-│   │       ├── bridge.gleam       # Forward external actor streams to typed socket Senders
 │   │       ├── connection_limit.gleam  # Connection limit enforcement (internal)
 │   │       ├── error.gleam        # Shared error types/helpers
 │   │       ├── event.gleam        # Typed app-dispatch events, effects, refs, and senders

@@ -606,11 +606,16 @@ The layer owns the socket-level model and message type, so pick raw dispatch
 or the channel layer per socket endpoint; mixing hand-written `update` logic
 into a channel system is not supported. Raw binary frames require raw
 dispatch, though binary frames the configured codec decodes into normal
-events still reach `on_message`. `beryl/bridge` targets the core sender, not a
-channel's: `bridge.start(to:, with:)` wants a `beryl/socket.Sender`, which a
-channel never sees, so adapt an existing actor's messages into `on_info` by
-forwarding them yourself with `channel.notify(context.self, ..)` — the typed
-sender is safe to hold and is dropped after the join ends.
+events still reach `on_message`. For typed updates from another actor, pass
+`context.self` to a producer that can call `channel.notify(sender, message)`.
+The channel receives the message in `on_info`. A sender belongs to one join;
+after it closes, notification returns an admission error.
+
+A `channel.Sender` is not a `Subject`, so it cannot directly replace a
+Subject-only subscription. If the producer cannot accept a sender or a
+callback, the application must own the adaptation and its cleanup. See
+[backend integration](/guides/backend-integration/#migrating-from-berylbridge)
+for migration from the removed forwarding module.
 
 Each channel runs in its own worker, so a slow callback delays only its own
 topic while other topics on the socket continue; the socket actor still waits

@@ -26,7 +26,6 @@ frames, or select a compatible client.
 | `beryl` | Start and stop raw-dispatch socket systems, configure them, and broadcast events | Building or stopping a beryl socket system |
 | `beryl/channel` | Validate handlers, start them under a supervisor, and define typed callbacks, senders, and actions | Recommended programming model for apps with several topic features |
 | `beryl/socket` | `Input`, `Next`, `Effect`, `ConnectInfo`, and `Sender` types | Writing your app's `init` and `update` functions |
-| `beryl/bridge` | Forward an external OTP actor's message stream into `socket.Info(...)` | Bridging domain actors to one socket without hand-rolled forwarders |
 | `beryl/topic` | Topic parsing, wildcard matching, segment extraction | Dynamic routing, multi-tenant patterns |
 | `beryl/pubsub` | Distributed PubSub backed by Erlang `pg`, with typed subscribers and topic joins/leaves | Broadcasts across nodes and custom background subscribers |
 | `beryl/presence` | OTP actor wrapping the presence CRDT, plus opaque `Diff` accessors | Tracking who is online |
@@ -56,6 +55,7 @@ frames, or select a compatible client.
 | Broadcast to all sockets on a topic | `socket.Broadcast(topic, event, payload)` inside `update`, or `beryl.broadcast(sockets, topic, event, payload)` outside it | All subscribers, including the sender |
 | Broadcast, excluding sender | `socket.BroadcastFrom(topic, event, payload)` inside `update`, or `beryl.broadcast_from(sockets, socket_id, topic, event, payload)` outside it | Excludes one socket ID; preserved across PubSub nodes |
 | Send a typed server-side message to one socket | `socket.notify(sender, message)` | Store `ConnectInfo.self` from `init`; delivered later as `socket.Info(message)` |
+| Send a typed server-side message to one joined channel | `channel.notify(sender, message)` | Store `JoinContext.self` from `join`; delivered to `on_info` for that join |
 | Broadcast presence diff | `beryl.broadcast_presence_diff(sockets, topic, diff)` | Phoenix-shaped `presence_diff`; application diffs use cluster delivery, replica-view diffs stay node-local |
 
 The channel layer provides topic-scoped versions through ordered
