@@ -236,39 +236,17 @@ Header max 72 chars. Body max line length 100 chars.
 
 ### Changelog Fragments
 
-Create a fragment with `just change <package> <kind> "<body>"`. Kinds:
-`Initial Release` (major), `Added`/`Changed`/`Removed` (minor),
-`Fixed`/`Performance`/`Deprecated`/`Security`/`Dependencies` (patch).
+Use the `changelog-authoring` skill whenever creating or editing required
+changelog entries. Its source is
+`.apm/skills/changelog-authoring/SKILL.md`; it defines the fragment format,
+entry prose, package and kind choices, and preview commands.
 
-**A fragment applies only to what a released package ships** — its `src/`,
-`gleam.toml`, or `manifest.toml`. The fragment describes what a consumer of
-the published package receives. Write a fragment when you change a released
-package's:
-
-- public API (types, functions, labels, or signatures)
-- observable runtime behavior, or a bug in that behavior
-- dependency requirements in `gleam.toml` or `manifest.toml`
-- `///` or `////` doc comments, because these ship in the API reference
-
-**Do not write a fragment** for anything a package does not ship. The website,
-`docs/`, examples, and dev tooling reach no consumer, so a fragment for them
-bumps a version that nobody sees:
-
-- `website/` content, components, styles, or generator scripts
-- `docs/` ADRs, design notes, and decks
-- `examples/` (release-excluded workspace members)
-- `benchmarks/` (release-excluded development tools)
-- root config, `justfile`, `.github/` workflows, and audit or lint settings
-- `packages/*/test/`, internal refactors, and formatting that keep the
-  consumer-visible behavior the same
-
-`beryl`, `beryl_mist`, and `beryl_ewe` each take their own fragments.
-`beryl_protocol` and `beryl_heirloom` ship inside beryl; write their
-consumer-visible changes as `beryl` fragments. `examples/**` and
-`benchmarks/**` are release-excluded.
-
-PR CI enforces fragments via `trellis changelog check`. Preview the effect of
-the current fragments with `just version-plan`.
+Add entries for user-facing code/API changes. Do not add entries for
+documentation-only changes (including `///` and `////` source comments),
+or development, test, CI, or tooling changes. In a mixed PR, exclude its
+documentation-only parts from entries. Each entry needs a sentence heading
+and one or more explanatory paragraphs; code samples are only for API changes
+when useful. The skill is the detailed source of truth for this policy.
 
 ### Release Flow
 
