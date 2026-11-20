@@ -25,10 +25,6 @@ The generator creates pages under `/reference/api/` from Gleam docs metadata. Th
   <p>beryl: type-safe real-time communication</p>
 </li>
 <li class="api-module-list__item">
-  <a class="api-module-list__name" href="/reference/api/beryl-bridge/"><code>beryl/bridge</code></a>
-  <p>Forward an external OTP actor's message stream to a socket through its <code>Sender</code>.</p>
-</li>
-<li class="api-module-list__item">
   <a class="api-module-list__name" href="/reference/api/beryl-channel/"><code>beryl/channel</code></a>
   <p>The channel composition surface: a channel is a topic pattern paired with a typed <code>join</code> callback and callbacks over private state.</p>
 </li>

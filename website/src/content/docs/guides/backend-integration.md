@@ -154,14 +154,35 @@ fn not_found() -> Response(mist.ResponseData) {
 
 Use `beryl.broadcast` when the backend sends JSON payloads by topic.
 
-For typed updates from a long-lived application actor, use the socket's
-`socket.Sender(message)` with `beryl/bridge`. The bridge forwards messages from
-the actor to `socket.Info(message)`.
+For typed updates from a long-lived application actor, pass
+`socket.ConnectInfo.self` to the producer and call
+`socket.notify(sender, message)`. The socket's `update` callback receives
+`socket.Info(message)`. With channel handlers, pass `channel.JoinContext.self`
+and call `channel.notify(sender, message)` to deliver to that join's `on_info`
+callback.
 
-The bridge forwarder follows the lifetime of the process that started it. That
-monitor is only a backstop. When you start a bridge for one socket or one
-joined topic, keep the handle and call `bridge.stop` when that socket or topic
-ends. If you skip `stop`, the forwarder keeps running until the owner exits.
+Both functions return an admission `Result`. `Ok(Nil)` means queued, not
+handled. The producer must handle rejection when the target is closed,
+unavailable, or full, or when the message is too large. A channel sender
+belongs to one join and cannot deliver to a later join of the same topic.
+
+### Migrating from `beryl/bridge`
+
+`beryl/bridge` was removed before 1.0, including `Bridge`, `StartError`,
+`start`, `subject`, `pid`, and `stop`. beryl no longer starts a forwarding
+process for an external actor's subscription.
+
+Direct notification works when the producer accepts a typed sender or a
+callback that can map its event to your application message and return the
+notification result. Neither `socket.Sender` nor `channel.Sender` is a
+`Subject`; you cannot pass one to an interface that accepts only
+`Subject(event)`.
+
+For a Subject-only producer, change its subscription interface if you control
+it, or keep the adaptation in your application. Any application-owned
+forwarder must handle message conversion, admission errors, unsubscription,
+and cleanup when the socket or join ends. Direct notification does not supply
+that lifecycle policy.
 
 ## Why publish from the backend
 

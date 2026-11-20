@@ -38,11 +38,6 @@ internal module remains an implementation detail.
   `channel.gleam:discard_reply`, `channel.gleam:presence_track`,
   `channel.gleam:presence_untrack`, `channel.gleam:push_presence`,
   `channel.gleam:broadcast_presence`).
-- `bridge` forwards typed subject messages to a socket sender. `start`,
-  `subject`, `pid`, and `stop` operate on `Bridge`; `StartError` reports startup
-  failures (`bridge.gleam:Bridge`, `bridge.gleam:StartError`,
-  `bridge.gleam:start`, `bridge.gleam:subject`, `bridge.gleam:pid`,
-  `bridge.gleam:stop`).
 - `topic` provides `TopicPattern`, `parse_pattern`, `matches`, wildcard/ID
   extraction, segment helpers, and topic/pattern/event validation
   (`topic.gleam:TopicPattern`, `topic.gleam:parse_pattern`, `topic.gleam:matches`,
@@ -226,9 +221,6 @@ internal module remains an implementation detail.
 - PubSub starts supervised scopes, updates pg membership, and sends raw process
   messages locally or across nodes (`pubsub.gleam:start`, `pubsub.gleam:join`,
   `pubsub.gleam:broadcast`, `pubsub_native.gleam:send`).
-- Bridge startup spawns a forwarding process and monitors its owner; callers
-  must stop it when the topic/socket ends (`bridge.gleam:start`,
-  `bridge.gleam:forward_loop`, `bridge.gleam:stop`).
 - Native queue/budget/limiter operations mutate ETS or atomic state. Diagnostics
   use palabres and telemetry FFI; host OTP Logger configuration stays host-owned
   (`work_queue.gleam:publish`, `outbound_budget.gleam:reserve_and_send`,

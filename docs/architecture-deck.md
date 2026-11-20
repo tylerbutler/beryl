@@ -77,7 +77,6 @@ runtime connects these layers.
 | `beryl_mist` / `beryl_ewe` | WebSocket adapters; assign socket ids, route frames |
 | `beryl/group` | Named topic collections; supports grouped broadcast |
 | `beryl/topic` | Topic pattern matching: exact, `"ns:*"` prefix, and segment wildcards |
-| `beryl/bridge` | Forward an external actor's messages into one socket's `Info` events |
 
 <!--
 Speaker notes:

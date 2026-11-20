@@ -256,57 +256,34 @@ Lustre presence, the portable host, and shared helpers.
 See the [Examples page](https://beryl.tylerbutler.com/examples/) for a full
 comparison.
 
-## Recipe: bridge an external actor to a socket
+## Send typed updates from an actor
 
 A long-lived actor, such as a document session, can send updates to each joined
-socket. `beryl/bridge` starts a small forwarding process. The process converts
-the actor messages and sends typed `Info` events through the socket
-`Sender`.
+socket. Pass `socket.ConnectInfo.self` to a producer that can call
+`socket.notify`; `update` receives the message as `socket.Info`.
 
 ```gleam
-import beryl/bridge.{type Bridge}
-import beryl/socket.{Closed, Info, Next, Push}
-import gleam/json
-
-pub type DocEvent {
-  Updated(version: Int)
-}
+import beryl/overload
+import beryl/socket
 
 pub type Msg {
   DocUpdated(version: Int)
 }
 
-pub type Model {
-  Model(bridge: Bridge(DocEvent))
-}
-
-fn init(info: socket.ConnectInfo(Msg)) -> #(Model, List(socket.Effect)) {
-  let assert Ok(forwarder) =
-    bridge.start(to: info.self, with: fn(event: DocEvent) {
-      let Updated(version) = event
-      DocUpdated(version)
-    })
-  doc.subscribe(doc_actor, bridge.subject(forwarder))
-  #(Model(bridge: forwarder), [])
-}
-
-fn update(model: Model, ev: socket.Input(Msg)) -> socket.Next(Model) {
-  case ev {
-    Info(DocUpdated(version)) ->
-      Next(model, [
-        Push("doc:1", "doc_updated", json.object([#("version", json.int(version))])),
-      ])
-    Closed(_, _) -> {
-      bridge.stop(model.bridge)
-      Next(model, [])
-    }
-    _ -> Next(model, [])
-  }
+fn notify_socket(
+  sender: socket.Sender(Msg),
+  version: Int,
+) -> Result(Nil, overload.AdmissionError) {
+  socket.notify(sender, DocUpdated(version))
 }
 ```
 
-Call `bridge.stop` when the owner socket or topic closes. The bridge monitors
-its creator and stops if that process exits.
+For channel handlers, pass `channel.JoinContext.self` and use `channel.notify`
+to deliver to `on_info`. Handle admission errors in the producer.
+Neither sender is a `Subject`, so these APIs cannot directly replace a
+subscription that accepts only a `Subject`. See the
+[backend integration guide](https://beryl.tylerbutler.com/guides/backend-integration/#send-typed-updates-to-one-socket)
+for migration from the removed `beryl/bridge` module.
 
 ## Releases and changelog
 

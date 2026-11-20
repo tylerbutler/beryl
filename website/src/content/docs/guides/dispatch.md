@@ -262,8 +262,11 @@ fn notify_socket(
 If the socket has disconnected or its queue cannot accept the message,
 `socket.notify` returns an admission error.
 
-For long-lived external actors that send updates to a socket, see
-`beryl/bridge`.
+Pass the sender to an external producer that can call `socket.notify` or a
+callback that returns its admission result. A sender is not a `Subject` and
+cannot directly replace a Subject-only subscription. See
+[backend integration](/guides/backend-integration/#send-typed-updates-to-one-socket)
+for producer-interface and lifecycle requirements.
 
 ## Effects run in list order
 
