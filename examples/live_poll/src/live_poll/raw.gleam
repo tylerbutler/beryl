@@ -4,7 +4,7 @@ import gleam/dynamic.{type Dynamic}
 import gleam/io
 import gleam/json
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option, None}
 import gleam/set.{type Set}
 import gleam/string
 import live_poll/poll
@@ -85,7 +85,7 @@ pub fn update(
               reply,
             )
           False, Ok(_) | False, Error(_) | True, Error(_) ->
-            socket.Next(model, discard_reply(reply))
+            socket.Next(model, socket.discard_reply(reply))
         }
       socket.Info(ClosePoll(topic)) ->
         case room_name(topic) {
@@ -130,7 +130,7 @@ fn handle_command(
       )
     poll.Vote(choice) ->
       case stage {
-        ReadOnly -> socket.Next(model, discard_reply(reply))
+        ReadOnly -> socket.Next(model, socket.discard_reply(reply))
         Voting | Timed ->
           case store.vote(polls, room, choice) {
             Ok(state) ->
@@ -146,7 +146,10 @@ fn handle_command(
                   ]),
               )
             Error(error) ->
-              socket.Next(model, reply_error(reply, poll.error_to_json(error)))
+              socket.Next(
+                model,
+                socket.reply_error(reply, poll.error_to_json(error)),
+              )
           }
       }
     poll.Close ->
@@ -162,12 +165,13 @@ fn handle_command(
               )
             store.AlreadyClosed(state) ->
               socket.Next(model, socket.reply_ok(reply, poll.to_json(state)))
-            store.RoomNotFound -> socket.Next(model, discard_reply(reply))
+            store.RoomNotFound ->
+              socket.Next(model, socket.discard_reply(reply))
           }
         }
-        ReadOnly | Voting -> socket.Next(model, discard_reply(reply))
+        ReadOnly | Voting -> socket.Next(model, socket.discard_reply(reply))
       }
-    poll.Unsupported -> socket.Next(model, discard_reply(reply))
+    poll.Unsupported -> socket.Next(model, socket.discard_reply(reply))
   }
 }
 
@@ -175,22 +179,5 @@ fn room_name(topic: String) -> Result(String, Nil) {
   case string.split(topic, ":") {
     ["poll", room] if room != "" -> Ok(room)
     _ -> Error(Nil)
-  }
-}
-
-fn reply_error(
-  reply: Option(socket.ReplyReference),
-  payload: json.Json,
-) -> List(socket.Effect) {
-  case reply {
-    Some(reference) -> [socket.ReplyError(reference, payload)]
-    None -> []
-  }
-}
-
-fn discard_reply(reply: Option(socket.ReplyReference)) -> List(socket.Effect) {
-  case reply {
-    Some(reference) -> [socket.DiscardReply(reference)]
-    None -> []
   }
 }

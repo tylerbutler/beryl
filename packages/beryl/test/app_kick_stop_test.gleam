@@ -8,6 +8,7 @@ import beryl
 import beryl/socket.{AcceptJoin, Closed, Join, KickTopic, Message, Next, Stop}
 import beryl/wire
 import gleam/erlang/process
+import gleam/json
 import gleam/option.{None}
 import gleam/string
 import gleeunit/should
@@ -25,6 +26,11 @@ fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
           Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
           Message(_topic, "kick_b", _payload, _ref) ->
             Next(model, [KickTopic("room:b")])
+          Message(topic, "kick_then_push", _payload, _ref) ->
+            Next(model, [
+              KickTopic(topic),
+              socket.Push(topic, "last", json.object([])),
+            ])
           Message(_topic, "stop", _payload, _ref) -> Stop(socket.Normal)
           Closed("room:b", socket.Shutdown) ->
             Next(model, [KickTopic("room:c")])
@@ -106,6 +112,25 @@ pub fn kick_chain_from_closed_terminates_test() -> Nil {
   app_test_helper.push(channels, "s1", "room:a", "noop", "r-3")
   let assert Ok(Message("room:a", "noop", _, _)) = process.receive(events, 500)
   Nil
+}
+
+pub fn kick_then_push_sends_push_before_terminal_frame_test() -> Nil {
+  let events = process.new_subject()
+  let channels = start_system(events)
+  let frames = app_test_helper.connect(channels, "s1")
+  join_rooms(channels, events, frames, "s1", ["room:a"])
+
+  app_test_helper.push(channels, "s1", "room:a", "kick_then_push", "r-2")
+
+  let assert Ok(Message("room:a", "kick_then_push", _, _)) =
+    process.receive(events, 500)
+  let assert Ok(Closed("room:a", socket.Shutdown)) =
+    process.receive(events, 500)
+  app_test_helper.recv(frames)
+  |> should.equal("[null,null,\"room:a\",\"last\",{}]")
+  app_test_helper.recv(frames)
+  |> should.equal("[\"jr-room:a\",\"jr-room:a\",\"room:a\",\"phx_close\",{}]")
+  app_test_helper.recv_none(frames)
 }
 
 pub fn stop_tears_down_socket_and_calls_closer_test() -> Nil {

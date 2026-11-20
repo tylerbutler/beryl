@@ -8,11 +8,15 @@
 ////
 //// ## Effect ordering guarantee
 ////
-//// Effects are applied strictly in list order, and every frame for a
-//// socket is written by that socket's own runtime actor — so list order
-//// is wire order. An `AcceptJoin` followed by a `Push` in the same list
-//// is guaranteed to arrive as the join acknowledgment first and the push
-//// second.
+//// Effects are applied in list order, except that `KickTopic` schedules
+//// the topic to close at the end of the effects list. Every frame for a
+//// socket is written by that socket's own runtime actor. An `AcceptJoin`
+//// followed by a `Push` in the same list arrives as the join acknowledgment
+//// first and the push second.
+////
+//// On a joined topic, `[KickTopic(topic), Push(topic, "last", payload)]`
+//// sends the push before closing the topic. The `Closed` input and any
+//// terminal frame follow the rest of the effects list.
 ////
 //// Most effects are applied in one actor turn. `PresenceTrack` and
 //// `PresenceUntrack` are the exception: they are applied by the presence
@@ -197,7 +201,8 @@ pub type Next(model) {
   Stop(reason: StopReason)
 }
 
-/// One update may return several effects, applied strictly in list order
+/// One update may return several effects, applied in list order except
+/// that `KickTopic` closes its topic at the end of the effects list
 /// (see the module docs for the ordering guarantee).
 pub type Effect {
   /// Accept a pending join. This subscribes the socket to the topic and sends
@@ -267,9 +272,13 @@ pub type Effect {
     event: String,
     encode: fn(List(PresenceEntry)) -> Json,
   )
-  /// Close this socket's subscription to a topic. The topic receives
-  /// `Closed(topic, Shutdown)`. If the codec has a close encoder, the client
-  /// also receives its terminal frame.
+  /// Schedule this socket's subscription to a topic to close at the end of
+  /// the effects list. Later effects in the same list can still push to the
+  /// joined topic, even when `KickTopic` comes first.
+  ///
+  /// After the list completes, the topic receives `Closed(topic, Shutdown)`.
+  /// If the codec has a close encoder, the client also receives its terminal
+  /// frame after those effects.
   KickTopic(topic: String)
 }
 
@@ -283,6 +292,33 @@ pub fn reply_ok(
 ) -> List(Effect) {
   case reference {
     Some(reply_reference) -> [ReplyOk(reply_reference, payload)]
+    None -> []
+  }
+}
+
+/// Return a `ReplyError` effect when the client requested a reply.
+///
+/// Like `reply_ok`, this helper returns no effects for `None`. For `Some`,
+/// it returns one effect with the exact reply reference and payload.
+pub fn reply_error(
+  reference: Option(ReplyReference),
+  payload: Json,
+) -> List(Effect) {
+  case reference {
+    Some(reply_reference) -> [ReplyError(reply_reference, payload)]
+    None -> []
+  }
+}
+
+/// Return a `DiscardReply` effect when the client requested a reply.
+///
+/// This helper returns no effects for `None`. For `Some`, it returns one
+/// effect that releases the exact reply reference without sending a reply.
+/// Use it only when the app will not answer the message; an empty effects
+/// list can defer a reply.
+pub fn discard_reply(reference: Option(ReplyReference)) -> List(Effect) {
+  case reference {
+    Some(reply_reference) -> [DiscardReply(reply_reference)]
     None -> []
   }
 }

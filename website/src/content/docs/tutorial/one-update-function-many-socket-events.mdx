@@ -113,9 +113,11 @@ poll.GetState ->
   )
 ```
 
-This excerpt comes from `handle_command` in `raw.gleam`. For error replies, the
-example has a small local helper. It returns `ReplyError` only when the reference is
-`Some(reference)`.
+This excerpt comes from `handle_command` in `raw.gleam`. Error replies use
+`socket.reply_error` with the same optional-reference behavior. To release a
+reference without a reply, use `socket.discard_reply`. Both helpers return an
+empty effect list for `None`. An empty list alone does not discard a reference:
+you can still store it and reply in a later turn.
 
 Treat both reference types as tokens. Do not compare them. Do not build them from
 Phoenix fields. Pass the value back to beryl while it is still valid.
@@ -182,8 +184,9 @@ runs the list as:
 2. broadcast `poll_state` to every other socket on the topic.
 
 The socket actor runs the effects in list order and writes the frames in the
-same order. For one socket, list order is wire order. This is a beryl
-guarantee.
+same order, with one exception: `KickTopic` closes its topic at the end of the
+list. On a joined topic, `[KickTopic(topic), Push(topic, "last", payload)]`
+sends the push before the terminal close frame.
 
 Across two connections, this does not guarantee which browser observes its
 frame first. The [two-socket experiment](#compare-replies-and-broadcasts-with-two-tabs)
@@ -234,7 +237,8 @@ The `Message` branch also checks that the model knows the topic:
 case set.contains(model.topics, topic), room_name(topic) {
   True, Ok(room) ->
     handle_command(stage, polls, model, topic, room, event, payload, reply)
-  True, Error(_) | False, Ok(_) | False, Error(_) -> socket.Next(model, [])
+  False, Ok(_) | False, Error(_) | True, Error(_) ->
+    socket.Next(model, socket.discard_reply(reply))
 }
 ```
 

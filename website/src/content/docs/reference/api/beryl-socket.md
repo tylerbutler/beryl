@@ -24,11 +24,15 @@ Types for building app-side dispatch systems with `beryl.child_spec`.
 
  ## Effect ordering guarantee
 
- Effects are applied strictly in list order, and every frame for a
- socket is written by that socket's own runtime actor — so list order
- is wire order. An `AcceptJoin` followed by a `Push` in the same list
- is guaranteed to arrive as the join acknowledgment first and the push
- second.
+ Effects are applied in list order, except that `KickTopic` schedules
+ the topic to close at the end of the effects list. Every frame for a
+ socket is written by that socket's own runtime actor. An `AcceptJoin`
+ followed by a `Push` in the same list arrives as the join acknowledgment
+ first and the push second.
+
+ On a joined topic, `[KickTopic(topic), Push(topic, "last", payload)]`
+ sends the push before closing the topic. The `Closed` input and any
+ terminal frame follow the rest of the effects list.
 
  Most effects are applied in one actor turn. `PresenceTrack` and
  `PresenceUntrack` are the exception: they are applied by the presence
@@ -59,9 +63,11 @@ Types for building app-side dispatch systems with `beryl.child_spec`.
 <section class="api-symbol-index__group">
   <a class="api-symbol-index__section" href="#functions">Functions</a>
   <ul>
+<li><a href="#api-function-discard_reply"><code>discard_reply</code></a></li>
 <li><a href="#api-function-empty_seed"><code>empty_seed</code></a></li>
 <li><a href="#api-function-notify"><code>notify</code></a></li>
 <li><a href="#api-function-queue_snapshot"><code>queue_snapshot</code></a></li>
+<li><a href="#api-function-reply_error"><code>reply_error</code></a></li>
 <li><a href="#api-function-reply_ok"><code>reply_ok</code></a></li>
   </ul>
 </section>
@@ -166,7 +172,8 @@ pub type Effect {
 }
 ```
 
-One update may return several effects, applied strictly in list order
+One update may return several effects, applied in list order except
+ that `KickTopic` closes its topic at the end of the effects list
  (see the module docs for the ordering guarantee).
 
 #### Constructors
@@ -347,9 +354,13 @@ Broadcast a presence snapshot for a topic to all its subscribers,
 KickTopic(topic: String)
 ```
 
-Close this socket's subscription to a topic. The topic receives
- `Closed(topic, Shutdown)`. If the codec has a close encoder, the client
- also receives its terminal frame.
+Schedule this socket's subscription to a topic to close at the end of
+ the effects list. Later effects in the same list can still push to the
+ joined topic, even when `KickTopic` comes first.
+
+ After the list completes, the topic receives `Closed(topic, Shutdown)`.
+ If the codec has a close encoder, the client also receives its terminal
+ frame after those effects.
 
 <div class="api-entry-anchor" id="api-type-input" aria-hidden="true"></div>
 
@@ -615,6 +626,21 @@ An outbound codec callback could not encode a frame. The runtime closes
 
 ## Functions
 
+<div class="api-entry-anchor" id="api-function-discard_reply" aria-hidden="true"></div>
+
+### `discard_reply`
+
+```gleam
+pub fn discard_reply(option.Option(ReplyReference)) -> List(Effect)
+```
+
+Return a `DiscardReply` effect when the client requested a reply.
+
+ This helper returns no effects for `None`. For `Some`, it returns one
+ effect that releases the exact reply reference without sending a reply.
+ Use it only when the app will not answer the message; an empty effects
+ list can defer a reply.
+
 <div class="api-entry-anchor" id="api-function-empty_seed" aria-hidden="true"></div>
 
 ### `empty_seed`
@@ -651,6 +677,22 @@ pub fn queue_snapshot(Sender(a)) -> Result(overload.Occupancy, overload.Admissio
 ```
 
 Read socket queue accounting without waiting for its callback.
+
+<div class="api-entry-anchor" id="api-function-reply_error" aria-hidden="true"></div>
+
+### `reply_error`
+
+```gleam
+pub fn reply_error(
+  option.Option(ReplyReference),
+  json.Json
+) -> List(Effect)
+```
+
+Return a `ReplyError` effect when the client requested a reply.
+
+ Like `reply_ok`, this helper returns no effects for `None`. For `Some`,
+ it returns one effect with the exact reply reference and payload.
 
 <div class="api-entry-anchor" id="api-function-reply_ok" aria-hidden="true"></div>
 
