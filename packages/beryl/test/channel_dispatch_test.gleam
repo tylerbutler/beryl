@@ -5,6 +5,7 @@
 
 import beryl
 import beryl/channel
+import beryl/socket
 import beryl/transport
 import beryl/wire
 import channel_dispatch_helper as helper
@@ -12,8 +13,11 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
 import gleam/json
+import gleam/list
+import gleam/option.{type Option, Some}
 import gleam/string
 import gleeunit/should
+import test_helper
 
 /// The room channel's private server-side message type. It is never named
 /// by the router, the socket model, or the wire.
@@ -333,6 +337,150 @@ pub fn a_rejected_join_leaves_no_live_channel_test() -> Nil {
 }
 
 // --- client messages -------------------------------------------------------
+
+type Completion {
+  Answer
+  Refuse
+  Discard
+}
+
+type Delegation {
+  Delegation(reply: Option(socket.ReplyReference), completion: Completion)
+}
+
+fn delegation_handlers(
+  references: process.Subject(Option(socket.ReplyReference)),
+  delegates: process.Subject(channel.Sender(Delegation)),
+) -> List(channel.Handler) {
+  [
+    channel.handler("source", fn(_) {
+      channel.accept(Nil)
+      |> channel.on_message(fn(_, message) {
+        process.send(references, message.reply)
+        channel.stay(Nil)
+      })
+    }),
+    channel.handler("delegate", fn(context) {
+      process.send(delegates, context.self)
+      channel.accept(Nil)
+      |> channel.on_info(fn(_, delegation) {
+        let Delegation(reply, completion) = delegation
+        let action = case completion {
+          Answer -> channel.reply_ok(reply, json.string("delegated"))
+          Refuse -> channel.reply_error(reply, json.string("delegated"))
+          Discard -> channel.discard_reply(reply)
+        }
+        channel.next(Nil, [action, channel.push("handled", json.null())])
+      })
+    }),
+  ]
+}
+
+fn join_delegation_topics(
+  channels: beryl.Sockets,
+  socket_id: String,
+) -> helper.Frames {
+  let frames = helper.connect(channels, socket_id)
+  helper.join(channels, socket_id, "source", "original-join", "join-source")
+  let _ = helper.recv(frames)
+  helper.join(channels, socket_id, "delegate", "sibling-join", "join-delegate")
+  let _ = helper.recv(frames)
+  frames
+}
+
+fn send_delegation(
+  sender: channel.Sender(Delegation),
+  reply: Option(socket.ReplyReference),
+  completion: Completion,
+) -> Nil {
+  channel.notify(sender, Delegation(reply, completion))
+  |> should.equal(Ok(Nil))
+}
+
+fn handled(frames: helper.Frames) -> Nil {
+  helper.recv(frames)
+  |> should.equal("[null,null,\"delegate\",\"handled\",null]")
+}
+
+fn delegated_reply(frames: helper.Frames, status: String) -> Nil {
+  helper.recv(frames)
+  |> should.equal(
+    "[\"original-join\",\"request\",\"source\",\"phx_reply\","
+    <> "{\"status\":\""
+    <> status
+    <> "\",\"response\":\"delegated\"}]",
+  )
+}
+
+pub fn sibling_topic_can_reply_or_discard_the_original_request_test() -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
+  let references = process.new_subject()
+  let delegates = process.new_subject()
+  let channels = start(delegation_handlers(references, delegates))
+  let frames = join_delegation_topics(channels, "s1")
+  let assert Ok(sender) = process.receive(delegates, 1000)
+
+  list.each([Answer, Refuse, Discard, Answer], fn(completion) {
+    // Reusing the key also proves that the previous action released capacity.
+    helper.push(channels, "s1", "source", "work", "request")
+    let assert Ok(Some(reference)) = process.receive(references, 1000)
+    send_delegation(sender, Some(reference), completion)
+    case completion {
+      Answer -> delegated_reply(frames, "ok")
+      Refuse -> delegated_reply(frames, "error")
+      Discard -> Nil
+    }
+    handled(frames)
+  })
+  helper.recv_none(frames)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
+
+pub fn delegated_actions_reject_guessed_stale_and_cross_socket_refs_test() -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
+  let references = process.new_subject()
+  let delegates = process.new_subject()
+  let channels = start(delegation_handlers(references, delegates))
+  let first = join_delegation_topics(channels, "s1")
+  let assert Ok(first_sender) = process.receive(delegates, 1000)
+  let second = join_delegation_topics(channels, "s2")
+  let assert Ok(second_sender) = process.receive(delegates, 1000)
+
+  helper.push(channels, "s1", "source", "work", "request")
+  let assert Ok(Some(stale)) = process.receive(references, 1000)
+  send_delegation(first_sender, Some(stale), Discard)
+  handled(first)
+
+  helper.push(channels, "s1", "source", "work", "request")
+  let assert Ok(Some(current)) = process.receive(references, 1000)
+  helper.push(channels, "s2", "source", "work", "request")
+  let assert Ok(Some(other_socket)) = process.receive(references, 1000)
+  let guessed =
+    socket.make_reply_reference(
+      "source",
+      Some("original-join"),
+      Some("request"),
+    )
+  list.each([guessed, stale, other_socket], fn(invalid) {
+    list.each([Answer, Refuse, Discard], fn(completion) {
+      send_delegation(first_sender, Some(invalid), completion)
+      handled(first)
+    })
+  })
+  list.each([#("s1", first), #("s2", second)], fn(client) {
+    helper.push(channels, client.0, "source", "work", "request")
+    helper.recv(client.1) |> string.contains("duplicate_ref") |> should.be_true
+  })
+  send_delegation(first_sender, Some(current), Answer)
+  delegated_reply(first, "ok")
+  handled(first)
+  send_delegation(second_sender, Some(other_socket), Answer)
+  delegated_reply(second, "ok")
+  handled(second)
+  helper.recv_none(first)
+  helper.recv_none(second)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
 
 pub fn optional_reply_actions_handle_none_and_some_on_the_wire_test() -> Nil {
   let channels = start([optional_reply_handler()])

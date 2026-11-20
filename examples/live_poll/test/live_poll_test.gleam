@@ -41,3 +41,16 @@ pub fn empty_rooms_are_removed_test() -> Nil {
   store.join(polls, "demo")
   store.get(polls, "demo") |> should.equal(poll.new())
 }
+
+pub fn memberships_are_per_owner_and_room_test() -> Nil {
+  let assert Ok(polls) = store.start()
+  store.join(polls, "first")
+  store.join(polls, "second")
+  store.join(polls, "second")
+  let assert Ok(voted) = store.vote(polls, "second", poll.Erlang)
+  store.leave(polls, "first")
+  store.leave(polls, "first")
+  store.get(polls, "second") |> should.equal(voted)
+  store.leave(polls, "second")
+  store.close(polls, "second") |> should.equal(store.RoomNotFound)
+}

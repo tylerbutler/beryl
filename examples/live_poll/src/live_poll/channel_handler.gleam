@@ -32,6 +32,7 @@ fn poll_channel(
       [room] -> room
       _ -> ""
     }
+    // The store monitors this worker; cleanup also happens if it is killed.
     store.join(polls, room)
     timer.after(clock, duration_ms, fn() {
       case channel.notify(context.self, ClosePoll) {

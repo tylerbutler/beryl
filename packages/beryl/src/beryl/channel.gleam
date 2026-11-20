@@ -60,8 +60,9 @@
 //// actions to the socket actor.
 ////
 //// The runtime applies action lists from left to right. Actions always target
-//// the channel's own topic. The runtime converts them to beryl's core
-//// `Effect` values and applies them in list order.
+//// the channel's own topic, except replies and discards: they follow the
+//// supplied reply reference on the same socket. The runtime converts actions
+//// to beryl's core `Effect` values and applies them in list order.
 //// Action order is therefore wire order for one topic. beryl does not define
 //// an order between different topics on one socket. Their workers run
 //// concurrently, as Phoenix channel processes do. An asynchronous presence
@@ -280,6 +281,12 @@ pub type JoinContext(info) {
 /// A pending reference consumes socket capacity until you reply, discard it, or
 /// close the topic. Keep the reference in your state if you will reply on a
 /// later turn. [`stay`](#stay) and [`next`](#next) do not release it.
+///
+/// The exact live reference is a single-use capability on this socket. You
+/// may pass it to a sibling topic's handler on the same socket to reply or
+/// discard it. Replies retain the original topic, join reference, and message
+/// reference. Guessed, stale, and cross-socket references have no effect;
+/// reconstructing the wire fields does not recreate the capability.
 pub type Message {
   Message(
     /// The client-supplied event name.
@@ -305,7 +312,8 @@ pub opaque type Closing {
   Closing
 }
 
-/// One operation on the channel's own topic.
+/// One operation on the channel's own topic, except replies and discards,
+/// which follow the supplied reference on the same socket.
 ///
 /// The phase parameter prevents [`on_terminate`](#on_terminate) from returning
 /// active-only operations. Put actions in a list in wire order.
@@ -356,6 +364,11 @@ pub fn broadcast_from(event: String, payload: json.Json) -> Action(phase) {
 
 /// Reply successfully when a client message supplied a reply handle.
 ///
+/// A sibling topic's handler on the same socket may use the exact live
+/// reference. The reply retains the original topic and correlation fields,
+/// not the responding handler's topic. The reference is single-use; guessed,
+/// stale, and cross-socket references have no effect.
+///
 /// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
 /// produces no effect.
 pub fn reply_ok(
@@ -366,6 +379,11 @@ pub fn reply_ok(
 }
 
 /// Reply with an error when a client message supplied a reply handle.
+///
+/// A sibling topic's handler on the same socket may use the exact live
+/// reference. The reply retains the original topic and correlation fields,
+/// not the responding handler's topic. The reference is single-use; guessed,
+/// stale, and cross-socket references have no effect.
 ///
 /// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
 /// produces no effect.
@@ -379,6 +397,11 @@ pub fn reply_error(
 /// Discard a client message reply handle without sending a wire reply.
 ///
 /// Use this for messages the application intentionally will not answer.
+/// A sibling topic's handler on the same socket may discard the exact live
+/// reference. This releases the original request's capacity, not a request
+/// on the responding handler's topic. The reference is single-use; guessed,
+/// stale, and cross-socket references have no effect.
+///
 /// [`option.None`](https://hexdocs.pm/gleam_stdlib/gleam/option.html#Option)
 /// produces no effect.
 pub fn discard_reply(
@@ -646,8 +669,20 @@ pub fn on_presence(
   }
 }
 
-/// Run cleanup when the channel ends for any reason: client leave, a
-/// [`close`](#close) result, a socket teardown, or a disconnect.
+/// Run cleanup when a live worker handles a channel close.
+///
+/// This includes client leave, rejoin, a [`close`](#close) result, socket
+/// disconnect, heartbeat timeout, and graceful `beryl.stop`. A caught callback
+/// panic also runs cleanup with the state from before that callback.
+/// A rejected join has no accepted channel to clean up.
+///
+/// This callback cannot run after the worker dies, including an untrappable
+/// kill or loss of its socket actor or supervision tree. A blocked worker can
+/// also be killed before cleanup starts or finishes: normal closes allow five
+/// seconds for queued work and cleanup, and graceful stop allows at most one
+/// second per worker. Cleanup is therefore not guaranteed. Put required
+/// resource cleanup in a surviving application owner that monitors the worker;
+/// do not rely only on this callback.
 ///
 /// The runtime applies the returned closing-phase actions in the turn that
 /// closes this topic, after it removes the channel instance. This phase

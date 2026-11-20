@@ -246,8 +246,10 @@ shared invariant to protect.
 The examples show two common choices.
 [`live_poll/store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/store.gleam)
 keeps one in-memory actor that serializes `get`, `vote`, and `close` calls with
-`join` and `leave` updates. Callers that use `get`, `vote`, or `close` wait for
-that actor before they continue.
+`join` and `leave` updates. It monitors each membership's calling process, so
+worker loss removes membership even when `on_terminate` cannot run. A raw socket
+process can own memberships in several rooms. Callers that use `get`, `vote`,
+or `close` wait for that actor before they continue.
 [`collab_document/document_store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/collab_docs/src/collab_document/document_store.gleam)
 also keeps one in-memory actor, but `merge_state` only enqueues a merge and
 returns. OR-Map merges still converge, but another process can read before that
@@ -317,9 +319,9 @@ work that must occur during the join in
 
 ## Return actions from callbacks
 
-An action is one operation **on this channel's own topic**. Constructor
-functions return one action. Put actions in a list in the order clients should
-observe them:
+Actions target **this channel's own topic**, except replies and discards, which
+follow the supplied reference on the same socket. Constructor functions return
+one action. Put actions in a list in the order clients should observe them:
 
 | Action | Effect |
 |---|---|
@@ -334,8 +336,8 @@ observe them:
 | `push_presence(event, encode)` | Presence snapshot for this topic, to this socket |
 | `broadcast_presence(event, encode)` | Presence snapshot for this topic, to every subscriber |
 
-No action names a topic. Each action applies to the channel that returned it.
-To send across topics, use the external APIs described in
+No action names a topic. Pushes, broadcasts, and presence actions apply to the
+channel that returned them. For cross-topic publishing, use the external APIs described in
 [When to use raw dispatch or another process](#when-to-use-raw-dispatch-or-another-process).
 
 Presence actions need a presence handle on the config
@@ -419,7 +421,7 @@ acknowledgment.
 | `on_message` | A client message on this topic | `fn(state, channel.Message) -> Next(state)` |
 | `on_info` | A `notify` addressed to this join | `fn(state, info) -> Next(state)` |
 | `on_presence` | This topic's initial roster and later changes | `fn(state, presence.Event) -> Next(state)` |
-| `on_terminate` | This channel ending, for any reason | `fn(state, socket.StopReason) -> List(Action(Closing))` |
+| `on_terminate` | A live worker handling this channel's close | `fn(state, socket.StopReason) -> List(Action(Closing))` |
 
 `channel.accept(state)` stays joined until you add callbacks with the `on_*`
 builders. The default message callback discards reply references without a wire
@@ -464,14 +466,35 @@ handler will not answer a message, return `discard_reply(message.reply)`.
 For a deferred reply, keep the reference in your state and reply from a later callback,
 such as `on_info`.
 
+The exact live reply reference is a single-use capability on its socket.
+A handler may pass it to a sibling topic's handler on the same socket, for
+example through a typed `channel.notify`. That handler may call `reply_ok`,
+`reply_error`, or `discard_reply` with it. Replies keep the original topic,
+join reference, and message reference. Guessed, stale, and cross-socket
+references have no effect. Reconstructing the wire fields does not recreate
+the capability.
+
 `close` applies its actions first and then closes the topic, so a
 farewell broadcast still reaches the topic's subscribers.
 
 ## Handle channel termination
 
-`on_terminate` runs once for each accepted join. It runs after `phx_leave`,
-`close([])`, socket disconnect, heartbeat timeout, and `beryl.stop`. A rejected
-join does not create an instance, so it does not run `on_terminate`.
+When the worker is alive and can finish its queued work, `on_terminate` runs
+once after `phx_leave`, rejoin, `close([])`, socket disconnect, heartbeat timeout,
+or graceful `beryl.stop`. A caught callback panic also runs it with the state
+from before that callback. A rejected join has no accepted channel to clean up.
+
+The callback cannot run after the worker dies, including an untrappable kill
+or loss of its socket actor or supervision tree. A blocked worker can be killed
+before cleanup starts or finishes. Normal closes allow five seconds for queued
+work and cleanup; graceful stop allows at most one second per worker.
+Cleanup is therefore not guaranteed.
+
+Put required resource cleanup in a surviving application owner that monitors
+the worker. Live Poll's store monitors the process that calls `store.join` and
+removes its memberships on exit. Its `on_terminate` callback still calls
+`store.leave` for prompt normal cleanup, but a killed worker cannot leave an
+empty poll behind.
 
 Cleanup runs even when socket output capacity is full. The runtime checks the
 returned actions against the callback and socket queue limits. If they do not
@@ -587,8 +610,8 @@ remaining old import or qualified error name.
 
 ## When to use raw dispatch or another process
 
-The layer handles one topic at a time, so each action applies only to the
-channel that returned it: a `room:general` channel cannot broadcast on
+The layer scopes publishing actions to the channel that returned them:
+a `room:general` channel cannot broadcast on
 `lobby`. Cross-topic publishing goes through the external `Sockets` APIs
 (`beryl.broadcast`, `beryl.broadcast_from`, or a `beryl/group` actor) using the
 handle `channel.child_spec` returns. Because handlers are built before that
