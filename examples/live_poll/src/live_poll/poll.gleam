@@ -1,6 +1,7 @@
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
+import gleam/result
 
 pub type Choice {
   Gleam
@@ -32,26 +33,39 @@ pub type Command {
   Unsupported
 }
 
+pub type CommandError {
+  UnknownEvent(String)
+  InvalidChoice
+}
+
 pub fn new() -> Poll {
   Poll(gleam_votes: 0, erlang_votes: 0, status: Open)
 }
 
 pub fn command(event: String, payload: Dynamic) -> Command {
+  decode_command(event, payload) |> result.unwrap(Unsupported)
+}
+
+/// Decode client events for the typed channel; raw tutorial steps keep `command`.
+pub fn decode_command(
+  event: String,
+  payload: Dynamic,
+) -> Result(Command, CommandError) {
   case event {
-    "get_state" -> GetState
-    "close_poll" -> Close
+    "get_state" -> Ok(GetState)
+    "close_poll" -> Ok(Close)
     "vote" -> {
       let option = {
         use value <- decode.field("option", decode.string)
         decode.success(value)
       }
       case decode.run(payload, option) {
-        Ok("gleam") -> Vote(Gleam)
-        Ok("erlang") -> Vote(Erlang)
-        Ok(_) | Error(_) -> Unsupported
+        Ok("gleam") -> Ok(Vote(Gleam))
+        Ok("erlang") -> Ok(Vote(Erlang))
+        Ok(_) | Error(_) -> Error(InvalidChoice)
       }
     }
-    _ -> Unsupported
+    _ -> Error(UnknownEvent(event))
   }
 }
 

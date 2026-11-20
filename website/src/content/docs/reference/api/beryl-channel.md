@@ -128,6 +128,7 @@ The channel composition surface: a channel is a topic pattern paired
 <li><a href="#api-function-handler"><code>handler</code></a></li>
 <li><a href="#api-function-next"><code>next</code></a></li>
 <li><a href="#api-function-notify"><code>notify</code></a></li>
+<li><a href="#api-function-on_decoded_message"><code>on_decoded_message</code></a></li>
 <li><a href="#api-function-on_info"><code>on_info</code></a></li>
 <li><a href="#api-function-on_message"><code>on_message</code></a></li>
 <li><a href="#api-function-on_presence"><code>on_presence</code></a></li>
@@ -547,6 +548,52 @@ Send a typed server-side message to the channel that owns `sender`.
  Rejection alone does not close the channel. See [`Sender`](#sender) for
  delivery cost and the limits of sealed-message byte accounting.
 
+<div class="api-entry-anchor" id="api-function-on_decoded_message" aria-hidden="true"></div>
+
+### `on_decoded_message`
+
+```gleam
+pub fn on_decoded_message(
+  JoinResult(a, b),
+  decode: fn(String, dynamic.Dynamic) -> Result(c, d),
+  handle: fn(a, c, option.Option(socket.ReplyReference)) -> Next(a),
+  on_error: fn(a, d, option.Option(socket.ReplyReference)) -> Next(a)
+) -> JoinResult(a, b)
+```
+
+Decode client events into application commands before handling them.
+
+ `decode` receives the event name and payload in this topic's worker,
+ after protocol routing and admission. On success, `handle` receives the
+ command. On failure, the required `on_error` callback receives the error
+ instead. Both callbacks receive the exact original optional reply handle.
+
+ Each callback must reply, discard the reference, or keep it for a later
+ turn. An unanswered reference still consumes socket capacity. `on_error`
+ must also handle messages without references, for example by returning a
+ push, staying joined, or closing this topic with [`close`](#close).
+ The adapter does not close the connection on decode failure.
+
+ This sets the same callback as [`on_message`](#on_message). The last
+ registration wins, including repeated calls. A rejected join stays rejected.
+ Decoding and callbacks have the same ordering, crash handling, overload
+ admission, and action-phase restrictions as `on_message`.
+
+ Command and error types stay in the closure, so unrelated channels still
+ compose in one `List(Handler)`. Typing checks the server callback boundary;
+ it does not prove client conformance, cross-subscriber schema agreement,
+ or request-specific reply types. Keep outbound domain types and encoders
+ in the application and use the existing action builders.
+
+ ```gleam
+ channel.accept(initial_state)
+ |> channel.on_decoded_message(
+   decode: decode_command,
+   handle: handle_command,
+   on_error: handle_invalid_message,
+ )
+ ```
+
 <div class="api-entry-anchor" id="api-function-on_info" aria-hidden="true"></div>
 
 ### `on_info`
@@ -576,6 +623,10 @@ Handle client messages on this channel's topic.
 
  Reply to each message, discard its reply reference, or keep the reference
  for a later turn. A custom callback replaces the default callback's reply disposal.
+
+ This and [`on_decoded_message`](#on_decoded_message) set the same callback.
+ The last registration wins, including repeated calls to either builder.
+ A rejected join stays rejected.
 
 <div class="api-entry-anchor" id="api-function-on_presence" aria-hidden="true"></div>
 

@@ -595,6 +595,10 @@ pub fn accept(state: state) -> JoinResult(state, info) {
 ///
 /// Reply to each message, discard its reply reference, or keep the reference
 /// for a later turn. A custom callback replaces the default callback's reply disposal.
+///
+/// This and [`on_decoded_message`](#on_decoded_message) set the same callback.
+/// The last registration wins, including repeated calls to either builder.
+/// A rejected join stays rejected.
 pub fn on_message(
   result: JoinResult(state, info),
   handle: fn(state, Message) -> Next(state),
@@ -604,6 +608,54 @@ pub fn on_message(
     JoinAccepted(callbacks: callbacks, ..) ->
       JoinAccepted(..result, callbacks: Callbacks(..callbacks, message: handle))
   }
+}
+
+/// Decode client events into application commands before handling them.
+///
+/// `decode` receives the event name and payload in this topic's worker,
+/// after protocol routing and admission. On success, `handle` receives the
+/// command. On failure, the required `on_error` callback receives the error
+/// instead. Both callbacks receive the exact original optional reply handle.
+///
+/// Each callback must reply, discard the reference, or keep it for a later
+/// turn. An unanswered reference still consumes socket capacity. `on_error`
+/// must also handle messages without references, for example by returning a
+/// push, staying joined, or closing this topic with [`close`](#close).
+/// The adapter does not close the connection on decode failure.
+///
+/// This sets the same callback as [`on_message`](#on_message). The last
+/// registration wins, including repeated calls. A rejected join stays rejected.
+/// Decoding and callbacks have the same ordering, crash handling, overload
+/// admission, and action-phase restrictions as `on_message`.
+///
+/// Command and error types stay in the closure, so unrelated channels still
+/// compose in one `List(Handler)`. Typing checks the server callback boundary;
+/// it does not prove client conformance, cross-subscriber schema agreement,
+/// or request-specific reply types. Keep outbound domain types and encoders
+/// in the application and use the existing action builders.
+///
+/// ```gleam
+/// channel.accept(initial_state)
+/// |> channel.on_decoded_message(
+///   decode: decode_command,
+///   handle: handle_command,
+///   on_error: handle_invalid_message,
+/// )
+/// ```
+pub fn on_decoded_message(
+  result: JoinResult(state, info),
+  decode decode: fn(String, dynamic.Dynamic) -> Result(command, error),
+  handle handle: fn(state, command, option.Option(socket.ReplyReference)) ->
+    Next(state),
+  on_error on_error: fn(state, error, option.Option(socket.ReplyReference)) ->
+    Next(state),
+) -> JoinResult(state, info) {
+  on_message(result, fn(state, message) {
+    case decode(message.event, message.payload) {
+      Ok(command) -> handle(state, command, message.reply)
+      Error(error) -> on_error(state, error, message.reply)
+    }
+  })
 }
 
 /// Handle typed server-side messages sent through this channel's

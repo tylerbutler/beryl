@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Added"
+body = "Add `channel.on_decoded_message` to decode client events and payloads into typed commands. Require an explicit error callback and preserve the original optional reply handle on both paths. Channels with unrelated command and error types can share one handler list; raw message callbacks remain available."

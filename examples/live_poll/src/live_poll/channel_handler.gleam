@@ -1,7 +1,9 @@
 import beryl/channel
 import beryl/overload
+import beryl/socket.{type ReplyReference}
 import gleam/io
 import gleam/json
+import gleam/option.{type Option}
 import live_poll/poll
 import live_poll/store
 import live_poll/timer
@@ -12,6 +14,26 @@ pub type PollInfo {
 
 type GuideInfo {
   Ready(String)
+}
+
+type ServerEvent {
+  StateChanged(poll.Poll)
+  PollClosed(poll.Poll)
+  GuideTip(text: String, delivery: Int)
+}
+
+fn encode_event(event: ServerEvent) -> #(String, json.Json) {
+  case event {
+    StateChanged(state) -> #("poll_state", poll.to_json(state))
+    PollClosed(state) -> #("poll_closed", poll.to_json(state))
+    GuideTip(text, delivery) -> #(
+      "tip",
+      json.object([
+        #("text", json.string(text)),
+        #("delivery", json.int(delivery)),
+      ]),
+    )
+  }
 }
 
 pub fn handlers(
@@ -46,16 +68,22 @@ fn poll_channel(
     })
 
     channel.accept(room)
-    |> channel.on_message(fn(room, message) {
-      handle_message(polls, room, message)
-    })
+    |> channel.on_decoded_message(
+      decode: poll.decode_command,
+      handle: fn(room, command, reply) {
+        handle_command(polls, room, command, reply)
+      },
+      on_error: handle_invalid_message,
+    )
     |> channel.on_info(fn(room, message) {
       let ClosePoll = message
       case store.close(polls, room) {
-        store.ClosedNow(state) ->
+        store.ClosedNow(state) -> {
+          let #(event, payload) = encode_event(PollClosed(state))
           channel.next(room, [
-            channel.broadcast("poll_closed", poll.to_json(state)),
+            channel.broadcast(event, payload),
           ])
+        }
         store.AlreadyClosed(_) | store.RoomNotFound -> channel.stay(room)
       }
     })
@@ -66,43 +94,60 @@ fn poll_channel(
   })
 }
 
-fn handle_message(
+fn handle_command(
   polls: store.Store,
   room: String,
-  message: channel.Message,
+  command: poll.Command,
+  reply: Option(ReplyReference),
 ) -> channel.Next(String) {
-  case poll.command(message.event, message.payload) {
+  case command {
     poll.GetState ->
       channel.next(room, [
-        channel.reply_ok(message.reply, poll.to_json(store.get(polls, room))),
+        channel.reply_ok(reply, poll.to_json(store.get(polls, room))),
       ])
     poll.Vote(choice) ->
       case store.vote(polls, room, choice) {
-        Ok(state) ->
+        Ok(state) -> {
+          let #(event, payload) = encode_event(StateChanged(state))
           channel.next(room, [
-            channel.reply_ok(message.reply, poll.to_json(state)),
-            channel.broadcast_from("poll_state", poll.to_json(state)),
+            channel.reply_ok(reply, poll.to_json(state)),
+            channel.broadcast_from(event, payload),
           ])
+        }
         Error(error) ->
           channel.next(room, [
-            channel.reply_error(message.reply, poll.error_to_json(error)),
+            channel.reply_error(reply, poll.error_to_json(error)),
           ])
       }
     poll.Close -> {
       let actions = case store.close(polls, room) {
-        store.ClosedNow(state) -> [
-          channel.reply_ok(message.reply, poll.to_json(state)),
-          channel.broadcast("poll_closed", poll.to_json(state)),
-        ]
+        store.ClosedNow(state) -> {
+          let #(event, payload) = encode_event(PollClosed(state))
+          [
+            channel.reply_ok(reply, poll.to_json(state)),
+            channel.broadcast(event, payload),
+          ]
+        }
         store.AlreadyClosed(state) -> [
-          channel.reply_ok(message.reply, poll.to_json(state)),
+          channel.reply_ok(reply, poll.to_json(state)),
         ]
-        store.RoomNotFound -> [channel.discard_reply(message.reply)]
+        store.RoomNotFound -> [channel.discard_reply(reply)]
       }
       channel.next(room, actions)
     }
-    poll.Unsupported ->
-      channel.next(room, [channel.discard_reply(message.reply)])
+    poll.Unsupported -> channel.next(room, [channel.discard_reply(reply)])
+  }
+}
+
+fn handle_invalid_message(
+  room: String,
+  error: poll.CommandError,
+  reply: Option(ReplyReference),
+) -> channel.Next(String) {
+  // Keep the tutorial's policy: ignore unsupported input, with or without a ref.
+  case error {
+    poll.UnknownEvent(_) | poll.InvalidChoice ->
+      channel.next(room, [channel.discard_reply(reply)])
   }
 }
 
@@ -112,14 +157,9 @@ fn guide_channel() -> channel.Handler {
     channel.accept(0)
     |> channel.on_info(fn(count, message) {
       let Ready(text) = message
+      let #(event, payload) = encode_event(GuideTip(text, count + 1))
       channel.next(count + 1, [
-        channel.push(
-          "tip",
-          json.object([
-            #("text", json.string(text)),
-            #("delivery", json.int(count + 1)),
-          ]),
-        ),
+        channel.push(event, payload),
       ])
     })
   })
