@@ -28,18 +28,20 @@ import gleam/string
 pub type OriginPolicy {
   /// Allow an upgrade only when the request `Origin` authority (host plus any
   /// port, with the scheme stripped) matches the request `Host` authority.
-  /// This is the default and rejects cross-site upgrades before the handshake.
+  /// This is the default. It checks authority, not the full browser origin:
+  /// `http` and `https` origins with the same authority are both admitted.
   ///
   /// A malformed or opaque `Origin` (e.g. `null` from a sandboxed iframe, or a
   /// value with no host) is rejected. Comparison is over the full `host:port`
-  /// authority, so a non-default port must match on both sides.
+  /// authority, so an explicit port must match on both sides. Default ports
+  /// are not normalized: `example.com:443` does not match `example.com`.
   ///
   /// Behind a reverse proxy, this compares against the `Host` header that the
   /// app receives. Configure the proxy to forward the public `Host` unchanged, or use
   /// [`AllowList`](#originpolicy) with the public origins instead. Forwarded
   /// headers such as `X-Forwarded-Host` are not trusted, because clients can
   /// spoof them.
-  SameOrigin
+  SameAuthority
   /// Allow an upgrade only when the request `Origin` header matches one of the
   /// listed values exactly (including scheme, host, and any port), such as
   /// `"https://app.example.com"`. Requests without an `Origin` header, or with
@@ -54,7 +56,7 @@ pub type OriginPolicy {
 /// Decide whether an upgrade is allowed under the configured origin policy.
 ///
 /// `origin` and `host` are the request's `Origin` and `Host` header values.
-/// Use `None` when a header is absent. `SameOrigin` and `AllowAll` admit a
+/// Use `None` when a header is absent. `SameAuthority` and `AllowAll` admit a
 /// request without an `Origin` header because non-browser clients omit it.
 /// `AllowList` rejects the request because it requires an explicit match.
 pub fn allowed(
@@ -69,14 +71,14 @@ pub fn allowed(
         Some(origin_value) -> list.contains(origins, origin_value)
         None -> False
       }
-    SameOrigin ->
+    SameAuthority ->
       case origin {
         // Non-browser clients don't send Origin; they can't be driven into a
         // cross-site upgrade, so admit them.
         None -> True
         Some(origin_value) ->
           case host {
-            Some(host_value) -> same_origin(origin_value, host_value)
+            Some(host_value) -> same_authority(origin_value, host_value)
             // Without a Host header we cannot establish the request's own
             // authority, so fail closed.
             None -> False
@@ -86,13 +88,13 @@ pub fn allowed(
 }
 
 /// Compare an `Origin` header value against a `Host` header value under the
-/// same-origin rule: strip the scheme from the origin and compare its
+/// same-authority rule: strip the scheme from the origin and compare its
 /// authority (host plus any port) to the host authority, case-insensitively.
 ///
 /// A malformed or opaque origin (no `scheme://host`, e.g. `null`) never
 /// matches. Comparison is over the full `host:port` authority, so a
 /// non-default port must be present and equal on both sides.
-fn same_origin(origin: String, host: String) -> Bool {
+fn same_authority(origin: String, host: String) -> Bool {
   case origin_authority(origin) {
     Ok(authority) -> authority == string.lowercase(host)
     Error(Nil) -> False

@@ -8,7 +8,7 @@ public `beryl/transport` SPI. Adapters supply their HTTP/WebSocket operations.
 
 ## Interface
 
-- `origin.OriginPolicy` has `SameOrigin`, `AllowList`, and `AllowAll` variants.
+- `origin.OriginPolicy` has `SameAuthority`, `AllowList`, and `AllowAll` variants.
   `allowed` checks a request and `version_supported` checks Phoenix protocol
   versions (`origin.gleam:OriginPolicy`, `origin.gleam:allowed`,
   `origin.gleam:version_supported`).
@@ -35,13 +35,13 @@ public `beryl/transport` SPI. Adapters supply their HTTP/WebSocket operations.
 
 ## Invariants
 
-- Same-origin checks compare lowercased host-and-port authorities, ignoring the
+- Same-authority checks compare lowercased host-and-port authorities, ignoring the
   scheme. An absent Origin passes this policy; a present Origin requires a valid
   authority and Host. Allow-list checks use exact full Origin strings and reject
-  an absent Origin (`origin.gleam:allowed`, `origin.gleam:same_origin`).
+  an absent Origin (`origin.gleam:allowed`, `origin.gleam:same_authority`).
 - An absent protocol version passes; a supplied version must begin with `2.`
   (`origin.gleam:version_supported`).
-- Defaults use a normalized path, same-origin policy, and outbound ceilings of
+- Defaults use a normalized path, same-authority policy, and outbound ceilings of
   256 frames and 1 MiB. Path matching is exact after normalization
   (`server.gleam:default_config`, `server.gleam:normalize_path`,
   `server.gleam:upgrade`).

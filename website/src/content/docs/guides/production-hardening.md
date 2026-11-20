@@ -168,7 +168,8 @@ rotating source addresses.
 
 ## Check origins and authenticate
 
-- `server.default_config` uses same-origin checks by default. Use
+- `server.default_config` uses same-authority checks (host and explicit port,
+  not scheme) by default. Use
   `with_allowed_origins` when you need an explicit list of browser origins;
   unexpected origins are rejected before the WebSocket handshake.
 - `with_on_connect` authenticates the connection once, before upgrade. Reject

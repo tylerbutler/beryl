@@ -351,6 +351,14 @@ pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() -> Nil
   )
   |> should.equal(Ok(403))
 
+  websocket_upgrade_status(port, "/socket") |> should.equal(Ok(403))
+  websocket_upgrade_status_with_origin(
+    port,
+    "/socket",
+    "http://app.example.com",
+  )
+  |> should.equal(Ok(403))
+
   let assert Ok(client) =
     connect_websocket_with_origin(port, "/socket", "https://app.example.com")
   close(client)
@@ -358,7 +366,7 @@ pub fn handler_rejects_disallowed_origin_and_allows_allowed_origin_test() -> Nil
 }
 
 pub fn handler_default_rejects_cross_origin_upgrade_test() -> Nil {
-  // The default config uses the SameOrigin policy, so a browser upgrade whose
+  // The default config uses the SameAuthority policy, so a browser upgrade whose
   // Origin does not match the request Host is rejected before the handshake.
   let channels = start_channels()
   let #(port, server_pid) = start_server(channels)
@@ -373,9 +381,9 @@ pub fn handler_default_rejects_cross_origin_upgrade_test() -> Nil {
   stop_supervisor(server_pid)
 }
 
-pub fn handler_default_allows_same_origin_upgrade_test() -> Nil {
-  // A same-origin browser upgrade (Origin authority matches the Host authority
-  // `127.0.0.1:<port>`) is admitted under the default SameOrigin policy.
+pub fn handler_default_allows_same_authority_upgrade_test() -> Nil {
+  // A same-authority browser upgrade (Origin authority matches the Host authority
+  // `127.0.0.1:<port>`) is admitted under the default SameAuthority policy.
   let channels = start_channels()
   let #(port, server_pid) = start_server(channels)
 
@@ -383,11 +391,32 @@ pub fn handler_default_allows_same_origin_upgrade_test() -> Nil {
   let assert Ok(client) = connect_websocket_with_origin(port, "/socket", origin)
   close(client)
 
+  let origin = "https://127.0.0.1:" <> int.to_string(port)
+  let assert Ok(client) = connect_websocket_with_origin(port, "/socket", origin)
+  close(client)
+
+  websocket_upgrade_status_with_origin(port, "/socket", "http://127.0.0.1")
+  |> should.equal(Ok(403))
+
+  stop_supervisor(server_pid)
+}
+
+pub fn handler_default_rejects_origin_port_mismatch_test() -> Nil {
+  let channels = start_channels()
+  let #(port, server_pid) = start_server(channels)
+
+  websocket_upgrade_status_with_origin(
+    port,
+    "/socket",
+    "http://127.0.0.1:" <> int.to_string(port + 1),
+  )
+  |> should.equal(Ok(403))
+
   stop_supervisor(server_pid)
 }
 
 pub fn handler_default_allows_absent_origin_upgrade_test() -> Nil {
-  // Non-browser clients omit the Origin header entirely; the SameOrigin policy
+  // Non-browser clients omit the Origin header entirely; the SameAuthority policy
   // admits them (they are not subject to the browser same-origin model).
   let channels = start_channels()
   let #(port, server_pid) = start_server(channels)

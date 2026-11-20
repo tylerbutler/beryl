@@ -310,10 +310,11 @@ pub fn default_config(String) -> TransportConfig(a)
 Create a default transport config with no connect hook.
 
  The resulting configuration sets `ConnectSeed.metadata` to `[]` and applies
- the `origin.SameOrigin` origin policy, which rejects cross-site WebSocket
- upgrades before the handshake as CSWSH protection. Same-origin upgrades and
- non-browser clients (no `Origin` header) are admitted without
- configuration. Each connection also has an outbound budget of 256 frames
+ the `origin.SameAuthority` policy. A present `Origin` must have the same
+ host and explicit port as `Host` (case-insensitive); its scheme is ignored.
+ Default ports are not normalized and forwarded-host headers are not used.
+ Non-browser clients with no `Origin` header are admitted.
+ Each connection also has an outbound budget of 256 frames
  and 1 MiB of retained payload binaries. A connection that exceeds either
  limit is closed.
 
@@ -527,11 +528,11 @@ pub fn with_allow_all_origins(TransportConfig(a)) -> TransportConfig(a)
 
 Disable `Origin` checking, allowing WebSocket upgrades from any origin.
 
- This disables the default `origin.SameOrigin` CSWSH protection. Use it only
+ This disables the default `origin.SameAuthority` CSWSH protection. Use it only
  for sockets that do not rely on ambient browser credentials (cookies,
  sessions) for authorization, or that authenticate every message
  independently. For cookie/session-authenticated apps, prefer the default
- `SameOrigin` policy or `with_allowed_origins`.
+ `SameAuthority` policy or `with_allowed_origins`.
 
 <div class="api-entry-anchor" id="api-function-with_allowed_origins" aria-hidden="true"></div>
 
@@ -547,7 +548,7 @@ pub fn with_allowed_origins(
 Restrict WebSocket upgrades to requests whose `Origin` header exactly
  matches one of the given values.
 
- This replaces the default `origin.SameOrigin` policy with an
+ This replaces the default `origin.SameAuthority` policy with an
  `origin.AllowList`. Values are matched exactly against the full `Origin`
  header, including scheme and host (and port when present), such as
  `"https://app.example.com"`. Missing or non-matching origins are rejected
@@ -555,7 +556,7 @@ Restrict WebSocket upgrades to requests whose `Origin` header exactly
 
  Prefer this over `with_allow_all_origins` when you know the exact origins
  that should be allowed (e.g. behind a reverse proxy that rewrites the
- `Host` header, where `SameOrigin` cannot see the public host).
+ `Host` header, where `SameAuthority` cannot see the public host).
 
 <div class="api-entry-anchor" id="api-function-with_on_connect" aria-hidden="true"></div>
 
