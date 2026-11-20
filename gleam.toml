@@ -61,6 +61,9 @@ command = "mise exec -- licence_audit check --vulns"
 
 [tools.trellis.changelog]
 strictness = "warn"
+# MiniJinja strips one trailing template newline; keep a blank line between entries.
+change_format = "{{ body | trim }}\n\n"
+dependency_body = "#### The {{ dependency }} dependency updates.\n\nUpdated {{ dependency }} to {{ dependency_version }}."
 kinds = [
   # `Initial Release` is a strict major bump: it plans 1.0.0 even for an
   # unreleased 0.x package. Pre-1.0 packages use `Added` for their first
