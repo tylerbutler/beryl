@@ -1,0 +1,3 @@
+package = "beryl"
+kind = "Changed"
+body = "Distinguish portable protocol join, reply, admission, and cleanup capabilities with Operation(kind). Hosts must return each action's handle in a matching input; stale handles of the correct kind remain no-ops."

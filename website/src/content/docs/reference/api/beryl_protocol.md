@@ -30,7 +30,9 @@ A deterministic channel protocol. Hosts supply time, decoded messages and
   <a class="api-symbol-index__section" href="#types">Types</a>
   <ul>
 <li><a href="#api-type-action"><code>Action</code></a></li>
+<li><a href="#api-type-admissionkind"><code>AdmissionKind</code></a></li>
 <li><a href="#api-type-channel"><code>Channel</code></a></li>
+<li><a href="#api-type-cleanupkind"><code>CleanupKind</code></a></li>
 <li><a href="#api-type-closemode"><code>CloseMode</code></a></li>
 <li><a href="#api-type-closereason"><code>CloseReason</code></a></li>
 <li><a href="#api-type-config"><code>Config</code></a></li>
@@ -38,8 +40,10 @@ A deterministic channel protocol. Hosts supply time, decoded messages and
 <li><a href="#api-type-decoded"><code>Decoded</code></a></li>
 <li><a href="#api-type-error"><code>Error</code></a></li>
 <li><a href="#api-type-input"><code>Input</code></a></li>
+<li><a href="#api-type-joinkind"><code>JoinKind</code></a></li>
 <li><a href="#api-type-operation"><code>Operation</code></a></li>
 <li><a href="#api-type-outbound"><code>Outbound</code></a></li>
+<li><a href="#api-type-replykind"><code>ReplyKind</code></a></li>
 <li><a href="#api-type-state"><code>State</code></a></li>
 <li><a href="#api-type-status"><code>Status</code></a></li>
 <li><a href="#api-type-validationerror"><code>ValidationError</code></a></li>
@@ -96,13 +100,13 @@ A deterministic channel protocol. Hosts supply time, decoded messages and
 pub type Action {
   DeliverJoin(
     channel: Channel,
-    operation: Operation,
+    operation: Operation(JoinKind),
     topic: String,
     payload: dynamic.Dynamic
   )
   AdmitJoin(
     channel: Channel,
-    operation: Operation,
+    operation: Operation(AdmissionKind),
     topic: String
   )
   Joined(
@@ -114,11 +118,11 @@ pub type Action {
     topic: String,
     event: String,
     payload: dynamic.Dynamic,
-    operation: option.Option(Operation)
+    operation: option.Option(Operation(ReplyKind))
   )
   CloseChannel(
     channel: Channel,
-    operation: Operation,
+    operation: Operation(CleanupKind),
     topic: String,
     reason: CloseReason
   )
@@ -130,6 +134,18 @@ pub type Action {
 
 Execute in order. Never bypass an admission or cleanup barrier on failure.
 
+<div class="api-entry-anchor" id="api-type-admissionkind" aria-hidden="true"></div>
+
+### `AdmissionKind`
+
+```gleam
+pub type AdmissionKind {
+  AdmissionKind
+}
+```
+
+Kind of capability delivered for subscription admission.
+
 <div class="api-entry-anchor" id="api-type-channel" aria-hidden="true"></div>
 
 ### `Channel`
@@ -139,6 +155,18 @@ pub type Channel
 ```
 
 One topic instance, independent of all wire references.
+
+<div class="api-entry-anchor" id="api-type-cleanupkind" aria-hidden="true"></div>
+
+### `CleanupKind`
+
+```gleam
+pub type CleanupKind {
+  CleanupKind
+}
+```
+
+Kind of capability delivered for channel drain and cleanup.
 
 <div class="api-entry-anchor" id="api-type-closemode" aria-hidden="true"></div>
 
@@ -244,25 +272,25 @@ A rejected transition commits no state or actions.
 pub type Input {
   Receive(Decoded)
   AcceptJoin(
-    operation: Operation,
+    operation: Operation(JoinKind),
     payload: json.Json,
     close_mode: CloseMode
   )
   RejectJoin(
-    operation: Operation,
+    operation: Operation(JoinKind),
     payload: json.Json
   )
-  CallbackFinished(operation: Operation)
+  CallbackFinished(operation: Operation(JoinKind))
   AdmissionFinished(
-    operation: Operation,
+    operation: Operation(AdmissionKind),
     accepted: Bool
   )
   Reply(
-    operation: Operation,
+    operation: Operation(ReplyKind),
     status: Status,
     payload: json.Json
   )
-  Discard(operation: Operation)
+  Discard(operation: Operation(ReplyKind))
   Push(
     channel: Channel,
     event: String,
@@ -273,10 +301,10 @@ pub type Input {
     reason: CloseReason
   )
   DrainFinished(
-    operation: Operation,
+    operation: Operation(CleanupKind),
     reason: CloseReason
   )
-  CleanupFinished(operation: Operation)
+  CleanupFinished(operation: Operation(CleanupKind))
   CheckDeadline
   Disconnect(reason: CloseReason)
 }
@@ -290,22 +318,36 @@ A transition input. Stale capabilities and completions are successful no-ops.
 
 ```gleam
 DrainFinished(
-  operation: Operation,
+  operation: Operation(CleanupKind),
   reason: CloseReason
 )
 ```
 
 Finish committed work and retain its final close outcome for cleanup.
 
+<div class="api-entry-anchor" id="api-type-joinkind" aria-hidden="true"></div>
+
+### `JoinKind`
+
+```gleam
+pub type JoinKind {
+  JoinKind
+}
+```
+
+Kind of capability delivered for join authorization.
+
 <div class="api-entry-anchor" id="api-type-operation" aria-hidden="true"></div>
 
 ### `Operation`
 
 ```gleam
-pub type Operation
+pub type Operation(a)
 ```
 
-Single-use join, reply, admission or cleanup capability.
+Single-use capability. The kind limits which inputs and queries accept it.
+ Return the exact handle delivered by the matching action; stale handles of
+ the correct kind remain successful no-ops.
 
 <div class="api-entry-anchor" id="api-type-outbound" aria-hidden="true"></div>
 
@@ -335,6 +377,18 @@ pub type Outbound {
 ```
 
 Logical outbound messages, translated through the host's active codec.
+
+<div class="api-entry-anchor" id="api-type-replykind" aria-hidden="true"></div>
+
+### `ReplyKind`
+
+```gleam
+pub type ReplyKind {
+  ReplyKind
+}
+```
+
+Kind of capability delivered for an application reply or discard.
 
 <div class="api-entry-anchor" id="api-type-state" aria-hidden="true"></div>
 
@@ -502,7 +556,7 @@ Wire reference for an instance, including one awaiting host cleanup.
 ```gleam
 pub fn join_wire_key(
   State,
-  Operation
+  Operation(JoinKind)
 ) -> Result(#(String, option.Option(String), option.Option(String)), Nil)
 ```
 
@@ -553,7 +607,7 @@ The next required timer instant. Expiry is strictly after the timeout.
 pub fn pending_cleanup(
   State,
   String
-) -> Result(Operation, Nil)
+) -> Result(Operation(CleanupKind), Nil)
 ```
 
 Retrieve the current generation-scoped cleanup barrier.
@@ -576,7 +630,7 @@ Number of retained join/reply operations; host byte limits are independent.
 pub fn pending_join(
   State,
   String
-) -> Result(#(Channel, Operation), Nil)
+) -> Result(#(Channel, Operation(JoinKind)), Nil)
 ```
 
 Retrieve the outstanding authorization handle for a host callback.
@@ -601,7 +655,7 @@ A push-capable instance, including a draining worker.
 ```gleam
 pub fn reply_pending(
   State,
-  Operation
+  Operation(ReplyKind)
 ) -> Bool
 ```
 
@@ -614,7 +668,7 @@ Whether a reply operation is still live.
 ```gleam
 pub fn reply_wire_key(
   State,
-  Operation
+  Operation(ReplyKind)
 ) -> Result(#(String, option.Option(String), option.Option(String)), Nil)
 ```
 

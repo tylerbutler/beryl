@@ -53,6 +53,7 @@ test-distributed:
 protocol-test:
     trellis run build --strict --target all beryl_protocol
     trellis run test --target all beryl_protocol
+    node --test scripts/protocol-operation-kinds.test.mjs
 
 # Exercise extracted ETS ownership alongside consumer-owned heirloom modules
 namespace-test:

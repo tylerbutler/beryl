@@ -46,8 +46,30 @@ pub opaque type Channel {
   Channel(connection: Connection, generation: Int)
 }
 
-/// Single-use join, reply, admission or cleanup capability.
-pub opaque type Operation {
+/// Kind of capability delivered for join authorization.
+pub type JoinKind {
+  JoinKind
+}
+
+/// Kind of capability delivered for an application reply or discard.
+pub type ReplyKind {
+  ReplyKind
+}
+
+/// Kind of capability delivered for subscription admission.
+pub type AdmissionKind {
+  AdmissionKind
+}
+
+/// Kind of capability delivered for channel drain and cleanup.
+pub type CleanupKind {
+  CleanupKind
+}
+
+/// Single-use capability. The kind limits which inputs and queries accept it.
+/// Return the exact handle delivered by the matching action; stale handles of
+/// the correct kind remain successful no-ops.
+pub opaque type Operation(kind) {
   Operation(channel: Channel, sequence: Int)
 }
 
@@ -93,17 +115,21 @@ pub type Decoded {
 /// A transition input. Stale capabilities and completions are successful no-ops.
 pub type Input {
   Receive(Decoded)
-  AcceptJoin(operation: Operation, payload: Json, close_mode: CloseMode)
-  RejectJoin(operation: Operation, payload: Json)
-  CallbackFinished(operation: Operation)
-  AdmissionFinished(operation: Operation, accepted: Bool)
-  Reply(operation: Operation, status: Status, payload: Json)
-  Discard(operation: Operation)
+  AcceptJoin(
+    operation: Operation(JoinKind),
+    payload: Json,
+    close_mode: CloseMode,
+  )
+  RejectJoin(operation: Operation(JoinKind), payload: Json)
+  CallbackFinished(operation: Operation(JoinKind))
+  AdmissionFinished(operation: Operation(AdmissionKind), accepted: Bool)
+  Reply(operation: Operation(ReplyKind), status: Status, payload: Json)
+  Discard(operation: Operation(ReplyKind))
   Push(channel: Channel, event: String, payload: Json)
   BeginClose(channel: Channel, reason: CloseReason)
   /// Finish committed work and retain its final close outcome for cleanup.
-  DrainFinished(operation: Operation, reason: CloseReason)
-  CleanupFinished(operation: Operation)
+  DrainFinished(operation: Operation(CleanupKind), reason: CloseReason)
+  CleanupFinished(operation: Operation(CleanupKind))
   CheckDeadline
   Disconnect(reason: CloseReason)
 }
@@ -126,22 +152,26 @@ pub type Outbound {
 pub type Action {
   DeliverJoin(
     channel: Channel,
-    operation: Operation,
+    operation: Operation(JoinKind),
     topic: String,
     payload: Dynamic,
   )
-  AdmitJoin(channel: Channel, operation: Operation, topic: String)
+  AdmitJoin(
+    channel: Channel,
+    operation: Operation(AdmissionKind),
+    topic: String,
+  )
   Joined(channel: Channel, topic: String)
   DeliverMessage(
     channel: Channel,
     topic: String,
     event: String,
     payload: Dynamic,
-    operation: Option(Operation),
+    operation: Option(Operation(ReplyKind)),
   )
   CloseChannel(
     channel: Channel,
-    operation: Operation,
+    operation: Operation(CleanupKind),
     topic: String,
     reason: CloseReason,
   )
@@ -183,16 +213,16 @@ pub fn describe_error(error: Error) -> String {
 }
 
 type Phase {
-  Authorizing(operation: Operation, ref: Option(String))
+  Authorizing(operation: Operation(JoinKind), ref: Option(String))
   Admitting(
-    operation: Operation,
+    operation: Operation(AdmissionKind),
     ref: Option(String),
     payload: Json,
     close_mode: CloseMode,
   )
   Established(close_mode: CloseMode)
   Closing(
-    operation: Operation,
+    operation: Operation(CleanupKind),
     reason: CloseReason,
     close_mode: CloseMode,
     replacement: Option(Decoded),
@@ -220,7 +250,7 @@ pub opaque type State {
     next_channel: Int,
     next_operation: Int,
     memberships: Dict(String, Membership),
-    replies: Dict(Operation, PendingReply),
+    replies: Dict(Operation(ReplyKind), PendingReply),
     last_heartbeat_ms: Int,
     closing: Option(CloseReason),
     closed: Bool,
@@ -507,7 +537,7 @@ pub fn can_push(state: State, channel: Channel) -> Bool {
 pub fn pending_join(
   state: State,
   topic: String,
-) -> Result(#(Channel, Operation), Nil) {
+) -> Result(#(Channel, Operation(JoinKind)), Nil) {
   use membership <- result.try(dict.get(state.memberships, topic))
   case membership.phase {
     Authorizing(operation, _) -> Ok(#(membership.channel, operation))
@@ -515,25 +545,27 @@ pub fn pending_join(
   }
 }
 
-// nolint: unused_exports -- host API for backwards-compatible BEAM handles
 /// Wire metadata for a host's join-handle wrapper, never for capability lookup.
 pub fn join_wire_key(
   state: State,
-  operation: Operation,
+  operation: Operation(JoinKind),
 ) -> Result(#(String, Option(String), Option(String)), Nil) {
   use membership <- result.try(membership_for_channel(state, operation.channel))
   case membership.phase {
-    Authorizing(pending, ref)
-      | Admitting(pending, ref, _, _)
-      if pending == operation
-    -> Ok(#(membership.topic, membership.join_ref, ref))
+    Authorizing(pending, ref) if pending == operation ->
+      Ok(#(membership.topic, membership.join_ref, ref))
+    Admitting(pending, ref, _, _) if pending.sequence == operation.sequence ->
+      Ok(#(membership.topic, membership.join_ref, ref))
     Authorizing(..) | Admitting(..) | Established(_) | Closing(..) -> Error(Nil)
   }
 }
 
 // nolint: unused_exports -- host API used by beryl's cleanup interpreter
 /// Retrieve the current generation-scoped cleanup barrier.
-pub fn pending_cleanup(state: State, topic: String) -> Result(Operation, Nil) {
+pub fn pending_cleanup(
+  state: State,
+  topic: String,
+) -> Result(Operation(CleanupKind), Nil) {
   use membership <- result.try(dict.get(state.memberships, topic))
   case membership.phase {
     Closing(operation:, ..) -> Ok(operation)
@@ -556,7 +588,7 @@ pub fn pending_count(state: State) -> Int {
 }
 
 /// Whether a reply operation is still live.
-pub fn reply_pending(state: State, operation: Operation) -> Bool {
+pub fn reply_pending(state: State, operation: Operation(ReplyKind)) -> Bool {
   dict.has_key(state.replies, operation)
 }
 
@@ -565,7 +597,7 @@ pub fn reply_pending(state: State, operation: Operation) -> Bool {
 /// These fields are not the operation's identity.
 pub fn reply_wire_key(
   state: State,
-  operation: Operation,
+  operation: Operation(ReplyKind),
 ) -> Result(#(String, Option(String), Option(String)), Nil) {
   use reply <- result.try(dict.get(state.replies, operation))
   use membership <- result.map(membership_for_channel(state, reply.channel))
@@ -770,7 +802,7 @@ fn begin_join(
 fn allocate(
   state: State,
   channel: Channel,
-) -> Result(#(State, Operation), Error) {
+) -> Result(#(State, Operation(kind)), Error) {
   use <- bool.guard(
     when: state.next_operation >= maximum_integer,
     return: Error(CounterExhausted),
@@ -792,7 +824,7 @@ fn membership_for_channel(
 
 fn answer_join(
   state: State,
-  operation: Operation,
+  operation: Operation(JoinKind),
   payload: Json,
   mode: Option(CloseMode),
 ) -> Result(#(State, List(Action)), Error) {
@@ -820,10 +852,11 @@ fn answer_join(
             ),
           )
         Some(mode) -> {
+          let admission = Operation(operation.channel, operation.sequence)
           let membership =
             Membership(
               ..membership,
-              phase: Admitting(operation, ref, payload, mode),
+              phase: Admitting(admission, ref, payload, mode),
             )
           Ok(
             #(
@@ -835,7 +868,7 @@ fn answer_join(
                   membership,
                 ),
               ),
-              [AdmitJoin(membership.channel, operation, membership.topic)],
+              [AdmitJoin(membership.channel, admission, membership.topic)],
             ),
           )
         }
@@ -846,7 +879,7 @@ fn answer_join(
 
 fn finish_admission(
   state: State,
-  operation: Operation,
+  operation: Operation(AdmissionKind),
   accepted: Bool,
 ) -> Result(#(State, List(Action)), Error) {
   case membership_for_channel(state, operation.channel) {
@@ -944,7 +977,7 @@ fn begin_message(
 
 fn consume_reply(
   state: State,
-  operation: Operation,
+  operation: Operation(ReplyKind),
   answer: Option(#(Status, Json)),
 ) -> #(State, List(Action)) {
   case dict.get(state.replies, operation) {
@@ -975,11 +1008,10 @@ fn begin_close(
 ) -> Result(#(State, List(Action)), Error) {
   case membership.phase {
     Closing(..) -> Ok(#(state, []))
-    Authorizing(operation, _) | Admitting(operation, _, _, _) -> {
+    Authorizing(..) | Admitting(..) -> {
       use #(state, actions) <- result.try(reject_pending_for_close(
         state,
         membership,
-        operation,
       ))
       case replacement {
         Some(Join(topic, payload, join_ref, ref)) -> {
@@ -1026,10 +1058,9 @@ fn begin_close(
 fn reject_pending_for_close(
   state: State,
   membership: Membership,
-  operation: Operation,
 ) -> Result(#(State, List(Action)), Error) {
   case membership.phase {
-    Authorizing(..) ->
+    Authorizing(operation, _) ->
       answer_join(state, operation, reason("join not acknowledged"), None)
     Admitting(_, ref, _, _) ->
       Ok(
@@ -1063,7 +1094,7 @@ fn drop_channel_replies(state: State, channel: Channel) -> State {
 
 fn finish_drain(
   state: State,
-  operation: Operation,
+  operation: Operation(CleanupKind),
   reason: CloseReason,
 ) -> #(State, List(Action)) {
   case membership_for_channel(state, operation.channel) {
@@ -1093,7 +1124,7 @@ fn finish_drain(
 
 fn finish_cleanup(
   state: State,
-  operation: Operation,
+  operation: Operation(CleanupKind),
   now_ms: Int,
 ) -> Result(#(State, List(Action)), Error) {
   case membership_for_channel(state, operation.channel) {

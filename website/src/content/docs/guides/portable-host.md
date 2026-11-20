@@ -46,6 +46,14 @@ connection. They do not derive identity from client-supplied references.
 Reply handles are single use. Completion, discard, and final topic cleanup
 release their capacity.
 
+`Operation(kind)` separates four kinds of capability. Return the `JoinKind`
+handle from `DeliverJoin` in `AcceptJoin`, `RejectJoin`, or `CallbackFinished`.
+Return the separate `AdmissionKind` handle from `AdmitJoin` in
+`AdmissionFinished`. `DeliverMessage` supplies an optional `ReplyKind` handle
+for `Reply` or `Discard`. `CloseChannel` supplies a `CleanupKind` handle for
+`DrainFinished` and `CleanupFinished`. The compiler rejects a handle of the
+wrong kind; a stale handle of the correct kind remains a successful no-op.
+
 The BEAM adapter preserves the existing opaque `JoinReference` and `ReplyReference` API.
 Applications return the exact handle they received. A stale completion must
 not consume a newer request, even if the client reuses its wire references.
