@@ -1,3 +1,9 @@
 package = "beryl"
 kind = "Changed"
-body = "BroadcastRejected now includes rejected_topic and remaining_topics from the original group broadcast traversal, so callers can retry only topics not admitted to the router."
+body = '''
+#### Group broadcast rejections identify topics for retry.
+
+`BroadcastRejected` now includes `rejected_topic` and `remaining_topics`
+from the original group broadcast traversal. Callers can use these fields
+to retry only topics not admitted to the router.
+'''

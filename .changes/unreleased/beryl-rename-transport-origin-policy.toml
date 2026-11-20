@@ -1,3 +1,9 @@
 package = "beryl"
 kind = "Changed"
-body = "Rename transport origin policy SameOrigin to SameAuthority without changing host-and-port matching, absent-Origin admission, or explicit allow-list rules."
+body = '''
+#### The transport origin policy uses the name SameAuthority.
+
+Replace `transport.SameOrigin` with `transport.SameAuthority`.
+Host-and-port matching, absent-Origin admission, and explicit allow-list
+rules keep their existing behavior.
+'''

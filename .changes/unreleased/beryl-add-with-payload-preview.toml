@@ -1,3 +1,9 @@
 package = "beryl"
 kind = "Added"
-body = "Add with_payload_preview_graphemes(graphemes:) for opt-in log previews. Deprecate with_payload_preview_bytes(bytes:) without changing its grapheme-based truncation behavior."
+body = '''
+#### Log preview configuration names the grapheme limit.
+
+Use `with_payload_preview_graphemes(graphemes:)` to opt in to log previews.
+The `with_payload_preview_bytes(bytes:)` builder is deprecated but keeps
+its grapheme-based truncation behavior.
+'''
