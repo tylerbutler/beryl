@@ -29,7 +29,6 @@ import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/json
-import gleam/list
 import gleam/otp/actor
 import gleam/otp/supervision
 import gleam/result
@@ -71,8 +70,15 @@ pub type GroupError {
 /// A group lookup or one topic's local broadcast admission failed.
 pub type BroadcastError {
   GroupLookupFailed(GroupError)
-  /// Earlier topics were admitted; the failing topic and later topics were not.
-  BroadcastRejected(admitted_topics: Int, reason: overload.AdmissionError)
+  /// Earlier topics were admitted to the router, not necessarily received by clients.
+  /// The rejected topic and remaining topics were not admitted. `remaining_topics`
+  /// preserves the original traversal order and excludes `rejected_topic`.
+  BroadcastRejected(
+    admitted_topics: Int,
+    rejected_topic: String,
+    remaining_topics: List(String),
+    reason: overload.AdmissionError,
+  )
 }
 
 /// Messages that the groups actor handles.
@@ -261,8 +267,14 @@ pub fn list_groups(groups: Groups) -> Result(List(String), GroupError) {
 /// This function sends the message to each topic through `beryl.broadcast`.
 /// The groups actor performs the topic lookup. The caller performs the
 /// fan-out. A missing group returns `GroupLookupFailed`. On admission failure,
-/// `BroadcastRejected` reports the number of earlier topics admitted. Those
-/// admissions remain valid; fan-out is not transactional.
+/// `BroadcastRejected` reports the number of earlier topics admitted, the rejected
+/// topic, and the not-yet-attempted topics from the original traversal. Those
+/// earlier admissions remain valid; fan-out is not transactional. To retry only
+/// the remainder, call `beryl.broadcast` for `[rejected_topic, ..remaining_topics]`
+/// with the same event and payload. Do not look up the group again: its membership
+/// may have changed, and retrying the full group can duplicate earlier admissions.
+///
+/// Success means router admission, not receipt by clients. An empty group succeeds.
 ///
 /// Actor-call failures are returned inside `GroupLookupFailed`.
 pub fn broadcast(
@@ -275,7 +287,7 @@ pub fn broadcast(
   use topics <- result.try(
     topics(groups, group_name) |> result.map_error(GroupLookupFailed),
   )
-  broadcast_to_topics(topics, channels, event, payload)
+  broadcast_to_topics(set.to_list(topics), channels, event, payload, 0)
 }
 
 // ── Actor loop ──────────────────────────────────────────────────────────────
@@ -365,16 +377,20 @@ fn handle_message(
 }
 
 fn broadcast_to_topics(
-  topics: Set(String),
+  topics: List(String),
   channels: beryl.Sockets,
   event: String,
   payload: json.Json,
+  admitted: Int,
 ) -> Result(Nil, BroadcastError) {
-  set.to_list(topics)
-  |> list.try_fold(0, fn(admitted, topic) {
-    beryl.broadcast(channels, topic, event, payload)
-    |> result.map(fn(_) { admitted + 1 })
-    |> result.map_error(fn(error) { BroadcastRejected(admitted, error) })
-  })
-  |> result.map(fn(_) { Nil })
+  case topics {
+    [] -> Ok(Nil)
+    [topic, ..remaining] ->
+      case beryl.broadcast(channels, topic, event, payload) {
+        Ok(Nil) ->
+          broadcast_to_topics(remaining, channels, event, payload, admitted + 1)
+        Error(reason) ->
+          Error(BroadcastRejected(admitted, topic, remaining, reason))
+      }
+  }
 }

@@ -139,8 +139,15 @@ healthy destinations. A socket-originated broadcast reserves router capacity
 before sending its own copy.
 
 `group.broadcast` returns `GroupLookupFailed(error)` for a missing group, or
-`BroadcastRejected(admitted_topics, reason)` after partial admission. Earlier
-topics stay admitted. If the group actor is unavailable, exits during lookup,
+`BroadcastRejected(admitted_topics, rejected_topic, remaining_topics, reason)`
+when a topic is rejected. Earlier topics stay admitted to the router; this does
+not confirm receipt by clients. Retry only
+`[rejected_topic, ..remaining_topics]` through `beryl.broadcast`, with the same
+event and payload, and handle each admission result. The returned topics come
+from the original traversal, not a new group lookup. `remaining_topics` excludes
+the rejected topic and keeps the traversal order. Retrying the whole group can
+duplicate earlier admissions.
+If the group actor is unavailable, exits during lookup,
 or exceeds its call timeout, the lookup returns
 `GroupLookupFailed(GroupCallFailed(reason))`.
 
