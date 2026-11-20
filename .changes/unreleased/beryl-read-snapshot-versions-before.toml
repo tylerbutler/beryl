@@ -1,3 +1,9 @@
 package = "beryl"
 kind = "Fixed"
-body = "Read snapshot versions before decoding version-specific layouts so unsupported versions remain distinct from invalid snapshots."
+body = '''
+#### Snapshot decoding keeps unsupported versions distinct from invalid data.
+
+The decoder now reads the snapshot version before decoding its
+version-specific layout. Callers can distinguish unsupported versions
+from invalid snapshots.
+'''

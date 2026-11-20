@@ -1,3 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = "Document that KickTopic closes its topic after the effects list, so a later push in the same list precedes the terminal frame."

@@ -1,3 +1,10 @@
 package = "beryl"
 kind = "Added"
-body = "Add focused beryl_protocol builders for topic bytes, event bytes, channels, pending operations, and heartbeat timeout. Each builder preserves other settings and prior overrides, using the same validation as with_limits."
+body = '''
+#### Protocol builders let callers configure individual limits.
+
+Use the focused `beryl_protocol` builders to set topic bytes, event bytes,
+channels, pending operations, or heartbeat timeout. Each builder preserves
+other settings and prior overrides and uses the same validation as
+`with_limits`.
+'''

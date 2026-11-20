@@ -1,3 +1,8 @@
 package = "beryl"
 kind = "Added"
-body = "Add socket.reply_error and socket.discard_reply helpers for optional reply references without changing deferred replies."
+body = '''
+#### Socket helpers support optional error replies and reply discards.
+
+Use `socket.reply_error` and `socket.discard_reply` with optional reply
+references. Deferred replies keep their existing behavior.
+'''
