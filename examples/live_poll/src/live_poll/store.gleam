@@ -1,5 +1,5 @@
 import gleam/dict.{type Dict}
-import gleam/erlang/process.{type Subject}
+import gleam/erlang/process.{type Monitor, type Pid, type Subject}
 import gleam/otp/actor
 import gleam/result
 import live_poll/poll
@@ -15,8 +15,9 @@ pub type CloseResult {
 }
 
 type Message {
-  Join(room: String)
-  Leave(room: String)
+  Join(room: String, owner: Pid)
+  Leave(room: String, owner: Pid)
+  OwnerDown(process.Down)
   Get(room: String, reply: Subject(poll.Poll))
   Vote(
     room: String,
@@ -27,22 +28,36 @@ type Message {
 }
 
 type State {
-  State(polls: Dict(String, poll.Poll), members: Dict(String, Int))
+  State(
+    polls: Dict(String, poll.Poll),
+    members: Dict(String, Dict(Pid, Monitor)),
+  )
 }
 
 pub fn start() -> Result(Store, actor.StartError) {
-  actor.new(State(polls: dict.new(), members: dict.new()))
+  actor.new_with_initialiser(1000, fn(subject) {
+    actor.initialised(State(polls: dict.new(), members: dict.new()))
+    |> actor.selecting(
+      process.new_selector()
+      |> process.select(subject)
+      |> process.select_monitors(OwnerDown),
+    )
+    |> actor.returning(subject)
+    |> Ok
+  })
   |> actor.on_message(handle)
   |> actor.start
   |> result.map(fn(started) { Store(started.data) })
 }
 
+/// Register the calling process once per room and monitor its lifetime.
 pub fn join(store: Store, room: String) -> Nil {
-  process.send(store.subject, Join(room))
+  process.send(store.subject, Join(room, process.self()))
 }
 
+/// Remove the calling process's membership, if it is still registered.
 pub fn leave(store: Store, room: String) -> Nil {
-  process.send(store.subject, Leave(room))
+  process.send(store.subject, Leave(room, process.self()))
 }
 
 pub fn get(store: Store, room: String) -> poll.Poll {
@@ -63,26 +78,30 @@ pub fn close(store: Store, room: String) -> CloseResult {
 
 fn handle(state: State, message: Message) -> actor.Next(State, Message) {
   case message {
-    Join(room) -> {
+    Join(room, owner) -> {
       let #(poll, polls) = find(state.polls, room)
-      let count = dict.get(state.members, room) |> result.unwrap(0)
+      let members = dict.get(state.members, room) |> result.unwrap(dict.new())
+      let members = case dict.has_key(members, owner) {
+        True -> members
+        False -> dict.insert(members, owner, process.monitor(owner))
+      }
       actor.continue(State(
         polls: dict.insert(polls, room, poll),
-        members: dict.insert(state.members, room, count + 1),
+        members: dict.insert(state.members, room, members),
       ))
     }
-    Leave(room) ->
-      case dict.get(state.members, room) {
-        Ok(count) if count > 1 ->
-          actor.continue(
-            State(..state, members: dict.insert(state.members, room, count - 1)),
-          )
-        Ok(_) | Error(_) ->
-          actor.continue(State(
-            polls: dict.delete(state.polls, room),
-            members: dict.delete(state.members, room),
-          ))
-      }
+    Leave(room, owner) -> actor.continue(remove_member(state, room, owner))
+    OwnerDown(process.ProcessDown(monitor, owner, _)) ->
+      actor.continue(
+        dict.fold(state.members, state, fn(state, room, members) {
+          case dict.get(members, owner) {
+            Ok(current) if current == monitor ->
+              remove_member(state, room, owner)
+            Ok(_) | Error(_) -> state
+          }
+        }),
+      )
+    OwnerDown(process.PortDown(..)) -> actor.continue(state)
     Get(room, reply) -> {
       let #(current, polls) = find(state.polls, room)
       process.send(reply, current)
@@ -123,6 +142,26 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
           process.send(reply, RoomNotFound)
           actor.continue(state)
         }
+      }
+    }
+  }
+}
+
+fn remove_member(state: State, room: String, owner: Pid) -> State {
+  let members = dict.get(state.members, room) |> result.unwrap(dict.new())
+  case dict.get(members, owner) {
+    Error(_) -> state
+    Ok(monitor) -> {
+      process.demonitor_process(monitor)
+      let remaining = dict.delete(members, owner)
+      case dict.size(remaining) {
+        0 ->
+          State(
+            polls: dict.delete(state.polls, room),
+            members: dict.delete(state.members, room),
+          )
+        _ ->
+          State(..state, members: dict.insert(state.members, room, remaining))
       }
     }
   }

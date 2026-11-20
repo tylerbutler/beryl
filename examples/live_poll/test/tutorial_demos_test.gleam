@@ -12,6 +12,7 @@ import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/string
 import gleeunit/should
+import live_poll/poll
 import live_poll/raw
 import live_poll/store
 import live_poll/timer
@@ -353,4 +354,60 @@ pub fn tutorial_shared_poll_recipients_and_cleanup_test() -> Nil {
   fresh |> contains("\"gleam\":0")
   fresh |> contains("\"erlang\":0")
   beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn poll_worker_loss_then_last_member_leave_removes_room_test() -> Nil {
+  let assert Ok(polls) = store.start()
+  let workers = process.new_subject()
+  let assert Ok(#(sockets, specification)) =
+    channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
+      channel.handler("poll:*", fn(context) {
+        let assert [room] = context.parameters
+        store.join(polls, room)
+        process.send(workers, process.self())
+        channel.accept(room)
+        |> channel.on_terminate(fn(room, _) {
+          store.leave(polls, room)
+          []
+        })
+      }),
+    ])
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(specification)
+    |> static_supervisor.start()
+  let first = connect(sockets, "first")
+  let last = connect(sockets, "last")
+  send(sockets, "first", "poll:demo", "phx_join", empty())
+  recv(first) |> contains("\"status\":\"ok\"")
+  let assert Ok(worker) = process.receive(workers, 1000)
+  send(sockets, "last", "poll:demo", "phx_join", empty())
+  recv(last) |> contains("\"status\":\"ok\"")
+  let assert Ok(_) = process.receive(workers, 1000)
+  let assert Ok(voted) = store.vote(polls, "demo", poll.Gleam)
+
+  process.kill(worker)
+  recv(first) |> contains("\"phx_error\"")
+  store.get(polls, "demo") |> should.equal(voted)
+  send(sockets, "last", "poll:demo", "phx_leave", empty())
+  recv(last) |> contains("\"status\":\"ok\"")
+  recv(last) |> contains("\"phx_close\"")
+  await_room_removed(polls, "demo", 200)
+
+  send(sockets, "last", "poll:demo", "phx_join", empty())
+  recv(last) |> contains("\"status\":\"ok\"")
+  let assert Ok(_) = process.receive(workers, 1000)
+  store.get(polls, "demo") |> should.equal(poll.new())
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+fn await_room_removed(polls: store.Store, room: String, attempts: Int) -> Nil {
+  case store.close(polls, room) {
+    store.RoomNotFound -> Nil
+    store.ClosedNow(_) | store.AlreadyClosed(_) -> {
+      should.be_true(attempts > 0)
+      process.sleep(5)
+      await_room_removed(polls, room, attempts - 1)
+    }
+  }
 }
