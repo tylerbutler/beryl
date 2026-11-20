@@ -1490,7 +1490,9 @@ pub fn update(
 
 /// Untrack a specific presence using the ref returned by `track`.
 ///
-/// Removing an unknown or already-removed ref is a harmless no-op.
+/// Only entries created by public `track` or `update` can be removed here.
+/// An unknown, already-removed, or runtime-owned ref is a no-op that returns
+/// `Ok(Nil)`. Use runtime presence effects to remove runtime-owned entries.
 ///
 /// Returns `AdmissionRejected`, `OwnerUnavailable`, or `RequestTimedOut`
 /// directly. See **Mutation errors** on `Presence` for details.
@@ -1847,7 +1849,11 @@ fn handle_message(
       }
 
     Untrack(ref, reply) -> {
-      case do_untrack_refs(actor_state, [ref]) {
+      let refs = case dict.get(actor_state.refs, ref) {
+        Ok(TrackedPresence(_, _, _, _, _, PublicOwner)) -> [ref]
+        Ok(TrackedPresence(_, _, _, _, _, RuntimeOwner(_))) | Error(Nil) -> []
+      }
+      case do_untrack_refs(actor_state, refs) {
         Ok(new_state) -> {
           reply(Nil)
           actor.continue(new_state)
