@@ -83,6 +83,9 @@ pub type TransferDecodeError {
 }
 
 /// Create a table specification with protected access and no heir.
+///
+/// Tables are unnamed by default. Creation validates the label without
+/// converting it to an atom.
 pub fn spec(name: String, table_type: TableType) -> Spec(Nil) {
   Spec(
     name: name,
@@ -101,6 +104,9 @@ pub fn with_access(spec: Spec(data), access: Access) -> Spec(data) {
 }
 
 /// Register the table under its configured name.
+///
+/// Creation converts the name to a permanent VM atom. Use a fixed, finite set
+/// of names; do not derive names from requests or job identifiers.
 pub fn with_named_table(spec: Spec(data)) -> Spec(data) {
   Spec(..spec, named_table: True)
 }
@@ -147,7 +153,12 @@ pub fn without_heir(spec: Spec(previous_data)) -> Spec(Nil) {
 
 /// Create an ETS table owned by the calling process.
 ///
-/// Names longer than 255 Unicode code points return `InvalidName`.
+/// Invalid UTF-8 or names longer than 255 Unicode code points return
+/// `InvalidName`, for both named and unnamed tables.
+///
+/// Unnamed tables use the fixed atom `beryl_heirloom` for native
+/// `ets:info(Table, name)` metadata, not the configured label. The returned
+/// handle identifies the table instance.
 pub fn create(spec: Spec(heir_data)) -> Result(Table(key, value), CreateError) {
   create_ffi(
     spec.name,

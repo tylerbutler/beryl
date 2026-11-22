@@ -226,7 +226,12 @@ pub fn create(Spec(a)) -> Result(Table(b, c), CreateError)
 
 Create an ETS table owned by the calling process.
 
- Names longer than 255 Unicode code points return `InvalidName`.
+ Invalid UTF-8 or names longer than 255 Unicode code points return
+ `InvalidName`, for both named and unnamed tables.
+
+ Unnamed tables use the fixed atom `beryl_heirloom` for native
+ `ets:info(Table, name)` metadata, not the configured label. The returned
+ handle identifies the table instance.
 
 <div class="api-entry-anchor" id="api-function-delete" aria-hidden="true"></div>
 
@@ -367,6 +372,9 @@ pub fn spec(
 
 Create a table specification with protected access and no heir.
 
+ Tables are unnamed by default. Creation validates the label without
+ converting it to an atom.
+
 <div class="api-entry-anchor" id="api-function-with_access" aria-hidden="true"></div>
 
 ### `with_access`
@@ -403,6 +411,9 @@ pub fn with_named_table(Spec(a)) -> Spec(a)
 ```
 
 Register the table under its configured name.
+
+ Creation converts the name to a permanent VM atom. Use a fixed, finite set
+ of names; do not derive names from requests or job identifiers.
 
 <div class="api-entry-anchor" id="api-function-with_read_concurrency" aria-hidden="true"></div>
 
