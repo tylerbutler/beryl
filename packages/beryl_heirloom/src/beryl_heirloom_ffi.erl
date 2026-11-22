@@ -7,7 +7,7 @@
 -spec create(binary(), atom(), atom(), boolean(), boolean(), boolean(), term()) ->
     {ok, ets:tid()} | {error, atom()}.
 create(Name, Type, Access, Named, ReadConcurrency, WriteConcurrency, Heir) ->
-    case table_name(Name) of
+    case table_name(Name, Named) of
         {error, Error} ->
             {error, Error};
         {ok, AtomName} ->
@@ -210,18 +210,24 @@ finish_creation(Table, HeirOption, Access) ->
             end
     end.
 
-table_name(Name) when is_binary(Name) ->
+table_name(Name, Named) when is_binary(Name) ->
     case unicode:characters_to_list(Name, utf8) of
         Characters when is_list(Characters), length(Characters) =< 255 ->
-            try binary_to_atom(Name, utf8) of
-                Atom -> {ok, Atom}
-            catch
-                error:badarg -> {error, invalid_name}
+            case Named of
+                false ->
+                    %% Validate every label, but intern only registered names.
+                    {ok, beryl_heirloom};
+                true ->
+                    try binary_to_atom(Name, utf8) of
+                        Atom -> {ok, Atom}
+                    catch
+                        error:badarg -> {error, invalid_name}
+                    end
             end;
         _ ->
             {error, invalid_name}
     end;
-table_name(_) ->
+table_name(_, _) ->
     {error, invalid_name}.
 
 table_type(set) -> set;

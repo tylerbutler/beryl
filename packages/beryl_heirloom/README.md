@@ -9,6 +9,13 @@ remains `beryl_heirloom_ffi`; consumers can still define their own `heirloom`
 and `heirloom_ffi` modules.
 
 Table key and value types are checked at compile time, not by ETS at runtime.
+Creation validates labels as UTF-8 with at most 255 Unicode code points.
+Unnamed tables do not convert labels to atoms. Native
+`ets:info(Table, name)` reports the fixed atom `beryl_heirloom`; use the
+returned table handle to identify an instance.
+`with_named_table` converts the configured name to a permanent VM atom.
+Use a fixed, finite set of named table names, not request or job identifiers.
+
 Named handles retain the table instance, not its reusable name. A stale
 handle cannot read or delete a replacement table under that name.
 Only the current owner can delete a table. Other processes receive

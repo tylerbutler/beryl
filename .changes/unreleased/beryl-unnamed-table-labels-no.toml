@@ -1,0 +1,15 @@
+package = "beryl"
+kind = "Fixed"
+body = '''
+#### Unnamed table labels no longer create atoms.
+
+Creating unnamed `beryl_heirloom` tables validates each label without adding it
+to the permanent VM atom table. Services can use distinct labels for scratch
+tables without accumulating label atoms. UTF-8 validation and the 255-code-point
+limit remain unchanged.
+
+Native `ets:info(Table, name)` now reports `beryl_heirloom` for unnamed tables
+instead of the configured label. Use the returned handle to identify a table.
+Named tables still convert configured names to atoms and require a fixed,
+finite set of names.
+'''

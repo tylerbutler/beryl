@@ -18,6 +18,15 @@ fn send_transfer(
 @external(erlang, "heirloom_test_ffi", "send_invalid_table_transfer")
 fn send_invalid_table_transfer(previous_owner: process.Pid, data: data) -> Nil
 
+@external(erlang, "heirloom_test_ffi", "check_unnamed_labels")
+fn check_unnamed_labels(
+  create: fn(String) ->
+    Result(heirloom.Table(String, String), heirloom.CreateError),
+) -> Nil
+
+@external(erlang, "heirloom_test_ffi", "check_invalid_names")
+fn check_invalid_names() -> Nil
+
 fn table(name: String) -> heirloom.Table(String, String) {
   let assert Ok(table) = heirloom.create(heirloom.spec(name, heirloom.Set))
   table
@@ -56,11 +65,16 @@ pub fn heirloom_creates_each_table_type_test() -> Nil {
 pub fn heirloom_accepts_255_code_point_names_test() -> Nil {
   ["x", "\u{00e9}", "\u{1f600}"]
   |> list.each(fn(character) {
-    let assert Ok(table): Result(heirloom.Table(String, String), _) =
+    // Named cases reuse three fixed labels, even when this test runs again.
+    let specification =
       heirloom.spec(string.repeat(character, 255), heirloom.Set)
-      |> heirloom.create
-    heirloom.delete(table) |> should.equal(Ok(Nil))
-    heirloom.exists(table) |> should.be_false
+    [specification, heirloom.with_named_table(specification)]
+    |> list.each(fn(specification) {
+      let assert Ok(table): Result(heirloom.Table(String, String), _) =
+        heirloom.create(specification)
+      heirloom.delete(table) |> should.equal(Ok(Nil))
+      heirloom.exists(table) |> should.be_false
+    })
   })
 }
 
@@ -72,10 +86,24 @@ pub fn heirloom_rejects_256_code_point_names_test() -> Nil {
     string.repeat("e\u{0301}", 128),
   ]
   |> list.each(fn(name) {
+    let specification = heirloom.spec(name, heirloom.Set)
+    [specification, heirloom.with_named_table(specification)]
+    |> list.each(fn(specification) {
+      heirloom.create(specification)
+      |> should.equal(Error(heirloom.InvalidName))
+    })
+  })
+}
+
+pub fn heirloom_unnamed_labels_do_not_create_atoms_test() -> Nil {
+  check_unnamed_labels(fn(name) {
     heirloom.spec(name, heirloom.Set)
     |> heirloom.create
-    |> should.equal(Error(heirloom.InvalidName))
   })
+}
+
+pub fn heirloom_rejects_invalid_native_names_test() -> Nil {
+  check_invalid_names()
 }
 
 pub fn heirloom_supports_access_and_data_operations_test() -> Nil {
