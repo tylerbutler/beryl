@@ -26,6 +26,10 @@ export default {
 		if ([...url.searchParams.keys()].some((key) => key !== "vsn")) {
 			return new Response("Put credentials in the join payload", { status: 400 });
 		}
+		const version = url.searchParams.get("vsn");
+		if (version !== null && !version.startsWith("2.")) {
+			return new Response("Unsupported protocol version", { status: 403 });
+		}
 		return env.MATCHES.getByName(code).fetch(request);
 	},
 };

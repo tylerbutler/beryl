@@ -39,7 +39,9 @@ channel.push("increment", { command_id: crypto.randomUUID() });
 ```
 
 Put credentials in the join payload. The worker permits only Phoenix's `vsn`
-query parameter. This example's token represents the fixed principal `demo`;
+query parameter. A missing version or a value starting with `2.` is accepted;
+other versions return 403 before a Durable Object session is created.
+This example's token represents the fixed principal `demo`;
 a production host must validate a user credential and derive its principal
 from that credential.
 
@@ -81,7 +83,9 @@ just portable-host-test
 The pure suite runs on Erlang and JavaScript. The host suite uses Cloudflare's
 local runtime, actual hibernatable WebSockets, and the official Phoenix
 client. It forces Durable Object eviction to test restoration, lost work,
-heartbeats, and command retries. Shared Phoenix fixtures check Roost framing.
+heartbeats, and command retries. It also checks version rejection before
+upgrade and the exact leave-reply and terminal references. Shared Phoenix
+fixtures check Roost framing.
 No test needs a Cloudflare account.
 
 ## Subdirectories and boundaries
