@@ -11,6 +11,9 @@ and `heirloom_ffi` modules.
 Table key and value types are checked at compile time, not by ETS at runtime.
 Named handles retain the table instance, not its reusable name. A stale
 handle cannot read or delete a replacement table under that name.
+Only the current owner can delete a table. Other processes receive
+`AccessDenied`, including writers with `Public` access. Deleting a missing
+table returns `TableDoesNotExist`.
 Ownership changes require the caller to own the table and recipients or heirs
 to be live local processes. The package does not start keeper processes or
 manage application recovery. beryl owns its connection-limiter checkpoint

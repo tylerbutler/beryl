@@ -1,0 +1,10 @@
+package = "beryl"
+kind = "Fixed"
+body = '''
+#### Only table owners can delete ETS tables.
+
+The bundled `beryl_heirloom` API now returns `AccessDenied` when a non-owner
+tries to delete a table, including a writer with `Public` access. Public
+writers can still insert rows, and the owner retains control of whole-table
+deletion.
+'''
