@@ -268,6 +268,15 @@ fn give_away_ffi(
 ) -> Result(Nil, OwnershipError)
 
 /// Add typed ETS ownership transfers to a process selector.
+///
+/// Transfers produced by this module carry a private native gift envelope
+/// containing the original table identity. The data decoder receives only the
+/// original gift. A deleted original table returns `InvalidTable`, even if its
+/// name has been reused.
+///
+/// Untagged native transfers carrying a live TID remain supported. Untagged
+/// name-only transfers return `InvalidTable`: a name cannot prove which table
+/// instance sent the message. The private envelope tag is reserved.
 pub fn select_transfers(
   selector: process.Selector(message),
   data_decoder: decode.Decoder(data),
