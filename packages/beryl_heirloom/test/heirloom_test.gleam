@@ -1,14 +1,16 @@
 import beryl_heirloom as heirloom
 import gleam/dynamic/decode
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
+import unitest
 
 @external(erlang, "heirloom_test_ffi", "send_transfer")
 fn send_transfer(
-  table: heirloom.Table(key, value),
+  table: identifier,
   previous_owner: process.Pid,
   data: data,
 ) -> Nil
@@ -19,6 +21,18 @@ fn send_invalid_table_transfer(previous_owner: process.Pid, data: data) -> Nil
 fn table(name: String) -> heirloom.Table(String, String) {
   let assert Ok(table) = heirloom.create(heirloom.spec(name, heirloom.Set))
   table
+}
+
+fn gift_decoder() -> decode.Decoder(#(String, Int)) {
+  use label <- decode.field(0, decode.string)
+  use number <- decode.field(1, decode.int)
+  decode.success(#(label, number))
+}
+
+type Handoff {
+  ConfiguredHeir
+  UpdatedHeir
+  GivenAway
 }
 
 pub fn heirloom_creates_each_table_type_test() -> Nil {
@@ -104,6 +118,203 @@ pub fn heirloom_rejects_duplicate_named_table_test() -> Nil {
   heirloom.delete(first) |> should.equal(Ok(Nil))
 }
 
+pub fn heirloom_stale_named_handle_cannot_reach_replacement_test() -> Nil {
+  use <- unitest.tag("serial")
+  let specification =
+    heirloom.spec("heirloom_named_replacement", heirloom.Set)
+    |> heirloom.with_named_table
+  let assert Ok(stale): Result(heirloom.Table(String, String), _) =
+    heirloom.create(specification)
+  heirloom.insert(stale, "key", "original") |> should.equal(Ok(Nil))
+  heirloom.delete(stale) |> should.equal(Ok(Nil))
+
+  let assert Ok(replacement): Result(heirloom.Table(String, Int), _) =
+    heirloom.create(specification)
+  heirloom.insert(replacement, "key", 674) |> should.equal(Ok(Nil))
+
+  // Match only the error: a successful stale lookup can contain a value
+  // whose runtime representation does not match its declared String type.
+  let stale_lookup_failed = case heirloom.lookup(stale, "key") {
+    Error(heirloom.TableDoesNotExist) -> True
+    Error(heirloom.AccessDenied) | Ok(_) -> False
+  }
+  let stale_delete = heirloom.delete(stale)
+  let marker = heirloom.lookup(replacement, "key")
+  case heirloom.exists(replacement) {
+    True -> heirloom.delete(replacement) |> should.equal(Ok(Nil))
+    False -> Nil
+  }
+
+  #(stale_lookup_failed, stale_delete, marker)
+  |> should.equal(#(True, Error(heirloom.TableDoesNotExist), Ok(Some(674))))
+}
+
+pub fn heirloom_creation_publishes_requested_named_access_test() -> Nil {
+  use <- unitest.tag("serial")
+  [heirloom.Private, heirloom.Protected, heirloom.Public]
+  |> list.each(fn(access) {
+    let specification =
+      heirloom.spec("heirloom_published_named_access", heirloom.Set)
+      |> heirloom.with_named_table
+      |> heirloom.with_access(access)
+    let assert Ok(table): Result(heirloom.Table(String, String), _) =
+      heirloom.create(specification)
+    heirloom.insert(table, "key", "original") |> should.equal(Ok(Nil))
+    let outcome = process.new_subject()
+    let worker =
+      process.spawn_unlinked(fn() {
+        process.send(outcome, #(
+          heirloom.lookup(table, "key"),
+          heirloom.insert(table, "key", "replacement"),
+        ))
+      })
+    let monitor = process.monitor(worker)
+    let actual = process.receive(outcome, 500)
+    let down =
+      process.new_selector()
+      |> process.select_specific_monitor(monitor, fn(down) { down })
+      |> process.selector_receive(500)
+    heirloom.delete(table) |> should.equal(Ok(Nil))
+    let assert Ok(_) = down
+    let expected = case access {
+      heirloom.Private -> #(
+        Error(heirloom.AccessDenied),
+        Error(heirloom.AccessDenied),
+      )
+      heirloom.Protected -> #(
+        Ok(Some("original")),
+        Error(heirloom.AccessDenied),
+      )
+      heirloom.Public -> #(Ok(Some("original")), Ok(Nil))
+    }
+    actual |> should.equal(Ok(expected))
+  })
+}
+
+pub fn heirloom_delayed_named_transfer_cannot_reach_replacement_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each([ConfiguredHeir, UpdatedHeir, GivenAway], fn(handoff) {
+    let specification =
+      heirloom.spec("heirloom_delayed_named_replacement", heirloom.Set)
+      |> heirloom.with_named_table
+    let announced = process.new_subject()
+    let recipient = process.self()
+    let owner =
+      process.spawn_unlinked(fn() {
+        let assert Ok(table): Result(heirloom.Table(String, String), _) = case
+          handoff
+        {
+          ConfiguredHeir ->
+            specification
+            |> heirloom.with_heir(recipient, "original-gift")
+            |> heirloom.create
+          UpdatedHeir | GivenAway -> heirloom.create(specification)
+        }
+        let assert Ok(Nil) = heirloom.insert(table, "key", "original")
+        case handoff {
+          ConfiguredHeir -> Nil
+          UpdatedHeir ->
+            heirloom.set_heir(table, recipient, "original-gift")
+            |> should.equal(Ok(Nil))
+          GivenAway ->
+            heirloom.give_away(table, to: recipient, data: "original-gift")
+            |> should.equal(Ok(Nil))
+        }
+        process.send(announced, table)
+      })
+    let monitor = process.monitor(owner)
+    let assert Ok(original) = process.receive(announced, 500)
+    // Waiting for this exact monitor leaves ETS-TRANSFER queued and ensures
+    // ownership has moved before the recipient deletes the original table.
+    let assert Ok(_) =
+      process.new_selector()
+      |> process.select_specific_monitor(monitor, fn(down) { down })
+      |> process.selector_receive(500)
+    heirloom.delete(original) |> should.equal(Ok(Nil))
+    let assert Ok(replacement): Result(heirloom.Table(String, Int), _) =
+      heirloom.create(specification)
+    heirloom.insert(replacement, "key", 674) |> should.equal(Ok(Nil))
+
+    let selector =
+      process.new_selector()
+      |> heirloom.select_transfers(decode.string, fn(transfer) { transfer })
+    let rejected = case process.selector_receive(selector, 500) {
+      Ok(Error(error)) -> Ok(Error(error))
+      Ok(Ok(_transfer)) -> Ok(Ok(Nil))
+      Error(error) -> Error(error)
+    }
+    let marker = heirloom.lookup(replacement, "key")
+    heirloom.delete(replacement) |> should.equal(Ok(Nil))
+    // Do not inspect a success payload: before the fix it could be mistyped.
+    #(handoff, rejected, marker)
+    |> should.equal(#(handoff, Ok(Error(heirloom.InvalidTable)), Ok(Some(674))))
+  })
+}
+
+pub fn heirloom_rejects_untagged_named_transfer_test() -> Nil {
+  let specification =
+    heirloom.spec("heirloom_untagged_named_transfer", heirloom.Set)
+    |> heirloom.with_named_table
+  let assert Ok(table): Result(heirloom.Table(String, String), _) =
+    heirloom.create(specification)
+  send_transfer(
+    atom.create("heirloom_untagged_named_transfer"),
+    process.self(),
+    "gift",
+  )
+  let selector =
+    process.new_selector()
+    |> heirloom.select_transfers(decode.string, fn(transfer) { transfer })
+  let decoded = process.selector_receive(selector, 500)
+  heirloom.delete(table) |> should.equal(Ok(Nil))
+  decoded |> should.equal(Ok(Error(heirloom.InvalidTable)))
+}
+
+pub fn heirloom_rejects_malformed_transfer_envelopes_test() -> Nil {
+  let name = atom.create("heirloom_malformed_transfer_envelopes")
+  let tag = atom.create("beryl_heirloom_transfer")
+  let specification =
+    heirloom.spec("heirloom_malformed_transfer_envelopes", heirloom.Set)
+    |> heirloom.with_named_table
+  let assert Ok(table): Result(heirloom.Table(String, String), _) =
+    heirloom.create(specification)
+  // A live name inside the reserved envelope still cannot prove identity.
+  send_transfer(name, process.self(), #(tag, name, "gift"))
+  send_transfer(table, process.self(), #(tag, 674, "gift"))
+  send_transfer(674, process.self(), "gift")
+  let selector =
+    process.new_selector()
+    |> heirloom.select_transfers(decode.string, fn(transfer) { transfer })
+  let outcomes = [
+    process.selector_receive(selector, 500),
+    process.selector_receive(selector, 500),
+    process.selector_receive(selector, 500),
+  ]
+  heirloom.delete(table) |> should.equal(Ok(Nil))
+  outcomes
+  |> should.equal(list.repeat(Ok(Error(heirloom.InvalidTable)), 3))
+}
+
+pub fn heirloom_accepts_untagged_tid_transfer_test() -> Nil {
+  let table = table("heirloom_untagged_tid_transfer")
+  send_transfer(table, process.self(), "native-gift")
+  let selector =
+    process.new_selector()
+    |> heirloom.select_transfers(decode.string, fn(transfer) { transfer })
+  let decoded = process.selector_receive(selector, 500)
+  heirloom.delete(table) |> should.equal(Ok(Nil))
+  decoded
+  |> should.equal(
+    Ok(
+      Ok(heirloom.Transfer(
+        table: table,
+        previous_owner: process.self(),
+        data: "native-gift",
+      )),
+    ),
+  )
+}
+
 pub fn heirloom_reports_access_denied_test() -> Nil {
   let table = table("heirloom_access_denied")
   let outcome = process.new_subject()
@@ -164,14 +375,25 @@ pub fn heirloom_rejects_heir_changes_from_non_owner_test() -> Nil {
 }
 
 pub fn heirloom_transfers_when_owner_exits_test() -> Nil {
+  heirloom.spec("heirloom_owner_exit", heirloom.Set)
+  |> transfers_when_owner_exits
+}
+
+pub fn heirloom_named_transfer_when_owner_exits_preserves_instance_test() -> Nil {
+  heirloom.spec("heirloom_named_owner_exit", heirloom.Set)
+  |> heirloom.with_named_table
+  |> transfers_when_owner_exits
+}
+
+fn transfers_when_owner_exits(specification: heirloom.Spec(Nil)) -> Nil {
   let announced = process.new_subject()
   let heir = process.self()
   let owner =
     process.spawn_unlinked(fn() {
       let specification =
-        heirloom.spec("heirloom_owner_exit", heirloom.Set)
+        specification
         |> heirloom.with_access(heirloom.Public)
-        |> heirloom.with_heir(heir, "inherit")
+        |> heirloom.with_heir(heir, #("inherit", 674))
       let assert Ok(table): Result(heirloom.Table(String, String), _) =
         heirloom.create(specification)
       let assert Ok(Nil) = heirloom.insert(table, "key", "value")
@@ -180,18 +402,29 @@ pub fn heirloom_transfers_when_owner_exits_test() -> Nil {
   let assert Ok(table) = process.receive(announced, 500)
   let selector =
     process.new_selector()
-    |> heirloom.select_transfers(decode.string, fn(transfer) { transfer })
+    |> heirloom.select_transfers(gift_decoder(), fn(transfer) { transfer })
   let assert Ok(Ok(heirloom.Transfer(received, previous_owner, data))) =
     process.selector_receive(selector, 500)
 
   received |> should.equal(table)
   previous_owner |> should.equal(owner)
-  data |> should.equal("inherit")
+  data |> should.equal(#("inherit", 674))
   heirloom.lookup(received, "key") |> should.equal(Ok(Some("value")))
   heirloom.delete(received) |> should.equal(Ok(Nil))
 }
 
 pub fn heirloom_give_away_selects_typed_transfer_test() -> Nil {
+  heirloom.spec("heirloom_give_away", heirloom.Set)
+  |> give_away_selects_typed_transfer
+}
+
+pub fn heirloom_named_give_away_preserves_instance_test() -> Nil {
+  heirloom.spec("heirloom_named_give_away", heirloom.Set)
+  |> heirloom.with_named_table
+  |> give_away_selects_typed_transfer
+}
+
+fn give_away_selects_typed_transfer(specification: heirloom.Spec(Nil)) -> Nil {
   let ready = process.new_subject()
   let received = process.new_subject()
   let recipient_process =
@@ -199,21 +432,21 @@ pub fn heirloom_give_away_selects_typed_transfer_test() -> Nil {
       process.send(ready, process.self())
       let selector =
         process.new_selector()
-        |> heirloom.select_transfers(decode.string, fn(transfer) { transfer })
+        |> heirloom.select_transfers(gift_decoder(), fn(transfer) { transfer })
       process.send(received, process.selector_receive(selector, 500))
       process.sleep(1000)
     })
   let assert Ok(recipient) = process.receive(ready, 500)
   let heir = process.spawn_unlinked(fn() { process.sleep(1000) })
   let specification =
-    heirloom.spec("heirloom_give_away", heirloom.Set)
+    specification
     |> heirloom.with_access(heirloom.Public)
     |> heirloom.with_heir(heir, "configured-heir")
   let assert Ok(table): Result(heirloom.Table(String, String), _) =
     heirloom.create(specification)
   let assert Ok(Nil) = heirloom.insert(table, "key", "value")
 
-  heirloom.give_away(table, to: recipient, data: "gift")
+  heirloom.give_away(table, to: recipient, data: #("gift", 674))
   |> should.equal(Ok(Nil))
   let assert Ok(Ok(Ok(heirloom.Transfer(
     table: received_table,
@@ -222,7 +455,7 @@ pub fn heirloom_give_away_selects_typed_transfer_test() -> Nil {
   )))) = process.receive(received, 1000)
   received_table |> should.equal(table)
   previous_owner |> should.equal(process.self())
-  data |> should.equal("gift")
+  data |> should.equal(#("gift", 674))
   heirloom.owner(table) |> should.equal(Ok(recipient))
   heirloom.heir(table) |> should.equal(Ok(Some(heir)))
   process.kill(recipient_process)
