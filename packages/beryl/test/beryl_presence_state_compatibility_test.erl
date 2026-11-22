@@ -119,12 +119,50 @@ retired_third_replica_clocks_do_not_suppress_live_entries_test() ->
     ?assertNot(maps:is_key(?THIRD, element(6, Retired))),
     assert_third_survives_projection(Retired, Third).
 
+fresh_owner_values_restore_without_resetting_history_or_liveness_test() ->
+    Own = cloud_state_with_entry(?OWNER),
+    Foreign = cloud_state_with_entry(?FOREIGN),
+    Local = merge(join(cloud_state(<<"local">>), <<"local">>), Foreign),
+    {ForeignDown, _} = ?STATE:replica_down(Local, ?FOREIGN),
+    Cached = merge(ForeignDown, Own),
+    {OwnerDown, _} = ?STATE:replica_down(Cached, ?OWNER),
+    Retired = ?STATE:remove_down_replica(OwnerDown, ?OWNER),
+    Watermarks = ?STATE:compacted_clocks(Retired),
+    %% Ordinary gossip still cannot restore this covered tag.
+    Merged = merge(Retired, Own),
+    ?assertEqual([], ?STATE:get_by_key(Merged, ?TOPIC, ?OWNER)),
+    %% An authoritative reply may carry unrelated history and values. Only
+    %% its own values may be restored; the hidden foreign replica stays down.
+    Snapshot = merge(Own, cloud_state_with_entry(?THIRD)),
+    Restored = beryl_presence_state_ffi:restore_owner_values(Merged, Snapshot),
+    assert_non_values_unchanged(Merged, Restored),
+    ?assertEqual(Watermarks, ?STATE:compacted_clocks(Restored)),
+    ?assertEqual(?STATE:get_by_key(Own, ?TOPIC, ?OWNER),
+        ?STATE:get_by_key(Restored, ?TOPIC, ?OWNER)),
+    ?assertEqual([], ?STATE:get_by_key(Restored, ?TOPIC, ?FOREIGN)),
+    ?assertEqual(?STATE:internal_values(Foreign),
+        maps:filter(fun({tag, Replica, _}, _) -> Replica =:= ?FOREIGN end,
+            ?STATE:internal_values(Restored))),
+    ?assertEqual([], ?STATE:get_by_key(Restored, ?TOPIC, ?THIRD)),
+    ?assertEqual(Restored,
+        beryl_presence_state_ffi:restore_owner_values(Restored, Snapshot)),
+    %% A complete empty owner reply removes its values, not its watermark.
+    [Tag] = maps:keys(?STATE:internal_values(Own)),
+    {Empty, true} = beryl_presence_state_ffi:remove_tag(Own, Tag),
+    Removed = beryl_presence_state_ffi:restore_owner_values(Restored, Empty),
+    assert_non_values_unchanged(Restored, Removed),
+    ?assertEqual([], ?STATE:get_by_key(Removed, ?TOPIC, ?OWNER)),
+    ?assertEqual(Removed, merge(Removed, Own)),
+    ?assertError(unsupported_lattice_presence_state,
+        beryl_presence_state_ffi:restore_owner_values(Own, Own)).
+
 unsupported_shapes_test_() ->
     State = join(?STATE:new(?OWNER), <<"entry">>),
+    Local = ?STATE:new(<<"receiver">>),
     BadTuples = [not_a_state, {state}, setelement(1, State, other_state),
         erlang:append_element(State, extra),
         erlang:delete_element(6, State)],
-    %% Each required map must fail explicitly in both operations, including
+    %% Each required map must fail explicitly in every operation, including
     %% the liveness map that owner_snapshot deliberately replaces.
     BadMaps = [setelement(Index, State, BadMap)
         || Index <- [3, 4, 5, 6], BadMap <- [nil, [], {dict, #{}}]],
@@ -132,7 +170,11 @@ unsupported_shapes_test_() ->
         ?assertError(unsupported_lattice_presence_state,
             beryl_presence_state_ffi:remove_tag(Bad, {tag, ?OWNER, 1})),
         ?assertError(unsupported_lattice_presence_state,
-            beryl_presence_state_ffi:owner_snapshot(Bad))
+            beryl_presence_state_ffi:owner_snapshot(Bad)),
+        ?assertError(unsupported_lattice_presence_state,
+            beryl_presence_state_ffi:restore_owner_values(Bad, State)),
+        ?assertError(unsupported_lattice_presence_state,
+            beryl_presence_state_ffi:restore_owner_values(Local, Bad))
     end) || Bad <- BadTuples ++ BadMaps].
 
 join(State, Key) ->
