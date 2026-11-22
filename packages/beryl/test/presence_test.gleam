@@ -159,6 +159,187 @@ fn idle_owner() -> process.Pid {
   })
 }
 
+pub fn indexed_replacement_and_old_owner_cleanup_stay_isolated_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  let diffs = process.new_subject()
+  let assert Ok(tracker) =
+    presence.start(
+      test_config("indexed-owners")
+      |> presence.with_on_diff(fn(diff) { process.send(diffs, diff) }),
+    )
+  let old_owner = idle_owner()
+  let new_owner = idle_owner()
+  process.link(old_owner)
+  process.link(new_owner)
+  let old_ref =
+    track_runtime_ref(tracker, old_owner, "room:a", "user", "same", None, 1)
+  let other_key =
+    track_runtime_ref(tracker, old_owner, "room:a", "other", "same", None, 2)
+  let other_topic =
+    track_runtime_ref(tracker, new_owner, "room:b", "user", "same", None, 3)
+  let assert Ok(public_ref) =
+    presence.track(tracker, "room:a", "user", "same", json.null())
+  let assert Ok(second_public_ref) =
+    presence.track(tracker, "room:a", "user", "same", json.null())
+  list.each(list.repeat(Nil, 5), fn(_) {
+    let assert Ok(_) = process.receive(diffs, 1000)
+    Nil
+  })
+
+  // A replacement owner has no previous ref; logical identity still supersedes.
+  let replacement =
+    track_runtime_ref(tracker, new_owner, "room:a", "user", "same", None, 4)
+  let assert Ok(replaced) = process.receive(diffs, 1000)
+  presence.diff_leaves(replaced, "room:a")
+  |> list.length
+  |> should.equal(1)
+  presence.diff_joins(replaced, "room:a")
+  |> list.length
+  |> should.equal(1)
+  presence.count(tracker, "room:a") |> should.equal(Ok(4))
+  presence.count(tracker, "room:b") |> should.equal(Ok(1))
+
+  let updated =
+    track_runtime_ref(
+      tracker,
+      new_owner,
+      "room:a",
+      "user",
+      "same",
+      Some(replacement),
+      5,
+    )
+  let assert Ok(_) = process.receive(diffs, 1000)
+  let reply = process.new_subject()
+  presence.untrack_async(
+    tracker,
+    [old_ref, replacement, old_ref, "unknown"],
+    "compensate",
+    6,
+    reply,
+  )
+  |> should.equal(Ok(Nil))
+  process.receive(reply, 1000)
+  |> should.equal(Ok(presence.MutationAck("compensate", 6, presence.Untracked)))
+  process.receive(diffs, 0) |> should.equal(Error(Nil))
+
+  process.unlink(old_owner)
+  process.kill(old_owner)
+  test_helper.wait_until(
+    fn() { presence.count(tracker, "room:a") == Ok(3) },
+    1000,
+    5,
+  )
+  let assert Ok(cleaned) = process.receive(diffs, 1000)
+  let assert [left] = presence.diff_leaves(cleaned, "room:a")
+  left.key |> should.equal("other")
+  presence.diff_joins(cleaned, "room:a") |> should.equal([])
+  presence.count(tracker, "room:b") |> should.equal(Ok(1))
+
+  presence.untrack_all(tracker, "same") |> should.equal(Ok(Nil))
+  let assert Ok(batch) = process.receive(diffs, 1000)
+  presence.diff_leaves(batch, "room:a") |> list.length |> should.equal(3)
+  presence.diff_leaves(batch, "room:b") |> list.length |> should.equal(1)
+  presence.list(tracker, "room:a") |> should.equal(Ok([]))
+  presence.list(tracker, "room:b") |> should.equal(Ok([]))
+  presence.untrack_all(tracker, "same") |> should.equal(Ok(Nil))
+  presence.untrack_async(
+    tracker,
+    [updated, other_key, other_topic, public_ref, second_public_ref],
+    "stale",
+    7,
+    reply,
+  )
+  |> should.equal(Ok(Nil))
+  process.receive(reply, 1000)
+  |> should.equal(Ok(presence.MutationAck("stale", 7, presence.Untracked)))
+  process.receive(diffs, 0) |> should.equal(Error(Nil))
+  test_helper.kill_presence(tracker)
+  process.unlink(new_owner)
+  process.kill(new_owner)
+}
+
+fn track_runtime_ref(
+  tracker: presence.Presence,
+  owner: process.Pid,
+  topic: String,
+  key: String,
+  session: String,
+  replace: option.Option(String),
+  operation: Int,
+) -> String {
+  let reply = process.new_subject()
+  presence.track_async(
+    tracker,
+    topic,
+    key,
+    session,
+    json.object([]),
+    replace,
+    owner,
+    "indexed",
+    operation,
+    reply,
+  )
+  |> should.equal(Ok(Nil))
+  let assert Ok(presence.MutationAck(
+    tag: "indexed",
+    operation_id: received_operation,
+    outcome: presence.Tracked(ref, _),
+  )) = process.receive(reply, 1000)
+  received_operation |> should.equal(operation)
+  process.receive(reply, 0) |> should.equal(Error(Nil))
+  ref
+}
+
+pub fn indexed_public_update_and_batch_cleanup_preserve_other_sessions_test() -> Nil {
+  let diffs = process.new_subject()
+  let assert Ok(tracker) =
+    presence.start(
+      test_config("indexed-public")
+      |> presence.with_on_diff(fn(diff) { process.send(diffs, diff) }),
+    )
+  let assert Ok(first) =
+    presence.track(tracker, "room:a", "user", "same", json.null())
+  let assert Ok(second) =
+    presence.track(tracker, "room:a", "user", "same", json.null())
+  let assert Ok(third) =
+    presence.track(tracker, "room:b", "user", "same", json.null())
+  let assert Ok(survivor) =
+    presence.track(tracker, "room:a", "user", "unrelated", json.null())
+  let assert Ok(updated) = presence.update(tracker, first, json.null())
+  list.each(list.repeat(Nil, 5), fn(_) {
+    let assert Ok(_) = process.receive(diffs, 1000)
+    Nil
+  })
+  let reply = process.new_subject()
+  presence.untrack_async(
+    tracker,
+    [first, updated, updated, third, "unknown"],
+    "batch",
+    1,
+    reply,
+  )
+  |> should.equal(Ok(Nil))
+  process.receive(reply, 1000)
+  |> should.equal(Ok(presence.MutationAck("batch", 1, presence.Untracked)))
+  let assert Ok(batch) = process.receive(diffs, 1000)
+  presence.diff_leaves(batch, "room:a") |> list.length |> should.equal(1)
+  presence.diff_leaves(batch, "room:b") |> list.length |> should.equal(1)
+  presence.untrack_all(tracker, "same") |> should.equal(Ok(Nil))
+  let assert Ok(_) = process.receive(diffs, 1000)
+  presence.count(tracker, "room:a") |> should.equal(Ok(1))
+  presence.list(tracker, "room:b") |> should.equal(Ok([]))
+  presence.update(tracker, second, json.null())
+  |> should.equal(Error(presence.UnknownRef(second)))
+  presence.untrack_all(tracker, "same") |> should.equal(Ok(Nil))
+  process.receive(diffs, 0) |> should.equal(Error(Nil))
+  presence.untrack(tracker, survivor) |> should.equal(Ok(Nil))
+  let assert Ok(_) = process.receive(diffs, 1000)
+  test_helper.kill_presence(tracker)
+}
+
 pub fn explicitly_constructed_diffs_have_cluster_scope_test() -> Nil {
   presence.diff(joins: [], leaves: [])
   |> presence.diff_scope

@@ -1,0 +1,11 @@
+package = "beryl"
+kind = "Performance"
+body = '''
+#### Presence selects only the refs affected by local cleanup and replacement.
+
+Runtime presence replacement, socket-owner cleanup, and `untrack_all` use
+local ownership indexes instead of scanning unrelated tracking refs. Public
+refs remain independent, and replacement socket owners keep their entries
+when an old owner exits. CRDT mutation and read-model publication costs are
+unchanged.
+'''

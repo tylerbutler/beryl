@@ -777,6 +777,11 @@ type ActorState {
     /// `untrack` can locate the correct CRDT entry to leave. Populated on
     /// `Track` and pruned on `Untrack`/`UntrackAll`.
     refs: Dict(String, TrackedPresence),
+    /// Secondary memberships are removed even when the CRDT tag is absent.
+    owner_refs: Dict(process.Pid, Set(String)),
+    session_refs: Dict(String, Set(String)),
+    /// Logical runtime identity excludes the PID; public refs are not indexed.
+    runtime_key_refs: Dict(#(String, String, String), Set(String)),
     /// Socket actors with a reserved cleanup obligation and a live monitor.
     runtime_owners: Set(process.Pid),
     /// The ETS table backing the read model that `list`, `get_by_key`, and
@@ -1032,6 +1037,9 @@ fn build_presence(
         self_subject: Some(subject),
         sync: None,
         refs: dict.new(),
+        owner_refs: dict.new(),
+        session_refs: dict.new(),
+        runtime_key_refs: dict.new(),
         runtime_owners: set.new(),
         read_table: read_table,
         inbox: inbox,
@@ -2100,16 +2108,18 @@ fn log_tracked(
 // invocation, and the read-model publication happen in exactly one order:
 // mutate, invoke `on_diff`, publish every touched topic, and only then
 // reply/acknowledge.
+//
+// Ref selection visits only the indexed owner, session, or logical key's
+// members. This does not bound the complete mutation: CRDT operations and
+// `publish_topic` retain their dependency-owned costs.
 
 /// The result of removing a batch of refs from the CRDT.
 type RemovedRefs {
   RemovedRefs(
-    crdt: State,
+    actor_state: ActorState,
     /// Entries actually removed, grouped by topic — the leave side of the
     /// diff, captured before each removal so metas are the stored ones.
     leaves: Dict(String, List(PresenceEntry)),
-    /// The ref map with every removed ref dropped.
-    refs: Dict(String, TrackedPresence),
     /// Topics touched by the removals (with duplicates).
     topics: List(String),
   )
@@ -2118,24 +2128,23 @@ type RemovedRefs {
 @external(erlang, "beryl_presence_state_ffi", "remove_tag")
 fn remove_tag(crdt: State, tag: state.Tag) -> #(State, Bool)
 
-fn remove_refs(
-  crdt: State,
-  refs: Dict(String, TrackedPresence),
-  removing: List(String),
-) -> RemovedRefs {
+fn remove_refs(actor_state: ActorState, removing: List(String)) -> RemovedRefs {
   list.fold(
     removing,
-    RemovedRefs(crdt: crdt, leaves: dict.new(), refs: refs, topics: []),
+    RemovedRefs(actor_state: actor_state, leaves: dict.new(), topics: []),
     fn(removed_refs, ref) {
-      case dict.get(removed_refs.refs, ref) {
+      case dict.get(removed_refs.actor_state.refs, ref) {
         Error(Nil) -> removed_refs
-        Ok(TrackedPresence(topic, key, session_id, meta, tag, _owner)) -> {
-          let #(crdt, removed) = remove_tag(removed_refs.crdt, tag)
+        Ok(TrackedPresence(topic, key, session_id, meta, tag, _) as tracked) -> {
+          let #(crdt, removed) = remove_tag(removed_refs.actor_state.crdt, tag)
           let existing =
             dict.get(removed_refs.leaves, topic)
             |> result.unwrap([])
           RemovedRefs(
-            crdt: crdt,
+            actor_state: ActorState(
+              ..delete_ref(removed_refs.actor_state, ref, tracked),
+              crdt: crdt,
+            ),
             leaves: case removed {
               False -> removed_refs.leaves
               True ->
@@ -2147,7 +2156,6 @@ fn remove_refs(
                   ]),
                 )
             },
-            refs: dict.delete(removed_refs.refs, ref),
             topics: case removed {
               True -> [topic, ..removed_refs.topics]
               False -> removed_refs.topics
@@ -2157,6 +2165,93 @@ fn remove_refs(
       }
     },
   )
+}
+
+fn insert_index_ref(
+  index: Dict(key, Set(String)),
+  key: key,
+  ref: String,
+) -> Dict(key, Set(String)) {
+  let refs = dict.get(index, key) |> result.unwrap(set.new()) |> set.insert(ref)
+  dict.insert(index, key, refs)
+}
+
+fn delete_index_ref(
+  index: Dict(key, Set(String)),
+  key: key,
+  ref: String,
+) -> Dict(key, Set(String)) {
+  case dict.get(index, key) {
+    Error(Nil) -> index
+    Ok(refs) -> {
+      let refs = set.delete(refs, ref)
+      case set.size(refs) {
+        0 -> dict.delete(index, key)
+        _ -> dict.insert(index, key, refs)
+      }
+    }
+  }
+}
+
+fn insert_ref(
+  actor_state: ActorState,
+  ref: String,
+  tracked: TrackedPresence,
+) -> ActorState {
+  let actor_state =
+    ActorState(
+      ..actor_state,
+      refs: dict.insert(actor_state.refs, ref, tracked),
+      session_refs: insert_index_ref(
+        actor_state.session_refs,
+        tracked.session_id,
+        ref,
+      ),
+    )
+  case tracked.owner {
+    PublicOwner -> actor_state
+    RuntimeOwner(owner) ->
+      ActorState(
+        ..actor_state,
+        owner_refs: insert_index_ref(actor_state.owner_refs, owner, ref),
+        runtime_key_refs: insert_index_ref(
+          actor_state.runtime_key_refs,
+          #(tracked.topic, tracked.key, tracked.session_id),
+          ref,
+        ),
+      )
+  }
+}
+
+fn delete_ref(
+  actor_state: ActorState,
+  ref: String,
+  tracked: TrackedPresence,
+) -> ActorState {
+  let actor_state =
+    ActorState(
+      ..actor_state,
+      refs: dict.delete(actor_state.refs, ref),
+      session_refs: delete_index_ref(
+        actor_state.session_refs,
+        tracked.session_id,
+        ref,
+      ),
+    )
+  // A missing CRDT tag still owns index memberships until its ref is removed.
+  case tracked.owner {
+    PublicOwner -> actor_state
+    RuntimeOwner(owner) ->
+      ActorState(
+        ..actor_state,
+        owner_refs: delete_index_ref(actor_state.owner_refs, owner, ref),
+        runtime_key_refs: delete_index_ref(
+          actor_state.runtime_key_refs,
+          #(tracked.topic, tracked.key, tracked.session_id),
+          ref,
+        ),
+      )
+  }
 }
 
 /// Which refs a track supersedes in its own turn.
@@ -2185,7 +2280,7 @@ type Supersede {
 /// and for the runtime the explicit replacement plus every runtime-owned ref
 /// still held for the same logical `(session_id, topic, key)`, deduplicated.
 fn superseded_refs(
-  refs: Dict(String, TrackedPresence),
+  actor_state: ActorState,
   topic: String,
   key: String,
   session_id: String,
@@ -2196,26 +2291,13 @@ fn superseded_refs(
     SupersedePublicRef(ref) -> [ref]
     SupersedeSameKey(explicit:, owner: _) -> {
       let same_key =
-        refs
-        |> dict.filter(fn(_ref, tracked) {
-          tracked.topic == topic
-          && tracked.key == key
-          && tracked.session_id == session_id
-          && case tracked.owner {
-            RuntimeOwner(_) -> True
-            PublicOwner -> False
-          }
-        })
-        |> dict.keys
+        dict.get(actor_state.runtime_key_refs, #(topic, key, session_id))
+        |> result.unwrap(set.new())
       case explicit {
         // An explicit ref the map no longer holds is kept in the list and
         // skipped by `remove_refs`; dropping it here would be equivalent.
-        Some(old_ref) ->
-          case list.contains(same_key, old_ref) {
-            True -> same_key
-            False -> [old_ref, ..same_key]
-          }
-        None -> same_key
+        Some(old_ref) -> set.insert(same_key, old_ref) |> set.to_list
+        None -> set.to_list(same_key)
       }
     }
   }
@@ -2242,11 +2324,11 @@ fn do_track(
   // transition.
   let removed =
     remove_refs(
-      actor_state.crdt,
-      actor_state.refs,
-      superseded_refs(actor_state.refs, topic, key, session_id, supersede),
+      actor_state,
+      superseded_refs(actor_state, topic, key, session_id, supersede),
     )
-  let new_crdt = state.join(removed.crdt, session_id, topic, key, stored_meta)
+  let new_crdt =
+    state.join(removed.actor_state.crdt, session_id, topic, key, stored_meta)
   let owner = case supersede {
     SupersedeNothing | SupersedePublicRef(_) -> PublicOwner
     SupersedeSameKey(owner:, ..) -> RuntimeOwner(owner)
@@ -2274,9 +2356,9 @@ fn do_track(
       scope: Cluster,
     )
   maybe_invoke_on_diff(actor_state.config, change)
-  let new_refs =
-    dict.insert(
-      removed.refs,
+  let new_state =
+    insert_ref(
+      ActorState(..removed.actor_state, crdt: new_crdt),
       ref,
       TrackedPresence(
         topic: topic,
@@ -2296,12 +2378,7 @@ fn do_track(
     |> publication_result
     |> result.map_error(fn(error) { PublicationFailed(error) }),
   )
-  Ok(#(
-    ActorState(..actor_state, crdt: new_crdt, refs: new_refs)
-      |> notify_observers(change),
-    ref,
-    stored_meta,
-  ))
+  Ok(#(notify_observers(new_state, change), ref, stored_meta))
 }
 
 /// Remove every named ref in one turn. Unknown or already-removed refs are
@@ -2311,11 +2388,8 @@ fn do_untrack_refs(
   actor_state: ActorState,
   refs: List(String),
 ) -> Result(ActorState, ReadTableWriteError) {
-  let removed = remove_refs(actor_state.crdt, actor_state.refs, refs)
-  use <- bool.guard(
-    when: removed.topics == [],
-    return: Ok(ActorState(..actor_state, refs: removed.refs)),
-  )
+  let removed = remove_refs(actor_state, refs)
+  use <- bool.guard(when: removed.topics == [], return: Ok(removed.actor_state))
   let change = Diff(joins: dict.new(), leaves: removed.leaves, scope: Cluster)
   maybe_invoke_on_diff(actor_state.config, change)
   internal.logger("beryl.presence")
@@ -2326,24 +2400,21 @@ fn do_untrack_refs(
   use _ <- result.try(
     publish_topics(
       actor_state.read_table,
-      removed.crdt,
+      removed.actor_state.crdt,
       unique_strings(removed.topics, set.new(), []),
     )
     |> publication_result,
   )
-  Ok(
-    ActorState(..actor_state, crdt: removed.crdt, refs: removed.refs)
-    |> notify_observers(change),
-  )
+  Ok(notify_observers(removed.actor_state, change))
 }
 
 fn do_untrack_all(
   actor_state: ActorState,
   session_id: String,
 ) -> Result(ActorState, ReadTableWriteError) {
-  actor_state.refs
-  |> dict.filter(fn(_ref, tracked) { tracked.session_id == session_id })
-  |> dict.keys
+  dict.get(actor_state.session_refs, session_id)
+  |> result.unwrap(set.new())
+  |> set.to_list
   |> do_untrack_refs(actor_state, _)
 }
 
@@ -2351,9 +2422,9 @@ fn do_untrack_runtime_owner(
   actor_state: ActorState,
   owner: process.Pid,
 ) -> Result(ActorState, ReadTableWriteError) {
-  actor_state.refs
-  |> dict.filter(fn(_ref, tracked) { tracked.owner == RuntimeOwner(owner) })
-  |> dict.keys
+  dict.get(actor_state.owner_refs, owner)
+  |> result.unwrap(set.new())
+  |> set.to_list
   |> do_untrack_refs(actor_state, _)
 }
 
