@@ -8,15 +8,44 @@
 import app_test_helper
 import beryl
 import beryl/connection_limit
+import beryl/overload
 import beryl/socket
 import beryl/transport
 import beryl/wire
 import gleam/erlang/process
 import gleam/list
 import gleam/option
+import gleam/otp/actor
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
+import gleam/result
 import gleeunit/should
 import test_helper
 import unitest
+
+// An opaque external type: the native ETS identity, not a table label.
+type CheckpointTable
+
+type CheckpointFault {
+  DeletedCheckpoint
+  MissingCheckpointState
+  UnreadableCheckpoint
+}
+
+@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_checkpoint_table")
+fn checkpoint_table(limiter: process.Pid) -> Result(CheckpointTable, Nil)
+
+// Replacement starts must stay gated until action releases them. Native setup
+// failures fail the test; cleanup restores the original checkpoint on return
+// or exception, and the action's value is returned unchanged.
+@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_with_faulted_checkpoint")
+fn with_faulted_checkpoint(
+  supervisor: process.Pid,
+  name: process.Name(connection_limit.Message),
+  original: CheckpointTable,
+  fault: CheckpointFault,
+  action: fn() -> value,
+) -> value
 
 fn start_with_limit(max_connections: Int) -> beryl.Sockets {
   let assert Ok(channels) =
@@ -48,6 +77,127 @@ fn start_with_rate(
       },
     )
   channels
+}
+
+pub fn deleted_remembered_checkpoint_fails_closed_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(10_000)
+  remembered_checkpoint_fails_closed(
+    DeletedCheckpoint,
+    "Connection limiter checkpoint table does not exist",
+  )
+}
+
+pub fn missing_remembered_checkpoint_state_fails_closed_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(10_000)
+  remembered_checkpoint_fails_closed(
+    MissingCheckpointState,
+    "Connection limiter checkpoint state is missing",
+  )
+}
+
+pub fn unreadable_remembered_checkpoint_fails_closed_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(10_000)
+  remembered_checkpoint_fails_closed(
+    UnreadableCheckpoint,
+    "Connection limiter checkpoint access denied",
+  )
+}
+
+fn remembered_checkpoint_fails_closed(
+  fault: CheckpointFault,
+  reason: String,
+) -> Nil {
+  let name = process.new_name("faulted_connection_checkpoint")
+  let attempts = process.new_subject()
+  let outcomes = process.new_subject()
+  let ready = process.new_subject()
+  let fixture =
+    process.spawn(fn() {
+      let worker =
+        supervision.worker(fn() {
+          let continue = process.new_subject()
+          process.send(attempts, #(continue, process.self()))
+          let assert Ok(Nil) = process.receive(continue, 2000)
+          let outcome =
+            connection_limit.start_named(
+              1,
+              1,
+              1,
+              1,
+              overload.shared_limits(),
+              name,
+            )
+          process.send(
+            outcomes,
+            result.map(outcome, fn(started) { started.pid }),
+          )
+          outcome
+        })
+      let assert Ok(started) =
+        static_supervisor.new(static_supervisor.OneForOne)
+        |> static_supervisor.add(worker)
+        |> static_supervisor.start()
+      process.send(ready, started.pid)
+      process.sleep_forever()
+    })
+  let assert Ok(#(first_start, supervisor)) = process.receive(attempts, 2000)
+  process.send(first_start, Nil)
+  let assert Ok(Ok(worker)) = process.receive(outcomes, 2000)
+  process.receive(ready, 2000) |> should.equal(Ok(supervisor))
+  let limiter = connection_limit.from_name(name)
+  let assert Ok(permit) =
+    connection_limit.acquire_optional(option.Some(limiter), "192.0.2.1")
+  connection_limit.acquire_optional(option.Some(limiter), "192.0.2.1")
+  |> should.equal(Error(Nil))
+  connection_limit.acquire_optional(option.Some(limiter), "192.0.2.2")
+  |> should.equal(Error(Nil))
+  let assert Ok(table) = checkpoint_table(worker)
+  let worker_monitor = process.monitor(worker)
+  process.kill(worker)
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(worker_monitor, fn(down) { down })
+    |> process.selector_receive(2000)
+  let assert Ok(#(replacement_start, generation)) =
+    process.receive(attempts, 2000)
+  generation |> should.equal(supervisor)
+
+  with_faulted_checkpoint(supervisor, name, table, fault, fn() {
+    process.send(replacement_start, Nil)
+    process.receive(outcomes, 2000)
+    |> should.equal(Ok(Error(actor.InitFailed(reason))))
+    // Gate the next retry too: no new supervisor generation can hide a reset.
+    let assert Ok(#(_next_start, next_generation)) =
+      process.receive(attempts, 2000)
+    next_generation |> should.equal(supervisor)
+    test_helper.wait_until(
+      fn() { connection_limit.pid(limiter) == Error(Nil) },
+      2000,
+      1,
+    )
+    connection_limit.pid(limiter) |> should.equal(Error(Nil))
+    connection_limit.acquire_optional(option.Some(limiter), "192.0.2.1")
+    |> should.equal(Error(Nil))
+    connection_limit.acquire_optional(option.Some(limiter), "192.0.2.2")
+    |> should.equal(Error(Nil))
+  })
+
+  let stopped = process.monitor(supervisor)
+  let fixture_stopped = process.monitor(fixture)
+  process.unlink(fixture)
+  process.kill(supervisor)
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(stopped, fn(down) { down })
+    |> process.selector_receive(2000)
+  let assert Ok(_) =
+    process.new_selector()
+    |> process.select_specific_monitor(fixture_stopped, fn(down) { down })
+    |> process.selector_receive(2000)
+  connection_limit.release_optional(permit)
 }
 
 // A limit of 0 means unlimited: every acquire from the same IP succeeds, and

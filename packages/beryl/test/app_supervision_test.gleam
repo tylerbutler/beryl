@@ -334,10 +334,13 @@ pub fn limiter_survives_runtime_restart_test() -> Nil {
 }
 
 pub fn limiter_restart_preserves_connection_state_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(10_000)
   let assert Ok(sockets) =
     app_test_helper.start_app(
       beryl.config(wire.phoenix_codec())
         |> beryl.with_max_connections_per_ip(1)
+        |> beryl.with_max_connections(2)
         |> beryl.with_connection_rate_per_ip(per_second: 1, burst: 2),
       init: app_test_helper.accepting_init,
       update: app_test_helper.accepting_update,
@@ -369,8 +372,12 @@ pub fn limiter_restart_preserves_connection_state_test() -> Nil {
   // The exhausted bucket and bound live count both survive worker replacement.
   transport.acquire_connection_slot(sockets, rate_ip) |> should.be_error
   transport.acquire_connection_slot(sockets, count_ip) |> should.be_error
+  let assert Ok(other) =
+    transport.acquire_connection_slot(sockets, "192.0.2.23")
+  transport.acquire_connection_slot(sockets, "192.0.2.24") |> should.be_error
 
   // The replacement remonitors holders and still handles explicit release.
+  transport.release_connection_slot(other)
   transport.release_connection_slot(counted)
   transport.acquire_connection_slot(sockets, count_ip) |> should.be_ok
 
@@ -378,6 +385,8 @@ pub fn limiter_restart_preserves_connection_state_test() -> Nil {
 }
 
 pub fn replacement_subtree_owns_a_fresh_checkpoint_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(10_000)
   let assert Ok(#(sockets, beryl_spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
