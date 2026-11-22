@@ -400,6 +400,85 @@ pub fn referenced_leave_ack_precedes_close_and_terminal_test() -> Nil {
   Nil
 }
 
+pub fn old_leave_cannot_cancel_a_pending_replacement_test() -> Nil {
+  list.each([False, True], fn(awaiting_admission) {
+    let #(state, _) =
+      join(initial(), "room:a", "j1", protocol.InvalidateImmediately)
+    let assert #(state, [protocol.CloseChannel(_, cleanup, _, _)]) =
+      apply(
+        state,
+        protocol.Receive(protocol.Join(
+          "room:a",
+          dynamic.nil(),
+          Some("j2"),
+          Some("join"),
+        )),
+        0,
+      )
+    let assert #(
+      state,
+      [
+        protocol.Send(protocol.TerminalMessage(..)),
+        protocol.DeliverJoin(_, operation, _, _),
+      ],
+    ) = apply(state, protocol.CleanupFinished(cleanup), 0)
+    let #(state, admission) = case awaiting_admission {
+      False -> #(state, None)
+      True -> {
+        let assert #(state, [protocol.AdmitJoin(_, admission, _)]) =
+          apply(
+            state,
+            protocol.AcceptJoin(
+              operation,
+              json.null(),
+              protocol.InvalidateImmediately,
+            ),
+            0,
+          )
+        #(state, Some(admission))
+      }
+    }
+    let assert #(after_leave, []) =
+      apply(
+        state,
+        protocol.Receive(protocol.Leave("room:a", Some("j1"), Some("old-leave"))),
+        0,
+      )
+    after_leave |> should.equal(state)
+    let #(state, admission) = case admission {
+      Some(admission) -> #(after_leave, admission)
+      None -> {
+        let assert #(state, [protocol.AdmitJoin(_, admission, _)]) =
+          apply(
+            after_leave,
+            protocol.AcceptJoin(
+              operation,
+              json.null(),
+              protocol.InvalidateImmediately,
+            ),
+            0,
+          )
+        #(state, admission)
+      }
+    }
+    let assert #(
+      state,
+      [
+        protocol.Joined(..),
+        protocol.Send(protocol.ReplyMessage(
+          Some("j2"),
+          _,
+          _,
+          protocol.StatusOk,
+          _,
+        )),
+      ],
+    ) = apply(state, protocol.AdmissionFinished(admission, True), 0)
+    protocol.channel(state, "room:a") |> should.be_ok
+    protocol.pending_count(state) |> should.equal(0)
+  })
+}
+
 pub fn stale_frames_drop_but_omitted_join_reference_is_accepted_test() -> Nil {
   let #(state, _) =
     join(initial(), "room:a", "current", protocol.InvalidateImmediately)
@@ -563,8 +642,14 @@ pub fn closing_worker_results_can_reply_and_push_until_drain_finishes_test() -> 
 }
 
 pub fn drain_failure_updates_the_terminal_reason_test() -> Nil {
-  let #(state, channel) =
-    join(initial(), "room:a", "j1", protocol.DrainBeforeCleanup)
+  list.each(
+    [protocol.DrainBeforeCleanup, protocol.InvalidateImmediately],
+    drain_failure_updates_the_terminal_reason,
+  )
+}
+
+fn drain_failure_updates_the_terminal_reason(mode: protocol.CloseMode) -> Nil {
+  let #(state, channel) = join(initial(), "room:a", "j1", mode)
   let assert #(state, [protocol.CloseChannel(_, cleanup, _, protocol.Normal)]) =
     apply(state, protocol.BeginClose(channel, protocol.Normal), 0)
   let assert #(state, []) =
@@ -573,8 +658,11 @@ pub fn drain_failure_updates_the_terminal_reason_test() -> Nil {
       protocol.DrainFinished(cleanup, protocol.Fault("callback failed")),
       0,
     )
+  let assert #(after_duplicate, []) =
+    apply(state, protocol.DrainFinished(cleanup, protocol.Normal), 0)
+  after_duplicate |> should.equal(state)
   let assert #(
-    _,
+    state,
     [
       protocol.Send(protocol.TerminalMessage(
         Some("j1"),
@@ -583,6 +671,10 @@ pub fn drain_failure_updates_the_terminal_reason_test() -> Nil {
       )),
     ],
   ) = apply(state, protocol.CleanupFinished(cleanup), 0)
+  protocol.pending_count(state) |> should.equal(0)
+  let assert #(after_cleanup, []) =
+    apply(state, protocol.DrainFinished(cleanup, protocol.Normal), 0)
+  after_cleanup |> should.equal(state)
   Nil
 }
 

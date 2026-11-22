@@ -245,6 +245,7 @@ type Phase {
     reason: CloseReason,
     close_mode: CloseMode,
     replacement: Option(Decoded),
+    drain_finished: Bool,
   )
 }
 
@@ -625,7 +626,7 @@ pub fn stale_join_ref(
   topic: String,
   sent: Option(String),
 ) -> Bool {
-  case sent, joined_ref(state, topic) {
+  case sent, instance_ref(state, topic) {
     Some(sent), Some(current) -> sent != current
     Some(_), None | None, Some(_) | None, None -> False
   }
@@ -1148,7 +1149,7 @@ fn begin_close(
       let membership =
         Membership(
           ..membership,
-          phase: Closing(operation, reason, mode, replacement),
+          phase: Closing(operation, reason, mode, replacement, False),
         )
       let state =
         State(
@@ -1213,13 +1214,21 @@ fn finish_drain(
   reason: CloseReason,
 ) -> #(State, List(Action)) {
   case membership_for_channel(state, operation.channel) {
-    Ok(Membership(phase: Closing(pending, _, _, replacement), ..) as membership)
+    Ok(
+      Membership(phase: Closing(pending, _, _, replacement, False), ..) as membership,
+    )
       if pending == operation
     -> {
       let membership =
         Membership(
           ..membership,
-          phase: Closing(pending, reason, InvalidateImmediately, replacement),
+          phase: Closing(
+            pending,
+            reason,
+            InvalidateImmediately,
+            replacement,
+            True,
+          ),
         )
       #(
         State(
@@ -1244,7 +1253,7 @@ fn finish_cleanup(
 ) -> Result(#(State, List(Action)), Error) {
   case membership_for_channel(state, operation.channel) {
     Ok(
-      Membership(phase: Closing(pending, reason, _, replacement), ..) as membership,
+      Membership(phase: Closing(pending, reason, _, replacement, _), ..) as membership,
     )
       if pending == operation
     -> {
@@ -1458,7 +1467,7 @@ fn encode_membership(membership: Membership) -> Json {
       False,
     )
     Established(mode) -> #("established", encode_mode(mode), None, None, False)
-    Closing(operation, _, mode, replacement) -> #(
+    Closing(operation, _, mode, replacement, _) -> #(
       "closing",
       encode_mode(mode),
       Some(operation.sequence),
