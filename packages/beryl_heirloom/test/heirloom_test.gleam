@@ -151,12 +151,20 @@ pub fn heirloom_stale_named_handle_cannot_reach_replacement_test() -> Nil {
 
 pub fn heirloom_creation_publishes_requested_named_access_test() -> Nil {
   use <- unitest.tag("serial")
+  [False, True]
+  |> list.each(fn(named) { access_and_owner_only_deletion(named) })
+}
+
+fn access_and_owner_only_deletion(named: Bool) -> Nil {
   [heirloom.Private, heirloom.Protected, heirloom.Public]
   |> list.each(fn(access) {
     let specification =
       heirloom.spec("heirloom_published_named_access", heirloom.Set)
-      |> heirloom.with_named_table
       |> heirloom.with_access(access)
+    let specification = case named {
+      True -> heirloom.with_named_table(specification)
+      False -> specification
+    }
     let assert Ok(table): Result(heirloom.Table(String, String), _) =
       heirloom.create(specification)
     heirloom.insert(table, "key", "original") |> should.equal(Ok(Nil))
@@ -166,6 +174,7 @@ pub fn heirloom_creation_publishes_requested_named_access_test() -> Nil {
         process.send(outcome, #(
           heirloom.lookup(table, "key"),
           heirloom.insert(table, "key", "replacement"),
+          heirloom.delete(table),
         ))
       })
     let monitor = process.monitor(worker)
@@ -174,20 +183,38 @@ pub fn heirloom_creation_publishes_requested_named_access_test() -> Nil {
       process.new_selector()
       |> process.select_specific_monitor(monitor, fn(down) { down })
       |> process.selector_receive(500)
-    heirloom.delete(table) |> should.equal(Ok(Nil))
+    let marker = heirloom.lookup(table, "key")
+    let owner_delete = heirloom.delete(table)
+    let missing_delete = heirloom.delete(table)
     let assert Ok(_) = down
     let expected = case access {
       heirloom.Private -> #(
+        Error(heirloom.AccessDenied),
         Error(heirloom.AccessDenied),
         Error(heirloom.AccessDenied),
       )
       heirloom.Protected -> #(
         Ok(Some("original")),
         Error(heirloom.AccessDenied),
+        Error(heirloom.AccessDenied),
       )
-      heirloom.Public -> #(Ok(Some("original")), Ok(Nil))
+      heirloom.Public -> #(
+        Ok(Some("original")),
+        Ok(Nil),
+        Error(heirloom.AccessDenied),
+      )
     }
-    actual |> should.equal(Ok(expected))
+    let expected_marker = case access {
+      heirloom.Private | heirloom.Protected -> "original"
+      heirloom.Public -> "replacement"
+    }
+    #(actual, marker, owner_delete, missing_delete)
+    |> should.equal(#(
+      Ok(expected),
+      Ok(Some(expected_marker)),
+      Ok(Nil),
+      Error(heirloom.TableDoesNotExist),
+    ))
   })
 }
 

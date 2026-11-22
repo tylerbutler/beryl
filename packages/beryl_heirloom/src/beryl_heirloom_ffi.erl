@@ -66,10 +66,15 @@ lookup(Table, Key) ->
 
 -spec delete(ets:table()) -> {ok, nil} | {error, atom()}.
 delete(Table) ->
-    try ets:delete(Table) of
-        true -> {ok, nil}
-    catch
-        error:badarg -> table_error(Table)
+    case table_owner(Table) of
+        undefined -> {error, table_does_not_exist};
+        Owner when Owner =/= self() -> {error, access_denied};
+        _ ->
+            try ets:delete(Table) of
+                true -> {ok, nil}
+            catch
+                error:badarg -> table_error(Table)
+            end
     end.
 
 -spec exists(ets:table()) -> boolean().
