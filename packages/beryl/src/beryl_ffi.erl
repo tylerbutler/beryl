@@ -1,18 +1,14 @@
 -module(beryl_ffi).
--export([identity/1,
-         logging_debug_enabled/0,
-         string_starts_with/2, stop_supervisor/1, rescue/1,
+-export([logging_debug_enabled/0,
+         stop_supervisor/1, rescue/1,
          actor_call/3, with_reply_subject/1,
-         connection_limit_call/3, connection_limit_send/2,
+         connection_limit_send/2,
          connection_limit_checkpoint_supervisor/0,
          connection_limit_checkpoint_registry_key/2,
          connection_limit_checkpoint_registry_get/1,
          connection_limit_checkpoint_registry_put/2,
          connection_limit_checkpoint_registry_compare_erase/2,
          pin_subject/1, consume_work_available/1]).
-
-%% Used only after a selector validates the frozen raw PubSub record shape.
-identity(X) -> X.
 
 logging_debug_enabled() ->
     %% Palabres uses metadata-free logger:log/2, not a module-level macro.
@@ -128,34 +124,6 @@ stack_path([_ | Rest], Remaining) ->
     [$? | stack_path(Rest, Remaining - 1)];
 stack_path(_, _) -> [].
 
-%% Deactivating the reply alias drops responses that arrive after this call
-%% returns, while the monitor reports limiter death without waiting for timeout.
-connection_limit_call(Subject, Timeout, Request) ->
-    case connection_limit_subject_owner(Subject) of
-        undefined ->
-            {error, call_owner_unavailable};
-        Owner ->
-            Alias = erlang:alias([reply]),
-            Tag = make_ref(),
-            Reply = {subject, Alias, Tag},
-            Monitor = erlang:monitor(process, Owner),
-            try
-                Owner ! connection_limit_subject_message(
-                    Subject, Request(Reply)),
-                receive
-                    {Tag, Value} -> {ok, Value};
-                    {'DOWN', Monitor, process, Owner, _Reason} ->
-                        {error, call_owner_unavailable}
-                after max(0, Timeout) ->
-                    {error, call_timed_out}
-                end
-            after
-                erlang:demonitor(Monitor, [flush]),
-                erlang:unalias(Alias),
-                receive {Tag, _} -> ok after 0 -> ok end
-            end
-    end.
-
 %% Scope a single completion reply without cancelling the work producing it.
 %% Deactivate before draining so a timeout race cannot leave a late reply.
 with_reply_subject(Action) ->
@@ -169,6 +137,8 @@ with_reply_subject(Action) ->
         receive {Tag, _} -> ok after 0 -> ok end
     end.
 
+%% The reply alias drops late responses; the monitor distinguishes owner death
+%% from timeout. Both are removed on every exit path.
 actor_call(Subject, Timeout, Request) ->
     case connection_limit_subject_owner(Subject) of
         undefined ->
@@ -240,14 +210,6 @@ connection_limit_checkpoint_registry_compare_erase(PersistentKey, Table) ->
         _ -> ok
     end,
     nil.
-
-%% Check if a string starts with a prefix
-string_starts_with(String, Prefix) ->
-    PrefixLen = byte_size(Prefix),
-    case String of
-        <<Prefix:PrefixLen/binary, _/binary>> -> true;
-        _ -> false
-    end.
 
 %% Stop a supervisor process cleanly.
 %% Unlinks first so the calling process is not affected, then sends

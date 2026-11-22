@@ -96,7 +96,7 @@ type State {
   )
 }
 
-@external(erlang, "beryl_pubsub_ffi", "membership_actor_call")
+@external(erlang, "beryl_ffi", "actor_call")
 fn call(
   subject: process.Subject(Message),
   timeout_ms: Int,

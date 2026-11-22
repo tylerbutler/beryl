@@ -8,10 +8,8 @@
 //// private state per joined topic and the layer prunes it when the topic
 //// closes.
 ////
-//// The standalone `cursors`, `chatrooms`, and `collab_docs` servers stay
-//// on raw `beryl.child_spec` dispatch on purpose: each serves a single
-//// topic namespace, which is the case the core API already handles well.
-//// This app is the multi-topic case the channel layer exists for.
+//// Chat and documents use the standalone apps' handlers. The cursor handler
+//// adapts the standalone cursor example's raw dispatch to this channel table.
 
 import beryl
 import beryl/channel
@@ -19,7 +17,9 @@ import beryl/group
 import beryl/transport/server
 import beryl/wire
 import beryl_mist as mist_transport
+import chatroom/app as chat_app
 import chatroom/router as chatroom_router
+import collab_document/app as document_app
 import collab_document/auth as document_auth
 import collab_document/document_store
 import collab_document/router as document_router
@@ -33,10 +33,9 @@ import gleam/int
 import gleam/io
 import gleam/otp/static_supervisor
 import gleam/result
+import gleam/string
 import mist
 import showcase/channel/cursor as cursor_channel
-import showcase/channel/document as document_channel
-import showcase/channel/room as room_channel
 import showcase/router
 
 /// Everything the showcase channels read. Assembled in `main` and passed
@@ -60,22 +59,32 @@ pub type Dependencies {
 /// documentation rather than resolution.
 pub fn handlers(dependencies: Dependencies) -> List(channel.Handler) {
   [
-    lobby(),
+    chat_app.lobby(),
     cursor_channel.channel(cursor_channel.Context(dependencies.presence)),
-    room_channel.channel(room_channel.Context(
-      presence: dependencies.presence,
-      groups: dependencies.groups,
-      hub: dependencies.hub,
-    )),
-    document_channel.channel(document_channel.Context(
-      store: dependencies.store,
-      secret: dependencies.secret,
-    )),
+    chat_app.room(
+      chat_app.Context(
+        presence: dependencies.presence,
+        groups: dependencies.groups,
+        hub: dependencies.hub,
+      ),
+      room_display_name,
+      "[room]",
+    ),
+    document_app.handler_with_log_prefix(
+      document_app.Context(
+        store: dependencies.store,
+        secret: dependencies.secret,
+      ),
+      "[showcase.channel.document]",
+    ),
   ]
 }
 
-fn lobby() -> channel.Handler {
-  channel.handler("lobby", fn(_context) { channel.accept(Nil) })
+fn room_display_name(topic: String) -> String {
+  case string.split(topic, ":") {
+    [_, name] -> name
+    _ -> "unknown"
+  }
 }
 
 pub fn main() -> Nil {

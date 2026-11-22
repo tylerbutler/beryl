@@ -8,7 +8,8 @@ The child channel handlers own per-topic application behavior.
 ## Interface
 
 - `router.gleam:Context` and `handle_request` expose HTTP routing.
-- [Channel handlers](./channel/README.md) supply cursor, document, and room handlers.
+- The [cursor handler](./channel/README.md) joins the sibling packages' document
+  and room handlers in `showcase.handlers`.
 
 ## Invariants
 

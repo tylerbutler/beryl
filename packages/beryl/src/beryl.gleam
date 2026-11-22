@@ -90,6 +90,7 @@
 //// ```
 
 import beryl/app_supervisor
+import beryl/atomic_token
 import beryl/connection_limit
 import beryl/internal
 import beryl/log
@@ -1289,16 +1290,15 @@ fn finish_socket_admission(
   reservation: work_queue.Reservation,
   child: process.Pid,
   logger: log.Logger,
-  request: fn(runtime.AdmissionToken, fn(Bool) -> Nil) ->
-    runtime.Message(message),
+  request: fn(atomic_token.Token, fn(Bool) -> Nil) -> runtime.Message(message),
 ) -> Bool {
-  let admission = runtime.new_admission_token()
+  let admission = atomic_token.new()
   case
     work_queue.call_reserved(queue, reservation, 1000, request(admission, _))
   {
     Ok(admitted) -> admitted
     Error(overload.RequestTimedOut) ->
-      case runtime.cancel_admission(admission) {
+      case atomic_token.cancel(admission) {
         True -> {
           process.kill(child)
           False

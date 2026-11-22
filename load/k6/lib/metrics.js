@@ -59,6 +59,27 @@ function add(metric, value, tags) {
   metric.add(value, tags);
 }
 
+function recordReply(kind, durationMs, tags, rejected) {
+  if (kind === "join") {
+    add(joinReplies, 1, tags);
+    add(joinDuration, durationMs, tags);
+    add(joinRejectionRate, rejected, tags);
+    add(joinTimeoutRate, false, tags);
+  } else if (kind === "heartbeat") {
+    add(heartbeatReplies, 1, tags);
+    add(heartbeatReplyDuration, durationMs, tags);
+    add(heartbeatTimeoutRate, false, tags);
+  } else if (kind === "leave") {
+    add(leaveReplies, 1, tags);
+    add(leaveReplyDuration, durationMs, tags);
+    add(leaveTimeoutRate, false, tags);
+  } else {
+    add(pushReplies, 1, tags);
+    add(pushReplyDuration, durationMs, tags);
+    add(pushTimeoutRate, false, tags);
+  }
+}
+
 export const clientMetrics = Object.freeze({
   connected(durationMs, tags) {
     add(websocketEstablishDuration, durationMs, tags);
@@ -76,45 +97,11 @@ export const clientMetrics = Object.freeze({
   },
 
   reply(kind, durationMs, tags) {
-    if (kind === "join") {
-      add(joinReplies, 1, tags);
-      add(joinDuration, durationMs, tags);
-      add(joinRejectionRate, false, tags);
-      add(joinTimeoutRate, false, tags);
-    } else if (kind === "heartbeat") {
-      add(heartbeatReplies, 1, tags);
-      add(heartbeatReplyDuration, durationMs, tags);
-      add(heartbeatTimeoutRate, false, tags);
-    } else if (kind === "leave") {
-      add(leaveReplies, 1, tags);
-      add(leaveReplyDuration, durationMs, tags);
-      add(leaveTimeoutRate, false, tags);
-    } else {
-      add(pushReplies, 1, tags);
-      add(pushReplyDuration, durationMs, tags);
-      add(pushTimeoutRate, false, tags);
-    }
+    recordReply(kind, durationMs, tags, false);
   },
 
   rejected(kind, durationMs, tags) {
-    if (kind === "join") {
-      add(joinReplies, 1, tags);
-      add(joinDuration, durationMs, tags);
-      add(joinRejectionRate, true, tags);
-      add(joinTimeoutRate, false, tags);
-    } else if (kind === "heartbeat") {
-      add(heartbeatReplies, 1, tags);
-      add(heartbeatReplyDuration, durationMs, tags);
-      add(heartbeatTimeoutRate, false, tags);
-    } else if (kind === "leave") {
-      add(leaveReplies, 1, tags);
-      add(leaveReplyDuration, durationMs, tags);
-      add(leaveTimeoutRate, false, tags);
-    } else {
-      add(pushReplies, 1, tags);
-      add(pushReplyDuration, durationMs, tags);
-      add(pushTimeoutRate, false, tags);
-    }
+    recordReply(kind, durationMs, tags, true);
   },
 
   timeout(kind, tags) {

@@ -67,7 +67,7 @@ fn nonlocal_leave_preserves_registry(scope: atom.Atom) -> Bool
 @external(erlang, "beryl_pubsub_test_ffi", "call_target")
 fn call_target(mode: String) -> process.Subject(process.Subject(Nil))
 
-@external(erlang, "beryl_pubsub_ffi", "membership_actor_call")
+@external(erlang, "beryl_ffi", "actor_call")
 fn membership_call(
   subject: process.Subject(process.Subject(Nil)),
   timeout: Int,

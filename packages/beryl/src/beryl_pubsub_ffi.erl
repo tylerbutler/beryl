@@ -4,7 +4,7 @@
          try_pg_join/3, try_pg_leave/3, try_pg_local_members/2,
          new_readiness/0, publish_readiness/2, clear_readiness/1,
          query_members/4, query_local_members/4,
-         scoped_to_message/1, membership_actor_call/3,
+         scoped_to_message/1,
          new_membership_intent/0, set_membership_intent/3, take_membership_intent/1]).
 
 new_membership_intent() ->
@@ -39,11 +39,6 @@ start_memberships(Scope) ->
         {ok, {started, Pid, _Registry}} -> {ok, Pid};
         {error, Reason} -> {error, Reason}
     end.
-
-%% A process alias drops late responses. The after block always removes the
-%% callee monitor, including timeout and process-down paths.
-membership_actor_call(Subject, Timeout, Request) ->
-    beryl_ffi:actor_call(Subject, Timeout, Request).
 
 registered_scope(Scope) ->
     case whereis(Scope) of

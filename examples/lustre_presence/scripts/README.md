@@ -6,13 +6,13 @@ This script bundles the Gleam/Lustre client and its Phoenix dependency.
 
 ## Interface
 
-- `bundle-client.mjs:builtEntrypoint` selects the built
+- The [shared entry selector](../../scripts/built-entrypoint.mjs) finds the built
   `lustre_presence_client` entry point.
 - `package.json:scripts.build:client` builds Gleam before running the script.
 
 ## Invariants
 
-- `bundle-client.mjs:GLEAM_BUILD_PROFILE` and `GLEAM_ENV` can select a profile.
+- `GLEAM_BUILD_PROFILE` and `GLEAM_ENV` can select a profile.
   Without an override, `builtEntrypoint` selects the newest dev/prod artifact.
 
 ## Side effects

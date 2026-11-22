@@ -40,6 +40,7 @@ jobs:
         with:
           filters: |
             source:
+              - '.github/actions/restore-gleam-deps/**'
               - '.github/workflows/ci.yml'
               - 'packages/**'
               - '**/gleam.toml'
@@ -52,6 +53,7 @@ jobs:
               - 'scripts/check-portable-deps*.mjs'
               - 'scripts/fixtures/heirloom_namespace/**'
             docs:
+              - '.github/actions/restore-gleam-deps/**'
               - 'README.md'
               - '.github/workflows/ci.yml'
               - 'packages/**'
@@ -63,6 +65,7 @@ jobs:
               - 'scripts/prepare-gleam-deps*.mjs'
               - 'scripts/archive-gleam-deps*'
             examples:
+              - '.github/actions/restore-gleam-deps/**'
               - '.github/workflows/ci.yml'
               - 'examples/**'
               - 'packages/**'
@@ -74,6 +77,7 @@ jobs:
               - 'scripts/archive-gleam-deps*'
               - 'scripts/check-portable-deps*.mjs'
             load:
+              - '.github/actions/restore-gleam-deps/**'
               - 'load/**'
               - 'examples/load_test/**'
               - 'packages/**'
@@ -220,20 +224,11 @@ jobs:
         if: needs.changes.outputs.source == 'true'
         uses: ./.github/actions/mise
 
-      - name: Download prepared Gleam dependencies
-        if: needs.changes.outputs.source == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # ratchet:actions/download-artifact@v8
-        with:
-          artifact-ids: ${{ needs.dependencies.outputs.prepared-artifact-id }}
-          path: ${{ runner.temp }}
-          merge-multiple: true
-
       - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.source == 'true'
-        run: |
-          tar -xzf "$RUNNER_TEMP/gleam-dependencies.tar.gz"
-          mkdir -p "$HOME/.cache/gleam/hex/hexpm"
-          tar -xzf "$RUNNER_TEMP/gleam-hex-cache.tar.gz" -C "$HOME/.cache/gleam/hex/hexpm"
+        uses: ./.github/actions/restore-gleam-deps
+        with:
+          artifact-id: ${{ needs.dependencies.outputs.prepared-artifact-id }}
 
       - name: Check formatting
         if: needs.changes.outputs.source == 'true'
@@ -285,20 +280,11 @@ jobs:
         if: needs.changes.outputs.docs == 'true'
         uses: ./.github/actions/mise
 
-      - name: Download prepared Gleam dependencies
-        if: needs.changes.outputs.docs == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # ratchet:actions/download-artifact@v8
-        with:
-          artifact-ids: ${{ needs.dependencies.outputs.prepared-artifact-id }}
-          path: ${{ runner.temp }}
-          merge-multiple: true
-
       - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.docs == 'true'
-        run: |
-          tar -xzf "$RUNNER_TEMP/gleam-dependencies.tar.gz"
-          mkdir -p "$HOME/.cache/gleam/hex/hexpm"
-          tar -xzf "$RUNNER_TEMP/gleam-hex-cache.tar.gz" -C "$HOME/.cache/gleam/hex/hexpm"
+        uses: ./.github/actions/restore-gleam-deps
+        with:
+          artifact-id: ${{ needs.dependencies.outputs.prepared-artifact-id }}
 
       - name: Setup Node.js
         if: needs.changes.outputs.docs == 'true'
@@ -381,20 +367,11 @@ jobs:
         if: needs.changes.outputs.examples == 'true'
         uses: ./.github/actions/mise
 
-      - name: Download prepared Gleam dependencies
-        if: needs.changes.outputs.examples == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # ratchet:actions/download-artifact@v8
-        with:
-          artifact-ids: ${{ needs.dependencies.outputs.prepared-artifact-id }}
-          path: ${{ runner.temp }}
-          merge-multiple: true
-
       - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.examples == 'true'
-        run: |
-          tar -xzf "$RUNNER_TEMP/gleam-dependencies.tar.gz"
-          mkdir -p "$HOME/.cache/gleam/hex/hexpm"
-          tar -xzf "$RUNNER_TEMP/gleam-hex-cache.tar.gz" -C "$HOME/.cache/gleam/hex/hexpm"
+        uses: ./.github/actions/restore-gleam-deps
+        with:
+          artifact-id: ${{ needs.dependencies.outputs.prepared-artifact-id }}
 
       - name: Install example dependencies
         if: needs.changes.outputs.examples == 'true'
@@ -460,20 +437,11 @@ jobs:
         if: needs.changes.outputs.load == 'true'
         uses: ./.github/actions/mise
 
-      - name: Download prepared Gleam dependencies
-        if: needs.changes.outputs.load == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # ratchet:actions/download-artifact@v8
-        with:
-          artifact-ids: ${{ needs.dependencies.outputs.prepared-artifact-id }}
-          path: ${{ runner.temp }}
-          merge-multiple: true
-
       - name: Restore prepared Gleam dependencies
         if: needs.changes.outputs.load == 'true'
-        run: |
-          tar -xzf "$RUNNER_TEMP/gleam-dependencies.tar.gz"
-          mkdir -p "$HOME/.cache/gleam/hex/hexpm"
-          tar -xzf "$RUNNER_TEMP/gleam-hex-cache.tar.gz" -C "$HOME/.cache/gleam/hex/hexpm"
+        uses: ./.github/actions/restore-gleam-deps
+        with:
+          artifact-id: ${{ needs.dependencies.outputs.prepared-artifact-id }}
 
       - name: Validate pinned k6 workload
         if: needs.changes.outputs.load == 'true'
