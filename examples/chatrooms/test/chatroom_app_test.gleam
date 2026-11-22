@@ -125,6 +125,18 @@ pub fn missing_room_is_rejected_test() -> Nil {
 
   recv(frames) |> string.contains("Room not found") |> should.be_true
   session_presence.count(presence, "room:missing") |> should.equal(0)
+  route(
+    sockets,
+    "room-socket",
+    "[\"jr-2\",\"r-2\",\"room:a:b\",\"phx_join\",{}]",
+  )
+  recv(frames) |> string.contains("Room not found: a:b") |> should.be_true
+  route(
+    sockets,
+    "room-socket",
+    "[\"jr-3\",\"r-3\",\"room:\u{0301}x\",\"phx_join\",{}]",
+  )
+  recv(frames) |> string.contains("Room not found: \u{0301}x") |> should.be_true
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 

@@ -16,6 +16,8 @@ import gleam/string
 /// Maximum byte size of a `sync_state` payload's `state` field.
 const max_state_bytes = 65_536
 
+const log_prefix = "[collab_document.app]"
+
 /// Private state for one joined document.
 pub type Model {
   Model(document_key: String)
@@ -34,12 +36,21 @@ pub fn build_document_key(tenant: String, document: String) -> String {
 
 /// Build the collaborative-document channel.
 pub fn handler(application_context: Context) -> channel.Handler {
+  handler_with_log_prefix(application_context, log_prefix)
+}
+
+/// Build the same channel with a host-specific label for store timeouts.
+pub fn handler_with_log_prefix(
+  application_context: Context,
+  prefix: String,
+) -> channel.Handler {
   channel.handler("document:*", fn(join_context) {
     case
-      authorize_join(
+      authorize_with_log_prefix(
         application_context,
         join_context.parameters,
         join_context.payload,
+        prefix,
       )
     {
       Error(reason) -> channel.reject(reason)
@@ -68,10 +79,20 @@ pub fn authorize_join(
   parameters: List(String),
   raw: Dynamic,
 ) -> Result(#(Model, json.Json), json.Json) {
+  authorize_with_log_prefix(context, parameters, raw, log_prefix)
+}
+
+fn authorize_with_log_prefix(
+  context: Context,
+  parameters: List(String),
+  raw: Dynamic,
+  prefix: String,
+) -> Result(#(Model, json.Json), json.Json) {
   case parameters {
     [suffix] ->
       case string.split(suffix, ":") {
-        [tenant, document] -> authorize_tenant(context, tenant, document, raw)
+        [tenant, document] ->
+          authorize_tenant(context, tenant, document, raw, prefix)
         _ -> Error(error_payload("invalid_topic"))
       }
     _ -> Error(error_payload("invalid_topic"))
@@ -83,6 +104,7 @@ fn authorize_tenant(
   tenant: String,
   document: String,
   raw: Dynamic,
+  prefix: String,
 ) -> Result(#(Model, json.Json), json.Json) {
   use token <- result.try(
     payload.string_field(raw, "token")
@@ -99,7 +121,7 @@ fn authorize_tenant(
     json.object([
       #("tenant", json.string(tenant)),
       #("document", json.string(document)),
-      #("state", stored_state(context, document_key)),
+      #("state", stored_state(context, document_key, prefix)),
     ]),
   ))
 }
@@ -134,14 +156,17 @@ fn sync_state(
   }
 }
 
-fn stored_state(context: Context, document_key: String) -> json.Json {
+fn stored_state(
+  context: Context,
+  document_key: String,
+  prefix: String,
+) -> json.Json {
   case document_store.get_state(context.store, document_key) {
     Ok(encoded) -> json.string(encoded)
     Error(document_store.NotFound) -> json.null()
     Error(document_store.Timeout) -> {
       io.println_error(
-        "[collab_document.app] document_store.get_state timed out for key="
-        <> document_key,
+        prefix <> " document_store.get_state timed out for key=" <> document_key,
       )
       json.null()
     }

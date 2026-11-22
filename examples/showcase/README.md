@@ -17,7 +17,7 @@ page so they can be deployed together as one Fly.io or Railway service:
 ## Channels
 
 This is the multi-topic app the `beryl/channel` layer exists for. Each
-namespace is a channel handler in `src/showcase/channel/`, registered as
+namespace has a channel handler registered as
 one list in `showcase.handlers`; the layer routes every join, message, and
 close to the handler that owns the topic, and each channel keeps its own
 private state per joined topic. There is no socket-wide model, no message
@@ -25,8 +25,8 @@ union, and no hand-written router.
 
 The standalone cursors server uses raw socket dispatch through
 `cursor/app.cursor_rooms_update`. Chat rooms and collaborative documents
-expose their own handler factories through `chatroom/app.handlers` and
-`collab_document/app.handler`.
+share their handlers with the showcase through `chatroom/app` and
+`collab_document/app`.
 
 Session presence uses the same example-local ETS tracker as the standalone
 apps. Join and leave callbacks mutate it in their runtime turn, while its
@@ -173,8 +173,7 @@ service if you no longer need it, so it does not keep billing.
 
 ## Subdirectories and boundaries
 
-- [Source](./src/README.md): startup composition, router, channel handlers,
-  and timestamp FFI.
+- [Source](./src/README.md): startup composition, router, and channel handlers.
 
 ## Interface
 
@@ -186,9 +185,9 @@ reused routers, stores, and utilities.
 ## Invariants
 
 - `src/showcase/router.gleam:handle_request` leaves `/docs` disabled even
-  though `src/showcase/channel/document.gleam:channel` exists.
-- `src/showcase/channel/room.gleam:channel` uses the atomic 20-user cap;
-  `document.gleam:channel` validates tenant tokens and bounds state to 65,536 bytes.
+  though the `document:*` WebSocket channel is active.
+- `chatroom/app.room` uses the atomic 20-user cap; `collab_document/app`
+  validates tenant tokens and limits state to 65,536 bytes.
 - `src/showcase.gleam:main` sets frame/message/join rates to 35/30/5 per second
   and cursor/room/document topic rates to 30/10/10.
 

@@ -85,45 +85,8 @@ pub type Config {
   )
 }
 
-pub type AdmissionToken =
-  atomic_token.Token
-
 @external(erlang, "beryl_ffi", "consume_work_available")
 fn consume_work_available(subject: Subject(Message(message))) -> Nil
-
-pub fn new_admission_token() -> AdmissionToken {
-  atomic_token.new()
-}
-
-pub fn cancel_admission(token: AdmissionToken) -> Bool {
-  atomic_token.cancel(token)
-}
-
-fn admission_pending(token: AdmissionToken) -> Bool {
-  atomic_token.pending_if_owner_alive(token)
-}
-
-fn claim_admission(token: AdmissionToken) -> Bool {
-  atomic_token.claim_if_owner_alive(token)
-}
-
-fn admission_owner(token: AdmissionToken) -> Pid {
-  atomic_token.owner(token)
-}
-
-fn admission_is_pending(admission: Option(AdmissionToken)) -> Bool {
-  case admission {
-    Some(token) -> admission_pending(token)
-    None -> True
-  }
-}
-
-fn claim_pending_admission(admission: Option(AdmissionToken)) -> Bool {
-  case admission {
-    Some(token) -> claim_admission(token)
-    None -> True
-  }
-}
 
 /// Messages the runtime actor handles.
 pub type Message(message) {
@@ -137,7 +100,7 @@ pub type Message(message) {
     codec: Option(Codec),
     seed: ConnectSeed,
     close: fn() -> Nil,
-    admission: AdmissionToken,
+    admission: atomic_token.Token,
     reply: fn(Bool) -> Nil,
     /// The socket's actor, started by the transport's connection process
     /// so connection setup never serialises through the router. The router
@@ -148,7 +111,6 @@ pub type Message(message) {
     actor_queue: work_queue.Queue(Message(message)),
   )
   SocketDisconnected(socket_id: String)
-  RouteText(socket_id: String, raw_text: String)
   RouteDecoded(socket_id: String, message: codec.Inbound)
   RouteDecodedBinary(socket_id: String, message: codec.Inbound)
   HandleBinary(socket_id: String, data: BitArray)
@@ -351,7 +313,7 @@ type SocketActorRef(message) {
     pid: process.Pid,
     monitor: process.Monitor,
     admission_monitor: process.Monitor,
-    admission: AdmissionToken,
+    admission: atomic_token.Token,
     close: fn() -> Nil,
     queue: work_queue.Queue(Message(message)),
     /// A pending terminal event; cleared after the router emits it.
@@ -498,7 +460,7 @@ type Step(message) {
   /// Apply the remaining effects of one update's effect list.
   StepEffects(
     effects: List(Effect),
-    pending: Option(Pending),
+    pending: Option(JoinReference),
     kicks: List(String),
     continuation: Continuation,
   )
@@ -626,9 +588,10 @@ type SocketState(model, message) {
     subscribed_topics: Set(String),
     protocol: protocol.State,
     join_operations: Dict(JoinReference, protocol.Operation(protocol.JoinKind)),
-    reply_operations: Dict(
+    /// Each reply holds queue credit until protocol completion or topic close.
+    pending_replies: Dict(
       ReplyReference,
-      protocol.Operation(protocol.ReplyKind),
+      #(protocol.Operation(protocol.ReplyKind), work_queue.Reservation),
     ),
     join_started_at: Dict(String, Int),
     closing_topics: Set(String),
@@ -636,9 +599,6 @@ type SocketState(model, message) {
     teardown_joined_channels: Int,
     /// Presence refs tracked through socket effects, grouped by topic and key.
     presence_refs: Dict(String, Dict(String, #(String, Json))),
-    /// Unique reply capabilities and their reservations. Answering or closing
-    /// the receiving topic removes the capability permanently.
-    reply_reservations: Dict(ReplyReference, work_queue.Reservation),
     /// The worker for each joined topic when the layer uses one process per
     /// topic. The runtime removes it when the topic starts to close.
     workers: Dict(String, WorkerRef),
@@ -647,26 +607,10 @@ type SocketState(model, message) {
   )
 }
 
-/// A join delivered to `update` that has not been answered yet.
-type Pending {
-  Pending(
-    topic: String,
-    join_ref: Option(String),
-    message_ref: Option(String),
-    reference: JoinReference,
-  )
-}
-
 /// Where an event delivered to `update` (or cast to a topic worker) came
 /// from, for crash attribution and telemetry.
 pub type Source {
-  JoinSource(
-    topic: String,
-    join_ref: Option(String),
-    message_ref: Option(String),
-    reference: JoinReference,
-    started_at: Int,
-  )
+  JoinSource(reference: JoinReference, started_at: Int)
   MessageSource(topic: String, kind: telemetry.MessageKind, started_at: Int)
   InfoSource(started_at: Int)
   ClosedSource
@@ -1223,7 +1167,6 @@ fn handle_message(
     // queues its own messages instead of dispatching them, so its inbound
     // order survives the suspension; every other socket is unaffected.
     SocketDisconnected(socket_id)
-    | RouteText(socket_id, _)
     | RouteDecoded(socket_id, _)
     | RouteDecodedBinary(socket_id, _)
     | HandleBinary(socket_id, _)
@@ -1591,7 +1534,7 @@ fn emit_abnormal_disconnect(
 }
 
 fn cancel_abandoned_socket(ref: SocketActorRef(message)) -> Nil {
-  use <- bool.guard(when: !cancel_admission(ref.admission), return: Nil)
+  use <- bool.guard(when: !atomic_token.cancel(ref.admission), return: Nil)
   process.kill(ref.pid)
 }
 
@@ -1883,8 +1826,6 @@ fn dispatch_socket_msg(
   case message {
     SocketDisconnected(socket_id) ->
       handle_socket_disconnected(state, socket_id)
-    RouteText(socket_id, raw_text) ->
-      handle_route_text(state, socket_id, raw_text)
     RouteDecoded(socket_id, message) ->
       dispatch_inbound(state, socket_id, message, telemetry.TextMessage)
     RouteDecodedBinary(socket_id, message) ->
@@ -2059,7 +2000,7 @@ fn handle_admit_socket(
   socket_codec: Option(Codec),
   seed: ConnectSeed,
   close: fn() -> Nil,
-  admission: AdmissionToken,
+  admission: atomic_token.Token,
   reply: fn(Bool) -> Nil,
   actor_subject: Subject(Message(message)),
   actor_pid: process.Pid,
@@ -2079,7 +2020,7 @@ fn handle_admit_socket(
           socket_codec,
           seed,
           close,
-          Some(admission),
+          admission,
         )
       reply(admitted)
       case admitted {
@@ -2115,7 +2056,7 @@ fn handle_admit_socket(
       use <- bool.lazy_guard(
         when: state.stopping
           || process.self() != owner
-          || !admission_pending(admission)
+          || !atomic_token.pending_if_owner_alive(admission)
           || dict.has_key(socket_actors, socket_id),
         return: fn() {
           reply(False)
@@ -2126,7 +2067,7 @@ fn handle_admit_socket(
       // Monitor before forwarding: an actor that dies mid-registration
       // is swept by `SocketActorDown` instead of leaking its entry.
       let monitor = process.monitor(actor_pid)
-      let admission_monitor = process.monitor(admission_owner(admission))
+      let admission_monitor = process.monitor(atomic_token.owner(admission))
       work_queue.register_target(state.inbox, socket_id, actor_queue)
       case
         work_queue.send(
@@ -2224,12 +2165,12 @@ fn register_socket(
   socket_codec: Option(Codec),
   seed: ConnectSeed,
   close: fn() -> Nil,
-  admission: Option(AdmissionToken),
+  admission: atomic_token.Token,
 ) -> #(State(model, message), Bool) {
-  use <- bool.guard(when: !admission_is_pending(admission), return: #(
-    state,
-    False,
-  ))
+  use <- bool.guard(
+    when: !atomic_token.pending_if_owner_alive(admission),
+    return: #(state, False),
+  )
   let sender = make_socket_sender(state, socket_id)
   let info = socket.ConnectInfo(socket_id: socket_id, seed: seed, self: sender)
   let active_codec = option.unwrap(socket_codec, state.config.codec)
@@ -2249,7 +2190,7 @@ fn register_socket(
     }
     Ok(#(model, effects, reservation)), Ok(protocol) -> {
       use <- bool.lazy_guard(
-        when: !claim_pending_admission(admission),
+        when: !atomic_token.claim_if_owner_alive(admission),
         return: fn() {
           work_queue.release(state.inbox, reservation)
           #(state, False)
@@ -2271,13 +2212,12 @@ fn register_socket(
           subscribed_topics: set.new(),
           protocol: protocol,
           join_operations: dict.new(),
-          reply_operations: dict.new(),
+          pending_replies: dict.new(),
           join_started_at: dict.new(),
           closing_topics: set.new(),
           teardown_reason: None,
           teardown_joined_channels: 0,
           presence_refs: dict.new(),
-          reply_reservations: dict.new(),
           workers: dict.new(),
           connected_at: telemetry_start(state),
         )
@@ -3156,35 +3096,6 @@ fn handle_check_heartbeats(
 }
 
 // ── Inbound decoding and dispatch ───────────────────────────────────────────
-
-fn handle_route_text(
-  state: State(model, message),
-  socket_id: String,
-  raw_text: String,
-) -> State(model, message) {
-  let active_codec = case dict.get(state.sockets, socket_id) {
-    Ok(socket) -> socket.codec
-    Error(Nil) -> state.config.codec
-  }
-  let logging = state.config.logging
-  case codec.decode_text(active_codec)(raw_text) {
-    Error(error) -> {
-      state.logger
-      |> log.debug_lazy("Failed to decode wire protocol message", fn() {
-        list.append(
-          [
-            #("socket_id", socket_id),
-            #("error", log.field(codec.format_decode_error(error))),
-          ],
-          internal.preview_metadata("frame_preview", raw_text, logging),
-        )
-      })
-      state
-    }
-    Ok(message) ->
-      dispatch_inbound(state, socket_id, message, telemetry.TextMessage)
-  }
-}
 
 fn dispatch_inbound(
   state: State(model, message),
@@ -4293,7 +4204,7 @@ fn emit_missing_socket_telemetry(
   source: Source,
 ) -> Nil {
   case source {
-    JoinSource(_, _, _, _, started_at) ->
+    JoinSource(_, started_at) ->
       emit_join_stop(state, started_at, telemetry.JoinSocketMissing)
     MessageSource(_, kind, started_at) ->
       emit_message_stop(
@@ -4320,7 +4231,7 @@ fn emit_stopped_update_telemetry(
   source: Source,
 ) -> Nil {
   case source {
-    JoinSource(_, _, _, _, started_at) ->
+    JoinSource(_, started_at) ->
       emit_join_stop(state, started_at, telemetry.JoinHandlerRejected)
     MessageSource(_, kind, started_at) ->
       emit_message_stop(
@@ -4349,7 +4260,8 @@ fn finish_update_telemetry(
   effects: List(Effect),
 ) -> Nil {
   case source {
-    JoinSource(topic_name, _, _, _, started_at) -> {
+    JoinSource(reference, started_at) -> {
+      let topic_name = socket.join_reference_topic(reference)
       let outcome = case socket_subscribed(state, socket_id, topic_name) {
         True -> telemetry.JoinAccepted
         False -> telemetry.JoinHandlerRejected
@@ -4529,8 +4441,7 @@ fn execute_update_result_with_credit(
         _, _ -> False
       }
       let pending = case source {
-        JoinSource(topic_name, join_ref, message_ref, reference, _) ->
-          Some(Pending(topic_name, join_ref, message_ref, reference))
+        JoinSource(reference, _) -> Some(reference)
         MessageSource(..) | InfoSource(..) | ClosedSource -> None
       }
       case admit_effects(state, effects, generated_join, credit) {
@@ -4566,7 +4477,12 @@ fn reject_unindexed_worker(
   source: Source,
 ) -> State(model, message) {
   case source {
-    JoinSource(topic, ..) -> halt_pending_worker(state, socket_id, topic)
+    JoinSource(reference, _) ->
+      halt_pending_worker(
+        state,
+        socket_id,
+        socket.join_reference_topic(reference),
+      )
     _ -> state
   }
 }
@@ -4607,7 +4523,7 @@ fn execute_admission_failure(
     #("reason", overload.describe(error)),
   ])
   case source {
-    JoinSource(_, _, _, reference, started_at) -> {
+    JoinSource(reference, started_at) -> {
       let state =
         reject_join_callback(
           state,
@@ -4668,11 +4584,11 @@ fn execute_update_crash(
   crash: String,
 ) -> Execution(model, message) {
   case source {
-    JoinSource(topic_name, _, _, reference, started_at) -> {
+    JoinSource(reference, started_at) -> {
       state.logger
       |> log.error("Update crashed handling join", [
         #("socket_id", socket_id),
-        #("topic", topic_name),
+        #("topic", socket.join_reference_topic(reference)),
         #("crash", crash),
       ])
       let state =
@@ -4739,12 +4655,8 @@ fn reject_stopped_join(
   source: Source,
 ) -> State(model, message) {
   case source {
-    JoinSource(topic_name, join_ref, message_ref, reference, _) ->
-      reject_unanswered_join(
-        state,
-        socket_id,
-        Pending(topic_name, join_ref, message_ref, reference),
-      )
+    JoinSource(reference, _) ->
+      reject_unanswered_join(state, socket_id, reference)
     MessageSource(..) | InfoSource(..) | ClosedSource -> state
   }
 }
@@ -4753,15 +4665,15 @@ fn reject_stopped_join(
 fn reject_unanswered_join(
   state: State(model, message),
   socket_id: String,
-  pending: Pending,
+  reference: JoinReference,
 ) -> State(model, message) {
-  case join_operation(state, socket_id, pending.reference) {
+  case join_operation(state, socket_id, reference) {
     Error(Nil) -> state
     Ok(operation) ->
       answer_protocol_join(
         state,
         socket_id,
-        pending.reference,
+        reference,
         protocol.CallbackFinished(operation),
       )
   }
@@ -4843,7 +4755,7 @@ fn execute_deliver_join(
         payload: payload,
         reference: pending_reference,
       ),
-      JoinSource(topic_name, join_ref, ref, pending_reference, started_at),
+      JoinSource(pending_reference, started_at),
       ContinueDriving,
     ),
   ])
@@ -5303,7 +5215,7 @@ fn run_effects(
   state: State(model, message),
   socket_id: String,
   effects: List(Effect),
-  pending: Option(Pending),
+  pending: Option(JoinReference),
   kicks: List(String),
   continuation: Continuation,
 ) -> Execution(model, message) {
@@ -5329,13 +5241,13 @@ fn run_effects(
   case effects {
     [] -> {
       let state = case pending {
-        Some(pending_join) -> {
+        Some(reference) -> {
           state.logger
           |> log.warn("Join not acknowledged by update; rejecting", [
             #("socket_id", socket_id),
-            #("topic", pending_join.topic),
+            #("topic", socket.join_reference_topic(reference)),
           ])
-          reject_unanswered_join(state, socket_id, pending_join)
+          reject_unanswered_join(state, socket_id, reference)
         }
         None -> state
       }
@@ -5375,9 +5287,9 @@ fn apply_effect(
   state: State(model, message),
   socket_id: String,
   effect: Effect,
-  pending: Option(Pending),
+  pending: Option(JoinReference),
   kicks: List(String),
-) -> #(State(model, message), Option(Pending), List(String)) {
+) -> #(State(model, message), Option(JoinReference), List(String)) {
   case effect {
     socket.RejectJoin(reference, reason) ->
       apply_reject_join(state, socket_id, reference, reason, pending, kicks)
@@ -5444,9 +5356,9 @@ fn apply_kick_topic(
   state: State(model, message),
   socket_id: String,
   topic_name: String,
-  pending: Option(Pending),
+  pending: Option(JoinReference),
   kicks: List(String),
-) -> #(State(model, message), Option(Pending), List(String)) {
+) -> #(State(model, message), Option(JoinReference), List(String)) {
   use <- bool.lazy_guard(
     when: connection_is_closing(state, socket_id)
       || !socket_subscribed(state, socket_id, topic_name)
@@ -5469,7 +5381,7 @@ fn execute_accept_join(
   reference: JoinReference,
   reply: Option(Json),
   rest: List(Effect),
-  pending: Option(Pending),
+  pending: Option(JoinReference),
   kicks: List(String),
   continuation: Continuation,
 ) -> Execution(model, message) {
@@ -5515,9 +5427,9 @@ fn apply_reject_join(
   socket_id: String,
   reference: JoinReference,
   reason: Json,
-  pending: Option(Pending),
+  pending: Option(JoinReference),
   kicks: List(String),
-) -> #(State(model, message), Option(Pending), List(String)) {
+) -> #(State(model, message), Option(JoinReference), List(String)) {
   case join_operation(state, socket_id, reference) {
     Ok(operation) -> {
       state.logger
@@ -5659,9 +5571,7 @@ fn complete_reply(
 ) -> State(model, message) {
   let pending = {
     use socket <- result.try(dict.get(state.sockets, socket_id))
-    use operation <- result.try(dict.get(socket.reply_operations, reference))
-    use reservation <- result.map(dict.get(socket.reply_reservations, reference))
-    #(operation, reservation)
+    dict.get(socket.pending_replies, reference)
   }
   case pending {
     Error(Nil) -> {
@@ -5707,8 +5617,7 @@ fn release_completed_reply(
         state,
         SocketState(
           ..socket,
-          reply_operations: dict.delete(socket.reply_operations, reference),
-          reply_reservations: dict.delete(socket.reply_reservations, reference),
+          pending_replies: dict.delete(socket.pending_replies, reference),
         ),
       )
     }
@@ -5750,12 +5659,13 @@ fn unsubscribe_topic(
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) -> {
-      let kept =
-        dict.filter(socket.reply_reservations, fn(reference, reservation) {
+      let pending_replies =
+        dict.filter(socket.pending_replies, fn(reference, pending) {
           use <- bool.guard(
             when: socket.reply_reference_topic(reference) != topic_name,
             return: True,
           )
+          let #(_, reservation) = pending
           work_queue.release(state.inbox, reservation)
           False
         })
@@ -5764,13 +5674,7 @@ fn unsubscribe_topic(
         SocketState(
           ..socket,
           subscribed_topics: set.delete(socket.subscribed_topics, topic_name),
-          reply_operations: dict.filter(
-            socket.reply_operations,
-            fn(reference, _) {
-              socket.reply_reference_topic(reference) != topic_name
-            },
-          ),
-          reply_reservations: kept,
+          pending_replies:,
         ),
       )
     }
@@ -5809,16 +5713,10 @@ fn register_reply_reference(
           state,
           SocketState(
             ..socket,
-            reply_operations: dict.insert(
-              socket.reply_operations,
-              reference,
+            pending_replies: dict.insert(socket.pending_replies, reference, #(
               operation,
-            ),
-            reply_reservations: dict.insert(
-              socket.reply_reservations,
-              reference,
               reservation,
-            ),
+            )),
           ),
         )
       #(state, Some(reference))
@@ -8988,7 +8886,6 @@ fn resume_worker_close(
             WorkerReport(..)
             | AdmitSocket(..)
             | SocketDisconnected(..)
-            | RouteText(..)
             | RouteDecoded(..)
             | RouteDecodedBinary(..)
             | HandleBinary(..)
@@ -9133,7 +9030,6 @@ fn worker_termination_effects(
     | WorkerTerminateTimedOut(..)
     | AdmitSocket(..)
     | SocketDisconnected(..)
-    | RouteText(..)
     | RouteDecoded(..)
     | RouteDecodedBinary(..)
     | HandleBinary(..)

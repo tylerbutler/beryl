@@ -172,16 +172,8 @@ fn create_ffi(
 ) -> Result(Table(key, value), CreateError)
 
 /// Insert or replace a key and value.
-pub fn insert(
-  table: Table(key, value),
-  key: key,
-  value: value,
-) -> Result(Nil, TableError) {
-  insert_ffi(table, key, value)
-}
-
 @external(erlang, "beryl_heirloom_ffi", "insert")
-fn insert_ffi(
+pub fn insert(
   table: Table(key, value),
   key: key,
   value: value,
@@ -191,26 +183,15 @@ fn insert_ffi(
 ///
 /// Set tables contain at most one value. Bag tables return the first value
 /// reported by ETS.
-pub fn lookup(
-  table: Table(key, value),
-  key: key,
-) -> Result(Option(value), TableError) {
-  lookup_ffi(table, key)
-}
-
 @external(erlang, "beryl_heirloom_ffi", "lookup")
-fn lookup_ffi(
+pub fn lookup(
   table: Table(key, value),
   key: key,
 ) -> Result(Option(value), TableError)
 
 /// Delete a table owned by the calling process.
-pub fn delete(table: Table(key, value)) -> Result(Nil, TableError) {
-  delete_ffi(table)
-}
-
 @external(erlang, "beryl_heirloom_ffi", "delete")
-fn delete_ffi(table: Table(key, value)) -> Result(Nil, TableError)
+pub fn delete(table: Table(key, value)) -> Result(Nil, TableError)
 
 /// Return whether a table currently exists.
 @external(erlang, "beryl_heirloom_ffi", "exists")
@@ -227,19 +208,11 @@ pub fn heir(table: Table(key, value)) -> Result(Option(process.Pid), TableError)
 /// Set the table heir.
 ///
 /// The caller must own the table. The heir must be a live local process.
+@external(erlang, "beryl_heirloom_ffi", "set_heir")
 pub fn set_heir(
   table: Table(key, value),
   process: process.Pid,
   data: heir_data,
-) -> Result(Nil, OwnershipError) {
-  set_heir_ffi(table, process, data)
-}
-
-@external(erlang, "beryl_heirloom_ffi", "set_heir")
-fn set_heir_ffi(
-  table: Table(key, value),
-  process: process.Pid,
-  data: data,
 ) -> Result(Nil, OwnershipError)
 
 /// Clear the table heir.
@@ -252,19 +225,11 @@ pub fn clear_heir(table: Table(key, value)) -> Result(Nil, OwnershipError)
 ///
 /// The caller must own the table. The recipient observes completion through
 /// an `ETS-TRANSFER` message. The configured heir is unchanged.
+@external(erlang, "beryl_heirloom_ffi", "give_away")
 pub fn give_away(
   table: Table(key, value),
   to process: process.Pid,
   data data: gift_data,
-) -> Result(Nil, OwnershipError) {
-  give_away_ffi(table, process, data)
-}
-
-@external(erlang, "beryl_heirloom_ffi", "give_away")
-fn give_away_ffi(
-  table: Table(key, value),
-  process: process.Pid,
-  data: data,
 ) -> Result(Nil, OwnershipError)
 
 /// Add typed ETS ownership transfers to a process selector.

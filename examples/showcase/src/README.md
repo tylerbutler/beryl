@@ -9,7 +9,6 @@ HTTP/WebSocket server.
 
 - `showcase.gleam:Dependencies`, `handlers`, and `main` expose composition
   and startup.
-- `showcase_ffi.erl:timestamp_ms` supplies millisecond system time.
 - [Router and channels](./showcase/README.md) define HTTP and per-topic boundaries.
 
 ## Invariants
@@ -22,7 +21,6 @@ HTTP/WebSocket server.
 
 `showcase.gleam:main` starts presence, the document store, the broadcast hub,
 groups, supervision, and the listener, then sleeps indefinitely.
-`showcase_ffi.erl:timestamp_ms` reads system time.
 
 ## Verification
 

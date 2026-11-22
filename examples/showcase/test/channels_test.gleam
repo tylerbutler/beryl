@@ -276,6 +276,16 @@ pub fn a_join_for_an_unknown_room_is_rejected_test() -> Nil {
     "phx_reply", "\"status\":\"error\"", "Room not found: nope",
   ])
   |> should.be_true
+  showcase_harness.join(system, "s1", "room:a:b", "2", "{}")
+  showcase_harness.contains(showcase_harness.recv(frames), [
+    "phx_reply", "\"status\":\"error\"", "Room not found: unknown",
+  ])
+  |> should.be_true
+  showcase_harness.join(system, "s1", "room:\u{0301}x", "3", "{}")
+  showcase_harness.contains(showcase_harness.recv(frames), [
+    "phx_reply", "\"status\":\"error\"", "Room not found: unknown",
+  ])
+  |> should.be_true
   showcase_harness.stop(system)
 }
 

@@ -6,14 +6,14 @@ This script packages the JavaScript-targeted Gleam client for the editor page.
 
 ## Interface
 
-- `bundle-client.mjs:builtEntrypoint` selects the built `collab_docs_client`
+- The [shared entry selector](../../scripts/built-entrypoint.mjs) finds the built `collab_docs_client`
   entry point. The script runs through `package.json:scripts.build:client`.
 
 ## Invariants
 
-- `bundle-client.mjs:GLEAM_BUILD_PROFILE` and `GLEAM_ENV` select the requested
+- `GLEAM_BUILD_PROFILE` and `GLEAM_ENV` select the requested
   profile. Without an override, the script checks dev/prod build candidates.
-- `bundle-client.mjs:builtEntrypoint` errors when no built entry point exists.
+- `builtEntrypoint` reports an error when no built entry point exists.
 
 ## Side effects
 

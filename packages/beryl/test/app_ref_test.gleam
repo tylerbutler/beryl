@@ -17,6 +17,7 @@ import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import gleeunit/should
+import test_helper
 
 pub type AppMessage {
   Barrier(process.Subject(Nil))
@@ -299,10 +300,12 @@ pub fn reply_after_topic_close_is_dropped_test() -> Nil {
   let #(channels, senders) = start()
   let frames = app_test_helper.connect(channels, "s1")
   let assert Ok(sender) = process.receive(senders, 500)
-  app_test_helper.join(channels, "s1", "room:a", "jr-1", "r-1")
-  let _join_reply = app_test_helper.recv(frames)
+  app_test_helper.join_ok(channels, frames, "s1", "room:a", "jr-1", "r-1")
+  app_test_helper.join_ok(channels, frames, "s1", "room:b", "jr-1", "r-1")
 
+  // Both topics have the same wire refs but hold independent queue credit.
   app_test_helper.push(channels, "s1", "room:a", "stash", "r-2")
+  app_test_helper.push(channels, "s1", "room:b", "stash", "r-2")
 
   // Leave the topic: reply to the leave ref, then the terminal close frame.
   app_test_helper.route(
@@ -314,10 +317,28 @@ pub fn reply_after_topic_close_is_dropped_test() -> Nil {
   let close_frame = app_test_helper.recv(frames)
   close_frame |> string.contains("phx_close") |> should.be_true
 
-  // The stored reference is stale now that its topic closed: the late reply is
-  // dropped rather than sent.
-  let assert Ok(_) = socket.notify(sender, ReplyStashed)
+  // Closing room:a invalidates only its reference and releases only its credit.
+  let assert Ok(_) = socket.notify(sender, ReplyPrevious)
   app_test_helper.recv_none(frames)
+  await_queue_items(sender, 1)
+  let assert Ok(_) = socket.notify(sender, ReplyStashed)
+  app_test_helper.recv(frames)
+  |> should.equal(
+    "[\"jr-1\",\"r-2\",\"room:b\",\"phx_reply\","
+    <> "{\"status\":\"ok\",\"response\":{\"late\":true}}]",
+  )
+  await_queue_items(sender, 0)
+}
+
+fn await_queue_items(sender: socket.Sender(AppMessage), expected: Int) -> Nil {
+  test_helper.wait_until(
+    fn() {
+      let assert Ok(occupancy) = socket.queue_snapshot(sender)
+      occupancy.items == expected
+    },
+    1000,
+    5,
+  )
 }
 
 pub fn reply_after_rejoin_is_dropped_test() -> Nil {

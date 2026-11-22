@@ -102,14 +102,6 @@ pub fn make_reply_reference(
 }
 
 @internal
-pub fn join_references_match(
-  first: JoinReference,
-  second: JoinReference,
-) -> Bool {
-  first == second
-}
-
-@internal
 pub fn join_reference_topic(reference: JoinReference) -> String {
   reference.topic
 }
@@ -117,25 +109,6 @@ pub fn join_reference_topic(reference: JoinReference) -> String {
 @internal
 pub fn reply_reference_topic(reference: ReplyReference) -> String {
   reference.topic
-}
-
-@internal
-pub fn reply_reference_join_ref(reference: ReplyReference) -> Option(String) {
-  reference.join_ref
-}
-
-@internal
-pub fn reply_reference_message_ref(
-  reference: ReplyReference,
-) -> Option(String) {
-  reference.message_ref
-}
-
-@internal
-pub fn reply_reference_wire_key(
-  reference: ReplyReference,
-) -> #(String, Option(String), Option(String)) {
-  #(reference.topic, reference.join_ref, reference.message_ref)
 }
 
 /// Why a socket or topic is stopping.

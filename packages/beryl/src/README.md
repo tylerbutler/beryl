@@ -65,7 +65,7 @@ integration, and telemetry. The bundled `beryl_heirloom` package wraps ETS owner
   (`beryl.gleam:reserve_socket_start`, `beryl.gleam:finish_socket_admission`).
 - Reply-alias calls capture a PID and monitor it. Timeout/owner-down failures
   remain distinct (`beryl_ffi.erl:pin_subject`, `beryl_ffi.erl:actor_call`,
-  `beryl_ffi.erl:connection_limit_call`).
+  `beryl_work_queue_ffi.erl:bounded_call`).
 - The presence read model stores one protected ETS row per topic as
   `{Topic, Count, Entries}`. An absent topic differs from an unavailable table
   (`beryl_presence_read_ffi.erl:new_table`,

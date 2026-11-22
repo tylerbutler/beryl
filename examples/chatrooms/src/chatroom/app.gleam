@@ -48,26 +48,35 @@ type Note {
 
 /// Build the standalone chat application's handler table.
 pub fn handlers(application_context: Context) -> List(channel.Handler) {
-  [lobby(), room(application_context)]
+  [
+    lobby(),
+    room(application_context, string.remove_prefix(_, "room:"), "[chatroom]"),
+  ]
 }
 
-fn lobby() -> channel.Handler {
+/// Build the read-only lobby shared by both chat examples.
+pub fn lobby() -> channel.Handler {
   channel.handler("lobby", fn(_context) { channel.accept(Nil) })
 }
 
-fn room(application_context: Context) -> channel.Handler {
+/// Build the room handler with the host's topic display rule and log prefix.
+pub fn room(
+  application_context: Context,
+  display_name: fn(String) -> String,
+  log_prefix: String,
+) -> channel.Handler {
   channel.handler("room:*", fn(join_context) {
-    let room_name = case join_context.parameters {
-      [name] -> name
-      _ -> "unknown"
-    }
+    let room_name = display_name(join_context.topic)
 
     case room_exists(application_context, join_context.topic) {
       Ok(False) -> channel.reject(error("Room not found: " <> room_name))
-      Ok(True) -> accept_room(application_context, join_context, room_name)
+      Ok(True) ->
+        accept_room(application_context, join_context, room_name, log_prefix)
       Error(reason) -> {
         io.println_error(
-          "[chatroom] room lookup failed: " <> error.describe_call_error(reason),
+          log_prefix
+          <> " room lookup failed: "
+          <> error.describe_call_error(reason),
         )
         channel.reject(error_with_code(503, "Room lookup unavailable"))
       }
@@ -79,6 +88,7 @@ fn accept_room(
   application_context: Context,
   join_context: channel.JoinContext(Note),
   room_name: String,
+  log_prefix: String,
 ) -> channel.JoinResult(State, Note) {
   let state =
     State(
@@ -111,7 +121,8 @@ fn accept_room(
         Ok(Nil) -> Nil
         Error(error) ->
           io.println_error(
-            "[chatroom] roster notification rejected: "
+            log_prefix
+            <> " roster notification rejected: "
             <> overload.describe(error),
           )
       }

@@ -1,0 +1,19 @@
+name: Restore prepared Gleam dependencies
+description: Download the dependency artifact and unpack both caches.
+inputs:
+  artifact-id:
+    description: ID returned by the dependency preparation job
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # ratchet:actions/download-artifact@v8
+      with:
+        artifact-ids: ${{ inputs.artifact-id }}
+        path: ${{ runner.temp }}
+        merge-multiple: true
+    - shell: bash
+      run: |
+        tar -xzf "$RUNNER_TEMP/gleam-dependencies.tar.gz"
+        mkdir -p "$HOME/.cache/gleam/hex/hexpm"
+        tar -xzf "$RUNNER_TEMP/gleam-hex-cache.tar.gz" -C "$HOME/.cache/gleam/hex/hexpm"
