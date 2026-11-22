@@ -22,6 +22,8 @@
 //// The heir stops with the enclosing beryl supervisor. This state survives
 //// router and limiter-worker restarts, but not shutdown or replacement of
 //// that supervisor, or a node restart.
+//// A remembered checkpoint without readable state fails worker initialisation;
+//// only a supervisor generation without checkpoint history starts empty.
 
 import beryl/log
 import beryl/overload
@@ -100,6 +102,11 @@ type CheckpointTable =
   heirloom.Table(String, State)
 
 type CheckpointRegistryKey
+
+type CheckpointError {
+  MissingCheckpointState
+  CheckpointLookupFailed(heirloom.TableError)
+}
 
 type CheckpointMessage {
   CheckpointAnnounced(CheckpointTable)
@@ -207,19 +214,30 @@ fn persist(state: State) -> State {
   state
 }
 
-fn open_state(store_key: process.Name(Message), initial: State) -> State {
+fn open_state(
+  store_key: process.Name(Message),
+  initial: State,
+) -> Result(State, CheckpointError) {
   let supervisor = checkpoint_supervisor()
   let key = checkpoint_registry_key(supervisor, store_key)
   case checkpoint_registry_get(key) {
     Some(table) ->
-      case heirloom.exists(table) {
-        True -> {
-          let assert Ok(Some(state)) = heirloom.lookup(table, "state")
-          State(..state, checkpoint: Some(table))
-        }
-        False -> new_state_checkpoint(supervisor, key, initial)
+      case heirloom.lookup(table, "state") {
+        Ok(Some(state)) -> Ok(State(..state, checkpoint: Some(table)))
+        Ok(None) -> Error(MissingCheckpointState)
+        Error(error) -> Error(CheckpointLookupFailed(error))
       }
-    None -> new_state_checkpoint(supervisor, key, initial)
+    None -> Ok(new_state_checkpoint(supervisor, key, initial))
+  }
+}
+
+fn checkpoint_error_message(error: CheckpointError) -> String {
+  case error {
+    MissingCheckpointState -> "Connection limiter checkpoint state is missing"
+    CheckpointLookupFailed(heirloom.TableDoesNotExist) ->
+      "Connection limiter checkpoint table does not exist"
+    CheckpointLookupFailed(heirloom.AccessDenied) ->
+      "Connection limiter checkpoint access denied"
   }
 }
 
@@ -742,7 +760,9 @@ fn build(
       )
     schedule_sweep(subject, rate_config)
     schedule_queue_recovery(subject)
-    let state = open_state(name, state)
+    use state <- result.try(
+      open_state(name, state) |> result.map_error(checkpoint_error_message),
+    )
     let state =
       State(..state, inbox: inbox, draining: False)
       |> recover_holders
