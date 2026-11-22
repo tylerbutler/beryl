@@ -1401,6 +1401,14 @@ fn compact_replica(crdt: State, replica: String) -> State {
 @external(erlang, "beryl_presence_state_ffi", "owner_snapshot")
 fn owner_snapshot(crdt: State) -> State
 
+/// Restore only an accepted full owner's values after merging its history.
+///
+/// Upstream merge suppresses tags covered by retirement watermarks. Keep those
+/// watermarks and all local liveness, but let a fresh authoritative reply
+/// restore unchanged entries. Never call this for stale replies or relayed data.
+@external(erlang, "beryl_presence_state_ffi", "restore_owner_values")
+fn restore_owner_values(crdt: State, snapshot: State) -> State
+
 /// Merge the server-generated tracking ref into the tracked meta as
 /// `phx_ref`, matching Phoenix behaviour. Phoenix client `Presence` helpers
 /// identify individual metas by `phx_ref` when applying diffs; without it a
@@ -2583,8 +2591,10 @@ fn merged_snapshot(
       SyncRejected
     }),
   )
-  case state.merge(crdt, owner_snapshot(remote_state)) {
+  let snapshot = owner_snapshot(remote_state)
+  case state.merge(crdt, snapshot) {
     Ok(crdt) -> {
+      let crdt = restore_owner_values(crdt, snapshot)
       let #(crdt, _diff) = state.replica_up(crdt, sender)
       use actor_state <- result.try(
         commit_replication(actor_state, crdt)

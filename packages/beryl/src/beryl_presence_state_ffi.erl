@@ -1,9 +1,9 @@
 -module(beryl_presence_state_ffi).
--export([remove_tag/2, owner_snapshot/1]).
+-export([remove_tag/2, owner_snapshot/1, restore_owner_values/2]).
 
 %% Temporary private-representation exception for lattice_presence >= 2.0.0
 %% and < 2.1.0. Verified against 2.0.0 only, not future accepted patches.
-%% Replace both operations when supported upstream APIs are available:
+%% Replace these operations when supported upstream APIs are available:
 %% https://github.com/tylerbutler/lattice/issues/199
 %%
 %% Verified Erlang layout:
@@ -54,4 +54,30 @@ owner_snapshot({state, Replica, Context, Clouds, Values, Replicas})
                  Values),
      #{Replica => up}};
 owner_snapshot(_State) ->
+    erlang:error(unsupported_lattice_presence_state).
+
+%% Replace only the accepted snapshot writer's values after a successful
+%% upstream merge. That merge retains causal history but cannot restore tags
+%% already covered by the receiver's retirement watermark. A fresh,
+%% authoritative owner reply can: its complete values also exclude entries
+%% the owner removed. The Gleam caller must first validate request freshness
+%% and owner authority; this operation is not safe for unsolicited gossip.
+%%
+%% Preserve the merged local identity, context, clouds, and liveness exactly.
+%% Filter both maps by tag ownership even if the snapshot carries third-party
+%% state. Never copy remote clocks or statuses here, or touch other owners.
+restore_owner_values(
+    {state, Local, Context, Clouds, Values, Replicas},
+    {state, Owner, RemoteContext, RemoteClouds, RemoteValues, RemoteReplicas})
+  when Local =/= Owner,
+       is_map(Context), is_map(Clouds), is_map(Values), is_map(Replicas),
+       is_map(RemoteContext), is_map(RemoteClouds),
+       is_map(RemoteValues), is_map(RemoteReplicas) ->
+    Others = maps:filter(
+        fun({tag, Replica, _Clock}, _Entry) -> Replica =/= Owner end, Values),
+    Owned = maps:filter(
+        fun({tag, Replica, _Clock}, _Entry) -> Replica =:= Owner end,
+        RemoteValues),
+    {state, Local, Context, Clouds, maps:merge(Others, Owned), Replicas};
+restore_owner_values(_State, _Snapshot) ->
     erlang:error(unsupported_lattice_presence_state).

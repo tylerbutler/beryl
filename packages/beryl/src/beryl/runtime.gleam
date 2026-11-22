@@ -88,6 +88,9 @@ pub type Config {
 pub type AdmissionToken =
   atomic_token.Token
 
+@external(erlang, "beryl_ffi", "consume_work_available")
+fn consume_work_available(subject: Subject(Message(message))) -> Nil
+
 pub fn new_admission_token() -> AdmissionToken {
   atomic_token.new()
 }
@@ -1184,6 +1187,7 @@ fn handle_message(
     WorkRecoveryTick -> {
       schedule_work_recovery(state.self_subject)
       work_queue.recover(state.inbox)
+      consume_work_available(state.self_subject)
       handle_available_work(state)
     }
     AdmitSocket(
@@ -2015,8 +2019,9 @@ fn reject_socket_work(
     #("socket_id", socket_id),
     #("reason", overload.describe(error)),
   ])
-  ref.close()
   process.send(ref.subject, WorkAvailable)
+  let _closer = process.spawn_unlinked(ref.close)
+  Nil
 }
 
 fn forward_socket_work(
@@ -2290,12 +2295,15 @@ fn register_socket(
       }
       // Nothing is joined yet, so kicks cannot arise and pushes to
       // unjoined topics are dropped by the interpreter.
-      #(
+      let state =
         run(state, socket_id, [
           StepEffects(effects, None, [], ContinueDriving),
           StepReleaseWork(reservation),
-        ]),
-        True,
+        ])
+      #(
+        state,
+        dict.has_key(state.sockets, socket_id)
+          && work_queue.close_reason(state.inbox) == None,
       )
     }
   }
@@ -4088,13 +4096,14 @@ fn execute_step(
     StepCloseFinish(
       topic_name,
       _close_join_ref,
-      _reason,
+      reason,
       kicks,
       stop,
       continuation,
     ) ->
+      // Cleanup may still fail; consume the drain completion with its final reason.
       finish_topic_close(
-        state,
+        finish_topic_drain(state, socket_id, topic_name, reason),
         socket_id,
         topic_name,
         kicks,
@@ -4953,8 +4962,7 @@ fn execute_close_topic(
           let state = store_socket(state, socket)
           let state = case worker {
             Ok(_) -> state
-            Error(Nil) ->
-              unsubscribe_topic(state, socket_id, topic_name, reason)
+            Error(Nil) -> unsubscribe_topic(state, socket_id, topic_name)
           }
           // Keep rate buckets until socket teardown so rejoining cannot refill them.
           let state = remove_topic_subscriber(state, socket_id, topic_name)
@@ -5308,7 +5316,7 @@ fn run_effects(
     return: Continue(state, continuation_steps(continuation, [], None)),
   )
   let input_closed = case state.role {
-    SocketActorRole(phase: Active, ..) ->
+    SocketActorRole(phase: Active, ..) | SocketActorRole(phase: Booting, ..) ->
       work_queue.close_reason(state.inbox) != None
     _ -> False
   }
@@ -5707,16 +5715,13 @@ fn release_completed_reply(
   }
 }
 
-/// Take a topic out of the joined set and drop its outstanding reply references:
-/// pushes to it drop from here on, and a reference stored across a leave/rejoin
-/// is not replied to.
-fn unsubscribe_topic(
+fn finish_topic_drain(
   state: State(model, message),
   socket_id: String,
   topic_name: String,
   reason: StopReason,
 ) -> State(model, message) {
-  let state = case dict.get(state.sockets, socket_id) {
+  case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) ->
       case protocol.pending_cleanup(socket.protocol, topic_name) {
@@ -5732,6 +5737,16 @@ fn unsubscribe_topic(
         }
       }
   }
+}
+
+/// Take a topic out of the joined set and drop its outstanding reply references:
+/// pushes to it drop from here on, and a reference stored across a leave/rejoin
+/// is not replied to.
+fn unsubscribe_topic(
+  state: State(model, message),
+  socket_id: String,
+  topic_name: String,
+) -> State(model, message) {
   case dict.get(state.sockets, socket_id) {
     Error(Nil) -> state
     Ok(socket) -> {
@@ -6639,7 +6654,7 @@ fn execute_close_cleanup(
   // topic. This is a no-op for a raw topic because `execute_close_topic`
   // already
   // removed its subscription.
-  let state = unsubscribe_topic(state, socket_id, topic_name, close.reason)
+  let state = unsubscribe_topic(state, socket_id, topic_name)
   case state.config.presence, dict.get(state.sockets, socket_id) {
     Some(handle), Ok(socket) ->
       case dict.get(socket.presence_refs, topic_name) {

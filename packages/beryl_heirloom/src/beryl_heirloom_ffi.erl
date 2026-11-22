@@ -2,8 +2,10 @@
 -export([create/7, insert/3, lookup/2, delete/1, exists/1, owner/1, heir/1,
          set_heir/3, clear_heir/1, give_away/3, validate_transfer/1]).
 
+-define(TRANSFER_TAG, beryl_heirloom_transfer).
+
 -spec create(binary(), atom(), atom(), boolean(), boolean(), boolean(), term()) ->
-    {ok, ets:table()} | {error, atom()}.
+    {ok, ets:tid()} | {error, atom()}.
 create(Name, Type, Access, Named, ReadConcurrency, WriteConcurrency, Heir) ->
     case table_name(Name) of
         {error, Error} ->
@@ -13,9 +15,10 @@ create(Name, Type, Access, Named, ReadConcurrency, WriteConcurrency, Heir) ->
                 {error, Error} ->
                     {error, Error};
                 {ok, HeirOption} ->
+                    RequestedAccess = table_access(Access),
                     Options0 = [
                         table_type(Type),
-                        table_access(Access),
+                        private,
                         {read_concurrency, ReadConcurrency},
                         {write_concurrency, WriteConcurrency}
                     ],
@@ -23,15 +26,21 @@ create(Name, Type, Access, Named, ReadConcurrency, WriteConcurrency, Heir) ->
                         true -> [named_table | Options0];
                         false -> Options0
                     end,
-                    Options = case HeirOption of
-                        none -> Options1;
-                        Option -> [Option | Options1]
-                    end,
-                    try ets:new(AtomName, Options) of
+                    %% Keep the table private until its TID is captured. Then
+                    %% publish requested access and its heir in one setopts call.
+                    Created = try ets:new(AtomName, Options1) of
+                        Table when is_atom(Table) ->
+                            %% A name can be reused after deletion; retain the instance.
+                            {ok, ets:whereis(Table)};
                         Table -> {ok, Table}
                     catch
                         error:badarg ->
                             creation_error(AtomName, Named)
+                    end,
+                    case Created of
+                        {ok, TableId} ->
+                            finish_creation(TableId, HeirOption, RequestedAccess);
+                        {error, Error} -> {error, Error}
                     end
             end
     end.
@@ -93,7 +102,7 @@ set_heir(Table, Heir, Data) ->
             case valid_local_process(Heir) of
                 false -> {error, invalid_ownership_heir};
                 true ->
-                    try ets:setopts(Table, {heir, Heir, Data}) of
+                    try ets:setopts(Table, {heir, Heir, transfer_data(Table, Data)}) of
                         true -> {ok, nil}
                     catch
                         error:badarg -> ownership_error(Table)
@@ -125,7 +134,7 @@ give_away(Table, Recipient, Data) ->
             case is_process_alive(Recipient) of
                 false -> {error, recipient_not_alive};
                 true ->
-                    try ets:give_away(Table, Recipient, Data) of
+                    try ets:give_away(Table, Recipient, transfer_data(Table, Data)) of
                         true -> {ok, nil}
                     catch
                         error:badarg -> ownership_error(Table)
@@ -134,16 +143,67 @@ give_away(Table, Recipient, Data) ->
     end.
 
 -spec validate_transfer(term()) ->
-    {ok, {ets:table(), pid(), term()}} | {error, atom()}.
-validate_transfer({'ETS-TRANSFER', Table, PreviousOwner, Data}) ->
-    case table_exists(Table) of
-        false -> {error, invalid_table};
-        true when not is_pid(PreviousOwner) ->
-            {error, invalid_previous_owner};
-        true -> {ok, {Table, PreviousOwner, Data}}
-    end;
+    {ok, {ets:tid(), pid(), term()}} | {error, atom()}.
+validate_transfer({'ETS-TRANSFER', NativeTable, PreviousOwner,
+                   {?TRANSFER_TAG, Candidate, Data}}) ->
+    validate_instance_transfer(NativeTable, Candidate, PreviousOwner, Data);
+validate_transfer({'ETS-TRANSFER', Candidate, PreviousOwner, Data}) ->
+    %% Untagged native transfers are safe only with an instance-specific TID.
+    validate_instance_transfer(Candidate, Candidate, PreviousOwner, Data);
 validate_transfer(_) ->
     {error, invalid_transfer_message}.
+
+validate_instance_transfer(NativeTable, Candidate, PreviousOwner, Data) ->
+    %% Use the opaque TID returned by ETS, accepting only the exact candidate.
+    %% A name resolves to a different term and cannot establish a generation.
+    try ets:info(Candidate, id) of
+        undefined -> {error, invalid_table};
+        Table when Table =:= Candidate ->
+            case transfer_table_matches(NativeTable, Table) of
+                false -> {error, invalid_table};
+                true when not is_pid(PreviousOwner) ->
+                    {error, invalid_previous_owner};
+                true -> {ok, {Table, PreviousOwner, Data}}
+            end;
+        _ -> {error, invalid_table}
+    catch
+        error:badarg -> {error, invalid_table}
+    end.
+
+transfer_table_matches(Table, Table) ->
+    true;
+transfer_table_matches(Name, Table) when is_atom(Name) ->
+    ets:info(Table, named_table) =:= true andalso ets:info(Table, name) =:= Name;
+transfer_table_matches(_, _) ->
+    false.
+
+transfer_data(Table, Data) ->
+    {?TRANSFER_TAG, ets:info(Table, id), Data}.
+
+finish_creation(Table, HeirOption, Access) ->
+    Protection = {protection, Access},
+    Options = case HeirOption of
+        none -> [Protection];
+        {heir, Pid, Data} ->
+            [{heir, Pid, transfer_data(Table, Data)}, Protection]
+    end,
+    %% OTP 27/28 support protection changes despite their Erlang docs/specs
+    %% listing only heir options. All options are validated before any mutation.
+    try ets:setopts(Table, Options) of
+        true -> {ok, Table}
+    catch
+        error:badarg ->
+            %% A failed setopts leaves the table private, so only its creator
+            %% can delete it. Clean up this exact TID, never the reusable name.
+            case delete(Table) of
+                {ok, nil} ->
+                    case HeirOption of
+                        none -> {error, invalid_options};
+                        {heir, _, _} -> {error, invalid_heir}
+                    end;
+                {error, table_does_not_exist} -> {error, invalid_options}
+            end
+    end.
 
 table_name(Name) when is_binary(Name) ->
     case unicode:characters_to_list(Name, utf8) of

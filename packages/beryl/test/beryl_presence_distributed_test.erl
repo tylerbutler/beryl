@@ -482,7 +482,20 @@ retirement_revokes_old_replies_and_requires_fresh_rejoin_test_() ->
         with_peers(2, fun([A, B]) ->
             {Old, Current, Receiver, Proxy, CurrentRef} = held_predecessor(A, B),
             OldPid = maps:get(pid, Old),
+            CurrentPid = maps:get(pid, Current),
             CurrentReplica = call(A, ?MODULE, replica, [Current]),
+            StableMeta = 'gleam@json':object([
+                {<<"status">>, 'gleam@json':string(<<"untouched">>)}]),
+            {ok, StableRef} = presence_call(A, track,
+                [handle(Current), ?TOPIC, <<"stable">>, <<"stable">>, StableMeta]),
+            Stable = {<<"stable">>, <<"stable">>,
+                #{<<"status">> => <<"untouched">>, <<"phx_ref">> => StableRef}},
+            Changed = {<<"current">>, <<"current">>, null},
+            Local = {<<"local">>, <<"local">>, null},
+            Fresh = {<<"after-retention">>, <<"after-retention">>, null},
+            nil = call(A, ?MODULE, request_round, [Current]),
+            await_details(B, Receiver, [Changed, Stable]),
+            await_detailed_diffs(B, Receiver, [Changed, Stable], []),
             PendingScope = <<"beryl_presence_unconfirmed_retirement_test">>,
             PendingOnly = call(B, ?MODULE, start_replica,
                 [PendingScope, <<"pending-only">>, 0]),
@@ -500,13 +513,14 @@ retirement_revokes_old_replies_and_requires_fresh_rejoin_test_() ->
             {ok, _} = track(B, Receiver, <<"local">>),
             Started = call(B, erlang, monotonic_time, [millisecond]),
             disconnect(A, B),
-            await_view(B, Receiver, [<<"local">>]),
-            #{clocks := Retained, entries := 2} =
+            await_details(B, Receiver, [Local]),
+            #{clocks := Retained, entries := 3} =
                 call(B, ?MODULE, retained, [Receiver]),
             ?assert(maps:is_key(CurrentReplica, Retained)),
             ?assert(call(B, ?MODULE, pending_request, [Receiver, OldPid])),
             {ok, nil} = presence_call(A, untrack, [handle(Current), CurrentRef]),
             {ok, _} = track(A, Current, <<"after-retention">>),
+            await_details(A, Current, [Fresh, Stable]),
             %% Exercise the real 60-second policy, including with periodic
             %% requests disabled. No clock rewriting or shortened test TTL.
             await({retirement, element(2, B)}, fun() ->
@@ -516,6 +530,9 @@ retirement_revokes_old_replies_and_requires_fresh_rejoin_test_() ->
             end, 70000),
             Elapsed = call(B, erlang, monotonic_time, [millisecond]) - Started,
             ?assert(Elapsed >= 60000),
+            #{clocks := Watermarks, entries := 1, owners := 0} =
+                call(B, ?MODULE, retained, [Receiver]),
+            ?assert(maps:is_key(CurrentReplica, Watermarks)),
             ?assertNot(call(B, ?MODULE, pending_request, [Receiver, OldPid])),
             %% PendingOnly retires requests on its own independent tick.
             await({pending_request_retirement, element(2, B)}, fun() ->
@@ -526,16 +543,27 @@ retirement_revokes_old_replies_and_requires_fresh_rejoin_test_() ->
             nil = call(B, ?MODULE, release_replies, [PendingGate]),
             await_view(B, PendingOnly, []),
             nil = call(B, ?MODULE, release_replies, [Proxy]),
-            await_view(B, Receiver, [<<"local">>]),
-            await_diff(B, Receiver, leaves, [<<"current">>]),
+            await_details(B, Receiver, [Local]),
+            await_detailed_diffs(B, Receiver, [Changed, Stable, Local],
+                [Changed, Stable]),
+            #{clocks := Watermarks} = call(B, ?MODULE, retained, [Receiver]),
+            await_details(A, Current, [Fresh, Stable]),
             connect(A, B),
             await_member(A, maps:get(pid, Receiver)),
-            await_member(B, maps:get(pid, Current)),
+            await_member(B, CurrentPid),
+            %% Only a fresh owner snapshot may restore compacted entries.
+            %% Stable keeps its original ref/meta: no update or re-track.
+            nil = call(B, ?MODULE, request_round, [Receiver]),
             nil = call(A, ?MODULE, request_round, [Current]),
-            await_view(B, Receiver, [<<"after-retention">>, <<"local">>]),
+            await_details(B, Receiver, [Fresh, Local, Stable]),
+            await_detailed_diffs(B, Receiver,
+                [Changed, Stable, Local, Fresh, Stable], [Changed, Stable]),
             await_diff(B, Receiver, joins,
-                [<<"after-retention">>, <<"current">>, <<"local">>]),
-            await_diff(B, Receiver, leaves, [<<"current">>]),
+                [<<"after-retention">>, <<"current">>, <<"local">>,
+                 <<"stable">>, <<"stable">>]),
+            await_diff(B, Receiver, leaves, [<<"current">>, <<"stable">>]),
+            await_details(A, Current, [Fresh, Local, Stable]),
+            ?assert(call(A, erlang, is_process_alive, [CurrentPid])),
             ?assertEqual(CurrentReplica, call(A, ?MODULE, replica, [Current]))
         end)
     end}.

@@ -1,6 +1,6 @@
 -module(beryl_test_process_ffi).
 -export([limit_schedulers/1, mailbox_length/1, queue_memory_evidence/0,
-         with_suspended/2,
+         with_suspended/2, recovery_wake_counts/1,
          queue_call_lifecycle/0, publication_cleanup_races/0,
          stale_lifecycle_signals/3, monitored_by_count/1, monitor_count/1,
          suspend_process/1, resume_process/1, socket_queue/2,
@@ -53,6 +53,76 @@ with_suspended(Pid, Action) ->
     true = erlang:suspend_process(Pid),
     try Action()
     after erlang:resume_process(Pid)
+    end.
+
+%% Call from with_isolated_caller with a fresh, idle router whose queue admits
+%% eight stats requests. The caller owns app shutdown; this helper always
+%% resumes the router and removes its private reply alias and monitor.
+recovery_wake_counts(Router) ->
+    {registered_name, Name} = process_info(Router, registered_name),
+    {ok, Queue = {_, Router, _, _, _, _, _}} =
+        beryl_work_queue_ffi:lookup(Name),
+    Alias = erlang:alias(),
+    Tag = make_ref(),
+    Monitor = erlang:monitor(process, Router),
+    try
+        with_suspended(Router, fun() ->
+            {ok, {occupancy, router_queue, 0, 0, _, _, _, _, _, _, _}} =
+                beryl_work_queue_ffi:snapshot(Queue),
+            0 = work_available_count(Router, Name),
+            lists:foreach(fun(_) ->
+                Router ! {Name, work_recovery_tick}
+            end, lists:seq(1, 4)),
+            lists:foreach(fun(Index) ->
+                Reply = fun(_) ->
+                    Count = work_available_count(self(), Name),
+                    Alias ! {Tag, Index, Count},
+                    nil
+                end,
+                {ok, _} = beryl_work_queue_ffi:publish_value(
+                    Queue, {get_stats, Reply})
+            end, lists:seq(1, 8)),
+            %% All publications share the real queue's single notification.
+            1 = work_available_count(Router, Name)
+        end),
+        Deadline = erlang:monotonic_time(millisecond) + 1000,
+        Counts = [receive
+            {Tag, Index, Count} when is_integer(Count), Count >= 0 -> Count;
+            {'DOWN', Monitor, process, Router, Reason} ->
+                error({recovery_wake_router_down, Reason})
+        after max(0, Deadline - erlang:monotonic_time(millisecond)) ->
+            error({recovery_wake_reply_timeout, Index})
+        end || Index <- lists:seq(1, 8)],
+        %% The final request's continuation was queued before its reply.
+        %% This raw barrier therefore observes its reservation released.
+        Router ! {Name, {get_stats, fun(_) ->
+            Alias ! {Tag, barrier}, nil
+        end}},
+        receive
+            {Tag, barrier} -> ok;
+            {'DOWN', Monitor, process, Router, Reason} ->
+                error({recovery_wake_router_down, Reason})
+        after max(0, Deadline - erlang:monotonic_time(millisecond)) ->
+            error(recovery_wake_barrier_timeout)
+        end,
+        {ok, {occupancy, router_queue, 0, 0, _, _, _, _, _, _, _}} =
+            beryl_work_queue_ffi:snapshot(Queue),
+        Counts
+    after
+        erlang:unalias(Alias),
+        erlang:demonitor(Monitor, [flush]),
+        flush_recovery_wake_replies(Tag)
+    end.
+
+work_available_count(Pid, Name) ->
+    {messages, Messages} = process_info(Pid, messages),
+    length([ok || {Tag, work_available} <- Messages, Tag =:= Name]).
+
+flush_recovery_wake_replies(Tag) ->
+    receive
+        {Tag, _, _} -> flush_recovery_wake_replies(Tag);
+        {Tag, barrier} -> flush_recovery_wake_replies(Tag)
+    after 0 -> ok
     end.
 
 queue_call_lifecycle() ->

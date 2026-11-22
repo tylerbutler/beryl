@@ -322,7 +322,7 @@ fn encode(outbound: protocol.Outbound) -> Result(frame.WireData, HostError) {
           frame.close_event
         protocol.Fault(_) -> frame.error_event
       }
-      phoenix.encode(join_ref, None, topic, event, json.object([]))
+      phoenix.encode(join_ref, join_ref, topic, event, json.object([]))
     }
     protocol.HeartbeatReply(ref) ->
       phoenix.reply(None, ref, frame.heartbeat_topic, True, json.object([]))
