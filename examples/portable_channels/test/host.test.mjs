@@ -64,6 +64,65 @@ test("accepts a hibernatable WebSocket upgrade", async () => {
 	response.webSocket.close(1000);
 });
 
+test.each(["1.0.0", "3.0.0", ""])(
+	"rejects unsupported version %j before creating a session",
+	async (version) => {
+		const code = "unsupported-version";
+		const response = await exports.default.fetch(
+			new Request(
+				`https://example.test/matches/${code}/socket/websocket?vsn=${version}`,
+				{ headers: { Upgrade: "websocket" } },
+			),
+		);
+		if (response.webSocket) {
+			response.webSocket.accept();
+			response.webSocket.close(1000);
+		}
+		expect(response.status).toBe(403);
+		await runInDurableObject(env.MATCHES.getByName(code), async (instance, state) => {
+			expect(instance.sessions.size).toBe(0);
+			expect(state.getWebSockets()).toHaveLength(0);
+			expect(await state.storage.get("code")).toBeUndefined();
+			expect(await state.storage.get("game")).toBeUndefined();
+		});
+	},
+);
+
+test.each(["", "?vsn=2.0.0", "?vsn=2.1.0"])(
+	"accepts the supported version policy %j",
+	async (query) => {
+		const response = await exports.default.fetch(
+			new Request(
+				`https://example.test/matches/supported-version/socket/websocket${query}`,
+				{ headers: { Upgrade: "websocket" } },
+			),
+		);
+		expect(response.status).toBe(101);
+		response.webSocket.accept();
+		response.webSocket.close(1000);
+	},
+);
+
+test("mirrors the join reference in terminal frames after the leave reply", async () => {
+	const { socket, channel } = connect("terminal-ref");
+	const snapshot = new Promise((resolve) => channel.on("snapshot", resolve));
+	await pushResult(channel.join());
+	await snapshot;
+	const joinRef = channel.joinRef();
+	const transport = socket.connection.transport;
+	transport.received.length = 0;
+	await pushResult(channel.leave());
+	await expect
+		.poll(() => transport.received.map(JSON.parse).filter((frame) => frame[3] === "phx_close").length)
+		.toBe(1);
+	const leave = transport.sent.map(JSON.parse).find((frame) => frame[3] === "phx_leave");
+	expect(leave[1]).not.toBe(joinRef);
+	expect(transport.received.map(JSON.parse)).toEqual([
+		[joinRef, leave[1], "match:terminal-ref", "phx_reply", { status: "ok", response: {} }],
+		[joinRef, joinRef, "match:terminal-ref", "phx_close", {}],
+	]);
+});
+
 test("rejects unauthorized joins without creating application state", async () => {
 	const { channel, stub } = connect("authorization", "wrong-token");
 	expect(await pushResult(channel.join(), "error")).toEqual({
