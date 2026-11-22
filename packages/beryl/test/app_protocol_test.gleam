@@ -8,8 +8,10 @@ import beryl
 import beryl/socket.{Closed, Join, Message}
 import beryl/wire
 import gleam/erlang/process
+import gleam/option.{None}
 import gleam/string
 import gleeunit/should
+import test_helper
 
 fn start_system(events: process.Subject(socket.Input(Nil))) -> beryl.Sockets {
   app_test_helper.start_observed(beryl.config(wire.phoenix_codec()), events)
@@ -150,4 +152,60 @@ pub fn unjoined_event_without_ref_is_dropped_test() -> Nil {
   app_test_helper.route(channels, "s1", "[null,null,\"room:a\",\"noop\",{}]")
   app_test_helper.recv_none(frames)
   process.receive(events, 100) |> should.be_error
+}
+
+pub fn stale_leave_queued_during_replacement_callback_preserves_join_test() -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
+  let entered = process.new_subject()
+  let delivered = process.new_subject()
+  let assert Ok(channels) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info) { #(0, []) },
+      update: fn(joins, input) {
+        case input {
+          Join(_, _, ref) -> {
+            case joins {
+              0 -> Nil
+              _ -> {
+                let release = process.new_subject()
+                process.send(entered, release)
+                process.receive(release, 1000) |> should.equal(Ok(Nil))
+              }
+            }
+            socket.Next(joins + 1, [socket.AcceptJoin(ref, None)])
+          }
+          Message(_, event, _, _) -> {
+            process.send(delivered, event)
+            socket.Next(joins, [])
+          }
+          socket.Binary(..) | Closed(..) | socket.Info(..) ->
+            socket.Next(joins, [])
+        }
+      },
+    )
+  let frames = app_test_helper.connect(channels, "replacement")
+  app_test_helper.join_ok(channels, frames, "replacement", "room:a", "j1", "r1")
+  app_test_helper.join(channels, "replacement", "room:a", "j2", "r2")
+  let terminal = app_test_helper.recv(frames)
+  terminal |> string.contains("\"phx_close\"") |> should.be_true
+  let assert Ok(release) = process.receive(entered, 1000)
+  app_test_helper.route(
+    channels,
+    "replacement",
+    "[\"j1\",\"old-leave\",\"room:a\",\"phx_leave\",{}]",
+  )
+  process.send(release, Nil)
+  app_test_helper.recv(frames)
+  |> should.equal(
+    "[\"j2\",\"r2\",\"room:a\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
+  )
+  app_test_helper.route(
+    channels,
+    "replacement",
+    event_frame("j2", "barrier", "room:a", "current"),
+  )
+  process.receive(delivered, 1000) |> should.equal(Ok("current"))
+  app_test_helper.recv_none(frames)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
 }

@@ -17,11 +17,133 @@ import gleam/option
 import gleam/set
 import gleam/string
 import gleeunit/should
+import rasa/atomic
 import test_helper
 import unitest
 
 @external(erlang, "beryl_test_process_ffi", "with_suspended")
 fn with_suspended(pid: process.Pid, action: fn() -> a) -> a
+
+@external(erlang, "beryl_test_process_ffi", "recovery_wake_counts")
+fn recovery_wake_counts(router: process.Pid) -> List(Int)
+
+pub fn recovery_ticks_do_not_multiply_pending_drain_wakes_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      config() |> beryl.with_router_queue_limits(limits(64, 32_768)),
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
+    )
+  let router = app_test_helper.runtime_pid(sockets)
+  recovery_wake_counts(router) |> should.equal(list.repeat(1, 8))
+  transport.runtime_pid(sockets) |> should.equal(Ok(router))
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn rejected_socket_closer_does_not_block_or_kill_router_test() -> Nil {
+  use <- unitest.tag("serial")
+  list.each([False, True], fn(raise) {
+    use <- test_helper.with_isolated_caller(5000)
+    let entered = process.new_subject()
+    let closing = process.new_subject()
+    // Match real transports' coalesced close callback.
+    let close_once = atomic.new()
+    let senders = process.new_subject()
+    let assert Ok(sockets) =
+      app_test_helper.start_app(
+        config() |> beryl.with_socket_queue_limits(limits(2, 4096)),
+        init: fn(info) {
+          case info.socket_id {
+            "overloaded" -> process.send(senders, info.self)
+            _ -> Nil
+          }
+          #(Nil, [])
+        },
+        update: fn(model, input) {
+          case input {
+            socket.Info(Nil) -> {
+              let release = process.new_subject()
+              process.send(entered, release)
+              process.receive(release, 2000) |> should.equal(Ok(Nil))
+              socket.Next(model, [])
+            }
+            _ -> app_test_helper.accepting_update(model, input)
+          }
+        },
+      )
+    let router = app_test_helper.runtime_pid(sockets)
+    let assert Ok(owner) = transport.runtime_pid(sockets)
+    transport.admit_socket(
+      sockets:,
+      owner:,
+      socket_id: "overloaded",
+      send: fn(_) { Ok(Nil) },
+      send_binary: fn(_) { Ok(Nil) },
+      codec: option.None,
+      seed: socket.empty_seed(),
+      close: fn() {
+        case atomic.compare_exchange(close_once, 0, 1) {
+          Error(_) -> Nil
+          Ok(Nil) -> {
+            let close_release = process.new_subject()
+            process.send(closing, #(process.self(), close_release))
+            case raise {
+              True -> panic as "test closer failed"
+              False ->
+                process.receive(close_release, 2000) |> should.equal(Ok(Nil))
+            }
+          }
+        }
+      },
+    )
+    |> should.equal(Ok(Nil))
+    let healthy = app_test_helper.connect(sockets, "healthy")
+    let assert Ok(sender) = process.receive(senders, 1000)
+    socket.notify(sender, Nil) |> should.equal(Ok(Nil))
+    let assert Ok(release) = process.receive(entered, 1000)
+    app_test_helper.route(
+      sockets,
+      "overloaded",
+      "[null,\"fill\",\"phoenix\",\"heartbeat\",{}]",
+    )
+    app_test_helper.route(
+      sockets,
+      "overloaded",
+      "[null,\"overflow\",\"phoenix\",\"heartbeat\",{}]",
+    )
+    let assert Ok(#(closer, close_release)) = process.receive(closing, 1000)
+    app_test_helper.route(
+      sockets,
+      "healthy",
+      "[null,\"live-router\",\"phoenix\",\"heartbeat\",{}]",
+    )
+    app_test_helper.recv(healthy)
+    |> should.equal(
+      "[null,\"live-router\",\"phoenix\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
+    )
+    transport.runtime_pid(sockets) |> should.equal(Ok(router))
+    let monitor = process.monitor(closer)
+    process.send(close_release, Nil)
+    process.send(release, Nil)
+    test_helper.wait_until(
+      fn() {
+        let assert Ok(current) = snapshot.get(sockets)
+        snapshot.connected_sockets(current) == 1
+      },
+      1000,
+      5,
+    )
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(1000)
+    |> should.be_ok
+    process.demonitor_process(monitor)
+    process.receive(closing, 0) |> should.be_error
+    beryl.stop(sockets) |> should.equal(Ok(Nil))
+  })
+}
 
 pub fn rejected_broadcast_aborts_later_effects_test() -> Nil {
   use <- unitest.tag("serial")
@@ -96,6 +218,7 @@ pub fn full_presence_queue_during_close_finishes_teardown_test() -> Nil {
   list.each(
     [#(False, False), #(True, False), #(False, True), #(True, True)],
     fn(scenario) {
+      use <- test_helper.with_isolated_caller(5000)
       let #(explicit_untrack, stale_ack) = scenario
       let entered = process.new_subject()
       let assert Ok(handle) =
@@ -1094,6 +1217,77 @@ pub fn oversized_init_is_not_registered_test() -> Nil {
     close: fn() { Nil },
   )
   |> should.equal(Error(Nil))
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn downstream_init_rejection_aborts_later_broadcast_test() -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
+  let started = process.new_subject()
+  let released = process.new_subject()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      config()
+        |> beryl.with_max_connections_per_ip(1)
+        |> beryl.with_effect_limits(limits(2, 32_768))
+        |> beryl.with_router_queue_limits(limits(64, 4096)),
+      init: fn(info) {
+        case info.socket_id {
+          "init-rejected" -> {
+            process.send(started, process.self())
+            #(Nil, [
+              socket.Broadcast(
+                "room:a",
+                "oversized",
+                json.string(string.repeat("x", 8192)),
+              ),
+              socket.Broadcast("room:a", "unexpected", json.null()),
+            ])
+          }
+          _ -> #(Nil, [])
+        }
+      },
+      update: app_test_helper.accepting_update,
+    )
+  let peer = app_test_helper.connect(sockets, "healthy")
+  app_test_helper.join_ok(sockets, peer, "healthy", "room:a", "healthy", "join")
+  let assert Ok(owner) = transport.runtime_pid(sockets)
+  let assert Ok(permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.88")
+  transport.bind_connection_slot(permit) |> should.equal(Ok(Nil))
+  transport.admit_socket(
+    sockets:,
+    owner:,
+    socket_id: "init-rejected",
+    send: fn(_) { Ok(Nil) },
+    send_binary: fn(_) { Ok(Nil) },
+    codec: option.None,
+    seed: socket.empty_seed(),
+    close: fn() {
+      transport.release_connection_slot(permit)
+      process.send(released, Nil)
+    },
+  )
+  |> should.equal(Error(Nil))
+  let assert Ok(initializer) = process.receive(started, 1000)
+  test_helper.wait_until(fn() { !process.is_alive(initializer) }, 1000, 5)
+  app_test_helper.route(
+    sockets,
+    "healthy",
+    "[null,\"after-init\",\"phoenix\",\"heartbeat\",{}]",
+  )
+  app_test_helper.recv(peer)
+  |> should.equal(
+    "[null,\"after-init\",\"phoenix\",\"phx_reply\",{\"status\":\"ok\",\"response\":{}}]",
+  )
+  app_test_helper.recv_none(peer)
+  let assert Ok(current) = snapshot.get(sockets)
+  snapshot.connected_sockets(current) |> should.equal(1)
+  process.receive(released, 1000) |> should.equal(Ok(Nil))
+  let assert Ok(replacement_permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.88")
+  transport.bind_connection_slot(replacement_permit) |> should.equal(Ok(Nil))
+  transport.acquire_connection_slot(sockets, "192.0.2.88") |> should.be_error
+  transport.release_connection_slot(replacement_permit)
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 

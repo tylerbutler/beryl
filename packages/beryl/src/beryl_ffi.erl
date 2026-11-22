@@ -9,7 +9,7 @@
          connection_limit_checkpoint_registry_get/1,
          connection_limit_checkpoint_registry_put/2,
          connection_limit_checkpoint_registry_compare_erase/2,
-         pin_subject/1]).
+         pin_subject/1, consume_work_available/1]).
 
 %% Used only after a selector validates the frozen raw PubSub record shape.
 identity(X) -> X.
@@ -31,6 +31,21 @@ pin_subject({named_subject, Name}) when is_atom(Name) ->
     end;
 pin_subject({subject, Pid, _Tag} = Subject) when is_pid(Pid) ->
     {ok, {Subject, Pid}}.
+
+%% Receive in the owning actor only. Named subjects use the name as their
+%% envelope tag, including after pin_subject/1 captures their owner pid.
+%% Leave queue notification state and every other runtime message untouched.
+consume_work_available({named_subject, Name}) when is_atom(Name) ->
+    consume_work_available_tag(Name);
+consume_work_available({subject, Owner, Tag}) when Owner =:= self() ->
+    consume_work_available_tag(Tag).
+
+consume_work_available_tag(Tag) ->
+    receive
+        {Tag, work_available} -> consume_work_available_tag(Tag)
+    after 0 ->
+        nil
+    end.
 
 %% Run a callback, converting any crash (error/exit/throw) into an
 %% {error, Description} result so a crashing callback cannot take down the
