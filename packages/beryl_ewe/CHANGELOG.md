@@ -1,5 +1,13 @@
 # beryl_ewe changelog
 
+## v0.3.2 - 2026-11-23
+
+### Dependencies
+
+#### The beryl dependency updates.
+
+Updated beryl to 0.6.2.
+
 ## v0.3.1 - 2026-11-20
 
 ### Dependencies
