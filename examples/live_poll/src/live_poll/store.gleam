@@ -1,5 +1,6 @@
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Monitor, type Pid, type Subject}
+import gleam/erlang/reference.{type Reference}
 import gleam/otp/actor
 import gleam/result
 import live_poll/poll
@@ -15,7 +16,7 @@ pub type CloseResult {
 }
 
 type Message {
-  Join(room: String, owner: Pid)
+  Join(room: String, owner: Pid, reply: Subject(Reference))
   Leave(room: String, owner: Pid)
   OwnerDown(process.Down)
   Get(room: String, reply: Subject(poll.Poll))
@@ -25,11 +26,20 @@ type Message {
     reply: Subject(Result(poll.Poll, poll.VoteError)),
   )
   Close(room: String, reply: Subject(CloseResult))
+  Expire(
+    room: String,
+    generation: Reference,
+    reply: Subject(Result(poll.Poll, Nil)),
+  )
+}
+
+type StoredPoll {
+  StoredPoll(generation: Reference, poll: poll.Poll)
 }
 
 type State {
   State(
-    polls: Dict(String, poll.Poll),
+    polls: Dict(String, StoredPoll),
     members: Dict(String, Dict(Pid, Monitor)),
   )
 }
@@ -50,9 +60,10 @@ pub fn start() -> Result(Store, actor.StartError) {
   |> result.map(fn(started) { Store(started.data) })
 }
 
-/// Register the calling process once per room and monitor its lifetime.
-pub fn join(store: Store, room: String) -> Nil {
-  process.send(store.subject, Join(room, process.self()))
+/// Register the caller once per room and return the shared poll generation.
+pub fn join(store: Store, room: String) -> Reference {
+  let owner = process.self()
+  process.call(store.subject, 1000, fn(reply) { Join(room, owner, reply) })
 }
 
 /// Remove the calling process's membership, if it is still registered.
@@ -76,15 +87,27 @@ pub fn close(store: Store, room: String) -> CloseResult {
   process.call(store.subject, 1000, fn(reply) { Close(room, reply) })
 }
 
+/// Close this generation only; stale, absent, or closed polls return `Error(Nil)`.
+pub fn expire(
+  store: Store,
+  room: String,
+  generation: Reference,
+) -> Result(poll.Poll, Nil) {
+  process.call(store.subject, 1000, fn(reply) {
+    Expire(room, generation, reply)
+  })
+}
+
 fn handle(state: State, message: Message) -> actor.Next(State, Message) {
   case message {
-    Join(room, owner) -> {
+    Join(room, owner, reply) -> {
       let #(poll, polls) = find(state.polls, room)
       let members = dict.get(state.members, room) |> result.unwrap(dict.new())
       let members = case dict.has_key(members, owner) {
         True -> members
         False -> dict.insert(members, owner, process.monitor(owner))
       }
+      process.send(reply, poll.generation)
       actor.continue(State(
         polls: dict.insert(polls, room, poll),
         members: dict.insert(state.members, room, members),
@@ -104,16 +127,23 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
     OwnerDown(process.PortDown(..)) -> actor.continue(state)
     Get(room, reply) -> {
       let #(current, polls) = find(state.polls, room)
-      process.send(reply, current)
+      process.send(reply, current.poll)
       actor.continue(State(..state, polls: polls))
     }
     Vote(room, choice, reply) -> {
       let #(current, polls) = find(state.polls, room)
-      case poll.vote(current, choice) {
+      case poll.vote(current.poll, choice) {
         Ok(updated) -> {
           process.send(reply, Ok(updated))
           actor.continue(
-            State(..state, polls: dict.insert(polls, room, updated)),
+            State(
+              ..state,
+              polls: dict.insert(
+                polls,
+                room,
+                StoredPoll(..current, poll: updated),
+              ),
+            ),
           )
         }
         Error(error) -> {
@@ -123,27 +153,48 @@ fn handle(state: State, message: Message) -> actor.Next(State, Message) {
       }
     }
     Close(room, reply) -> {
+      let #(state, closed) = close_room(state, room)
+      process.send(reply, closed)
+      actor.continue(state)
+    }
+    Expire(room, generation, reply) -> {
       case dict.get(state.polls, room) {
-        Ok(current) -> {
-          case poll.close(current) {
-            poll.ClosedNow(updated) -> {
-              process.send(reply, ClosedNow(updated))
-              actor.continue(
-                State(..state, polls: dict.insert(state.polls, room, updated)),
-              )
-            }
-            poll.AlreadyClosed(unchanged) -> {
-              process.send(reply, AlreadyClosed(unchanged))
-              actor.continue(state)
-            }
+        Ok(current) if current.generation == generation -> {
+          let #(state, closed) = close_room(state, room)
+          let expired = case closed {
+            ClosedNow(updated) -> Ok(updated)
+            AlreadyClosed(_) | RoomNotFound -> Error(Nil)
           }
+          process.send(reply, expired)
+          actor.continue(state)
         }
-        Error(_) -> {
-          process.send(reply, RoomNotFound)
+        Ok(_) | Error(_) -> {
+          process.send(reply, Error(Nil))
           actor.continue(state)
         }
       }
     }
+  }
+}
+
+fn close_room(state: State, room: String) -> #(State, CloseResult) {
+  case dict.get(state.polls, room) {
+    Ok(current) ->
+      case poll.close(current.poll) {
+        poll.ClosedNow(updated) -> #(
+          State(
+            ..state,
+            polls: dict.insert(
+              state.polls,
+              room,
+              StoredPoll(..current, poll: updated),
+            ),
+          ),
+          ClosedNow(updated),
+        )
+        poll.AlreadyClosed(unchanged) -> #(state, AlreadyClosed(unchanged))
+      }
+    Error(_) -> #(state, RoomNotFound)
   }
 }
 
@@ -168,13 +219,13 @@ fn remove_member(state: State, room: String, owner: Pid) -> State {
 }
 
 fn find(
-  polls: Dict(String, poll.Poll),
+  polls: Dict(String, StoredPoll),
   room: String,
-) -> #(poll.Poll, Dict(String, poll.Poll)) {
+) -> #(StoredPoll, Dict(String, StoredPoll)) {
   case dict.get(polls, room) {
     Ok(current) -> #(current, polls)
     Error(_) -> {
-      let current = poll.new()
+      let current = StoredPoll(reference.new(), poll.new())
       #(current, dict.insert(polls, room, current))
     }
   }

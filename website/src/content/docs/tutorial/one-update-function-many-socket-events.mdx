@@ -70,8 +70,10 @@ socket.Next(model, [
 
 See the complete branch in
 [`raw.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/raw.gleam).
-`room_name` accepts a topic only when it has the form `poll:<room>` and the
-room is not empty. The code never builds a reference from the topic string or from
+`poll.room_name` accepts a topic only when it has the form `poll:<room>` and the
+room is not empty and contains no colon. Both raw and typed handlers use this
+parser before they register a member or schedule a timer.
+The code never builds a reference from the topic string or from
 Phoenix wire fields.
 
 This limit is part of the contract. A `JoinReference` holds a unique runtime token.
@@ -210,7 +212,7 @@ socket leaves the room:
 
 ```gleam
 socket.Closed(topic, _reason) -> {
-  case room_name(topic) {
+  case poll.room_name(topic) {
     Ok(room) -> store.leave(polls, room)
     Error(_) -> Nil
   }
@@ -234,7 +236,7 @@ bytes for joined topics. The empty branch documents what this poll supports.
 The `Message` branch also checks that the model knows the topic:
 
 ```gleam
-case set.contains(model.topics, topic), room_name(topic) {
+case set.contains(model.topics, topic), poll.room_name(topic) {
   True, Ok(room) ->
     handle_command(stage, polls, model, topic, room, event, payload, reply)
   False, Ok(_) | False, Error(_) | True, Error(_) ->

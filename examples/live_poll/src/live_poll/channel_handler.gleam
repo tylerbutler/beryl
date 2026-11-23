@@ -50,47 +50,49 @@ fn poll_channel(
   duration_ms: Int,
 ) -> channel.Handler {
   channel.handler("poll:*", fn(context) {
-    let room = case context.parameters {
-      [room] -> room
-      _ -> ""
-    }
-    // The store monitors this worker; cleanup also happens if it is killed.
-    store.join(polls, room)
-    timer.after(clock, duration_ms, fn() {
-      case channel.notify(context.self, ClosePoll) {
-        Ok(Nil) -> Nil
-        Error(error) ->
-          io.println_error(
-            "[live_poll] timer notification rejected: "
-            <> overload.describe(error),
-          )
-      }
-    })
+    case poll.room_name(context.topic) {
+      Error(Nil) ->
+        channel.reject(json.object([#("reason", json.string("unknown_topic"))]))
+      Ok(room) -> {
+        // The store monitors this worker; cleanup also happens if it is killed.
+        let generation = store.join(polls, room)
+        timer.after(clock, duration_ms, fn() {
+          case channel.notify(context.self, ClosePoll) {
+            Ok(Nil) -> Nil
+            Error(error) ->
+              io.println_error(
+                "[live_poll] timer notification rejected: "
+                <> overload.describe(error),
+              )
+          }
+        })
 
-    channel.accept(room)
-    |> channel.on_decoded_message(
-      decode: poll.decode_command,
-      handle: fn(room, command, reply) {
-        handle_command(polls, room, command, reply)
-      },
-      on_error: handle_invalid_message,
-    )
-    |> channel.on_info(fn(room, message) {
-      let ClosePoll = message
-      case store.close(polls, room) {
-        store.ClosedNow(state) -> {
-          let #(event, payload) = encode_event(PollClosed(state))
-          channel.next(room, [
-            channel.broadcast(event, payload),
-          ])
-        }
-        store.AlreadyClosed(_) | store.RoomNotFound -> channel.stay(room)
+        channel.accept(room)
+        |> channel.on_decoded_message(
+          decode: poll.decode_command,
+          handle: fn(room, command, reply) {
+            handle_command(polls, room, command, reply)
+          },
+          on_error: handle_invalid_message,
+        )
+        |> channel.on_info(fn(room, message) {
+          let ClosePoll = message
+          case store.expire(polls, room, generation) {
+            Ok(state) -> {
+              let #(event, payload) = encode_event(PollClosed(state))
+              channel.next(room, [
+                channel.broadcast(event, payload),
+              ])
+            }
+            Error(Nil) -> channel.stay(room)
+          }
+        })
+        |> channel.on_terminate(fn(room, _reason) {
+          store.leave(polls, room)
+          []
+        })
       }
-    })
-    |> channel.on_terminate(fn(room, _reason) {
-      store.leave(polls, room)
-      []
-    })
+    }
   })
 }
 

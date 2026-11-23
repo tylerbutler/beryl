@@ -1,12 +1,12 @@
 import beryl/overload
 import beryl/socket
 import gleam/dynamic.{type Dynamic}
+import gleam/erlang/reference.{type Reference}
 import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None}
 import gleam/set.{type Set}
-import gleam/string
 import live_poll/poll
 import live_poll/store
 import live_poll/timer
@@ -18,7 +18,7 @@ pub type Stage {
 }
 
 pub type Message {
-  ClosePoll(topic: String)
+  ClosePoll(topic: String, generation: Reference)
 }
 
 pub type Model {
@@ -40,13 +40,15 @@ pub fn update(
   fn(model: Model, input: socket.Input(Message)) {
     case input {
       socket.Join(topic, _payload, reference) -> {
-        case room_name(topic) {
+        case poll.room_name(topic) {
           Ok(room) -> {
-            store.join(polls, room)
+            let generation = store.join(polls, room)
             case stage {
               Timed ->
                 timer.after(clock, duration_ms, fn() {
-                  case socket.notify(model.sender, ClosePoll(topic)) {
+                  case
+                    socket.notify(model.sender, ClosePoll(topic, generation))
+                  {
                     Ok(Nil) -> Nil
                     Error(error) ->
                       io.println_error(
@@ -72,7 +74,7 @@ pub fn update(
         }
       }
       socket.Message(topic, event, payload, reply) ->
-        case set.contains(model.topics, topic), room_name(topic) {
+        case set.contains(model.topics, topic), poll.room_name(topic) {
           True, Ok(room) ->
             handle_command(
               stage,
@@ -87,21 +89,21 @@ pub fn update(
           False, Ok(_) | False, Error(_) | True, Error(_) ->
             socket.Next(model, socket.discard_reply(reply))
         }
-      socket.Info(ClosePoll(topic)) ->
-        case room_name(topic) {
+      socket.Info(ClosePoll(topic, generation)) ->
+        case poll.room_name(topic) {
           Ok(room) -> {
-            let effects = case store.close(polls, room) {
-              store.ClosedNow(state) -> [
+            let effects = case store.expire(polls, room, generation) {
+              Ok(state) -> [
                 socket.Broadcast(topic, "poll_closed", poll.to_json(state)),
               ]
-              store.AlreadyClosed(_) | store.RoomNotFound -> []
+              Error(Nil) -> []
             }
             socket.Next(model, effects)
           }
           Error(_) -> socket.Next(model, [])
         }
       socket.Closed(topic, _reason) -> {
-        case room_name(topic) {
+        case poll.room_name(topic) {
           Ok(room) -> store.leave(polls, room)
           Error(_) -> Nil
         }
@@ -172,12 +174,5 @@ fn handle_command(
         ReadOnly | Voting -> socket.Next(model, socket.discard_reply(reply))
       }
     poll.Unsupported -> socket.Next(model, socket.discard_reply(reply))
-  }
-}
-
-fn room_name(topic: String) -> Result(String, Nil) {
-  case string.split(topic, ":") {
-    ["poll", room] if room != "" -> Ok(room)
-    _ -> Error(Nil)
   }
 }
