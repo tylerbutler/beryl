@@ -20,6 +20,9 @@ stages on ports 8101–8105. `server.gleam:run` hosts each checkpoint.
 - `src/live_poll/poll.gleam:vote` requires an open poll; `close` is idempotent.
 - `src/live_poll/raw.gleam:update` gates commands by stage and joined topic.
 - `src/live_poll/store.gleam:leave` removes state when the last member leaves.
+- `src/live_poll/store.gleam:expire` closes only the timer's poll generation.
+- Both handler styles reject empty or multi-segment room names before store
+  registration or timer scheduling.
 
 ## Side effects
 

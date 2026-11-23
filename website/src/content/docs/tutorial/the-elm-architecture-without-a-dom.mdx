@@ -210,8 +210,10 @@ types stay inside the closures you pass in. beryl never converts them to
 The live-poll example defines these raw types:
 
 ```gleam
+import gleam/erlang/reference.{type Reference} as erlang_reference
+
 pub type Message {
-  ClosePoll(topic: String)
+  ClosePoll(topic: String, generation: Reference)
 }
 
 pub type Model {

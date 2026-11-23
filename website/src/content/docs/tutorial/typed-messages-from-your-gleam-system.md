@@ -19,13 +19,17 @@ through a `process.Subject`. The example's store keeps its subject inside an
 opaque type, so callers cannot use the subject directly:
 
 ```gleam
+import gleam/erlang/process.{type Pid, type Subject}
+import gleam/erlang/reference.{type Reference} as erlang_reference
+
 pub opaque type Store {
   Store(subject: Subject(Message))
 }
 
 type Message {
-  Join(room: String)
-  Leave(room: String)
+  Join(room: String, owner: Pid, reply: Subject(Reference))
+  Leave(room: String, owner: Pid)
+  OwnerDown(process.Down)
   Get(room: String, reply: Subject(poll.Poll))
   Vote(
     room: String,
@@ -33,14 +37,25 @@ type Message {
     reply: Subject(Result(poll.Poll, poll.VoteError)),
   )
   Close(room: String, reply: Subject(CloseResult))
+  Expire(
+    room: String,
+    generation: Reference,
+    reply: Subject(Result(poll.Poll, Nil)),
+  )
+}
+
+type StoredPoll {
+  StoredPoll(generation: Reference, poll: poll.Poll)
 }
 ```
 
 This excerpt comes from
 [`store.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/store.gleam).
 The `Subject(Message)` is the address of the actor's mailbox. `Join` and
-`Leave` count the active sockets in a room. `Get`, `Vote`, and `Close` carry a
-`reply` subject. The caller waits for an answer on that subject.
+`Leave` track the active owners in a room. `Join` replies with the poll's
+generation, an Erlang reference shared by its members. `Get`, `Vote`, `Close`,
+and `Expire` also carry a `reply` subject. The caller waits for an answer on
+that subject.
 
 The actor's handler receives its current state and one `Message`. It returns
 `actor.Next`:
@@ -48,11 +63,14 @@ The actor's handler receives its current state and one `Message`. It returns
 ```gleam
 Vote(room, choice, reply) -> {
   let #(current, polls) = find(state.polls, room)
-  case poll.vote(current, choice) {
+  case poll.vote(current.poll, choice) {
     Ok(updated) -> {
       process.send(reply, Ok(updated))
       actor.continue(
-        State(..state, polls: dict.insert(polls, room, updated)),
+        State(
+          ..state,
+          polls: dict.insert(polls, room, StoredPoll(..current, poll: updated)),
+        ),
       )
     }
     Error(error) -> {
@@ -87,7 +105,7 @@ one topic has expired:
 
 ```gleam
 pub type Message {
-  ClosePoll(topic: String)
+  ClosePoll(topic: String, generation: Reference)
 }
 ```
 
@@ -108,23 +126,23 @@ Your `Message` type appears at each step of the path:
 socket.ConnectInfo(Message)
 socket.Sender(Message)
 socket.Input(Message)
-socket.Info(ClosePoll(topic))
+socket.Info(ClosePoll(topic, generation))
 ```
 
-To submit an event, call `socket.notify(sender, ClosePoll(topic))` and handle
+To submit an event, call `socket.notify(sender, ClosePoll(topic, generation))` and handle
 its result. `Ok(Nil)` confirms admission to the socket queue. When beryl
-processes the event, the update function receives `Info(ClosePoll(topic))`.
+processes the event, the update function receives `Info(ClosePoll(topic, generation))`.
 
 The update function handles it like this:
 
 ```gleam
-socket.Info(ClosePoll(topic)) ->
-  case room_name(topic) {
+socket.Info(ClosePoll(topic, generation)) ->
+  case poll.room_name(topic) {
     Ok(room) -> {
-      let effects = case store.close(polls, room) {
-        store.ClosedNow(state) ->
+      let effects = case store.expire(polls, room, generation) {
+        Ok(state) ->
           [socket.Broadcast(topic, "poll_closed", poll.to_json(state))]
-        store.AlreadyClosed(_) | store.RoomNotFound -> []
+        Error(Nil) -> []
       }
       socket.Next(model, effects)
     }
@@ -178,10 +196,11 @@ When a timed socket accepts a poll topic, it schedules a callback:
 import beryl/overload
 import gleam/io
 
+let generation = store.join(polls, room)
 case stage {
   Timed ->
     timer.after(clock, duration_ms, fn() {
-      case socket.notify(model.sender, ClosePoll(topic)) {
+      case socket.notify(model.sender, ClosePoll(topic, generation)) {
         Ok(Nil) -> Nil
         Error(error) ->
           io.println_error(
@@ -196,7 +215,7 @@ case stage {
 
 `step_03` sets `duration_ms` to `60_000`. After 60 seconds, the timer actor
 runs the callback. The callback calls `socket.notify`. beryl then calls the
-socket's update function with `Info(ClosePoll(topic))` if the event is admitted
+socket's update function with `Info(ClosePoll(topic, generation))` if the event is admitted
 and the socket stays open long enough to process it.
 
 `socket.notify` returns `Result(Nil, overload.AdmissionError)`. Success does
@@ -208,7 +227,9 @@ error. This timer logs the rejection without retrying. See
 
 The raw `Model` holds the sender and the set of joined topics. It does not hold
 vote counts. Both client events and timer events call the shared
-`store.Store`.
+`store.Store`. The store compares the timer's generation and closes the poll
+in one actor turn. After the last member leaves, a new join creates a new
+generation. A timer from the previous poll cannot close that replacement.
 
 Each part has one job:
 
@@ -218,7 +239,7 @@ Each part has one job:
 - The `socket.Sender` sends the result back into one socket.
 
 `store.Store` also hides where the data lives. Socket code calls `get`, `vote`,
-and `close`. It does not know that the actor keeps a `Dict` in memory. The
+`close`, and `expire`. It does not know that the actor keeps a `Dict` in memory. The
 actor could keep polls in [Stóráil](https://hexdocs.pm/storail/) or a database
 instead. The actor still puts the updates in order. The storage decides if
 the data survives a restart. A real backend also needs a plan for slow I/O and
@@ -242,13 +263,16 @@ pub fn close(poll: Poll) -> CloseResult {
 
 `ClosedNow` tells the caller to broadcast `poll_closed`. `AlreadyClosed` tells
 the caller not to broadcast again. Each socket join sets its own timer. Two
-tabs on the same room set two timers. Only the first `ClosePoll` changes the
-store.
+tabs on the same room set two timers with the same generation.
+`store.expire` returns `Ok(state)` only for the first closure. It returns
+`Error(Nil)` for an old generation, a missing poll, or an already closed poll.
 
 ## Reuse the same close operation
 
 In the timed stage, a client can send `close_poll`. The raw handler calls the
-same `store.close` function. It returns effects in order:
+`store.close` function, which closes the current poll without a timer token.
+Both store operations use the same close transition. The client command
+returns effects in order:
 
 ```gleam
 Timed -> {
@@ -270,7 +294,7 @@ Timed -> {
 
 The reply comes before the broadcast in the list. beryl runs effects in list
 order. The wire sees them in that order too. The timer can still send a later
-`Info`. But `store.close` is safe to call twice, so there is no second
+`Info`. But `store.expire` ignores a closed poll, so there is no second
 broadcast.
 
 This order guarantee is a beryl rule. Lustre effects and OTP sends have their
@@ -279,8 +303,9 @@ own rules. Do not assume they order work the same way.
 ## Include the topic in each `Info` message
 
 An `Info(Message)` does not carry a topic. Your message must carry the routing
-data it needs. The example defines `ClosePoll(topic: String)` because one raw
-socket can join several poll topics.
+data it needs. The example includes the topic in `ClosePoll` because one raw
+socket can join several poll topics. Its generation identifies the poll that
+scheduled the timer, even if a later join reuses the topic.
 
 This has one effect on crashes. When a `Message` or `Binary` callback crashes,
 beryl knows the topic. It closes only that topic. When an `Info` callback

@@ -338,6 +338,122 @@ pub fn live_poll_typed_channel_keeps_replies_and_outbound_recipients_test() -> N
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
+pub fn live_poll_replacement_ignores_stale_timer_test() -> Nil {
+  let assert Ok(polls) = store.start()
+  let assert Ok(clock) = timer.start()
+  let ready = process.new_subject()
+  let expired = process.new_subject()
+  timer.after(clock, 0, fn() {
+    let resume = process.new_subject()
+    process.send(ready, resume)
+    let assert Ok(Nil) = process.receive(resume, 5000)
+    Nil
+  })
+  let assert Ok(resume) = process.receive(ready, 1000)
+  let sockets =
+    start_raw(
+      fn(info) {
+        let #(model, effects) = raw.init(info)
+        #(#(model, 0), effects)
+      },
+      fn(state, input) {
+        let #(model, joins) = state
+        let duration_ms = case joins {
+          0 -> 0
+          _ -> 60_000
+        }
+        let assert socket.Next(updated, effects) =
+          raw.update(raw.Timed, polls, clock, duration_ms)(model, input)
+        let joins = case input {
+          socket.Join(_, _, _) -> joins + 1
+          socket.Info(_) -> {
+            process.send(expired, Nil)
+            joins
+          }
+          socket.Message(..) | socket.Binary(..) | socket.Closed(..) -> joins
+        }
+        socket.Next(#(updated, joins), effects)
+      },
+    )
+  let frames = connect(sockets, "client")
+  send(sockets, "client", "poll:demo", "phx_join", empty())
+  recv(frames) |> contains("\"status\":\"ok\"")
+  send(sockets, "client", "poll:demo", "phx_leave", empty())
+  recv(frames) |> contains("\"status\":\"ok\"")
+  recv(frames) |> contains("\"phx_close\"")
+  store.close(polls, "demo") |> should.equal(store.RoomNotFound)
+  send(sockets, "client", "poll:demo", "phx_join", empty())
+  recv(frames) |> contains("\"status\":\"ok\"")
+
+  // Deliver the first poll's real scheduled callback after its replacement joins.
+  process.send(resume, Nil)
+  let assert Ok(Nil) = process.receive(expired, 1000)
+  send(sockets, "client", "poll:demo", "get_state", empty())
+  let replacement = recv(frames)
+  replacement |> contains("\"phx_reply\"")
+  replacement |> contains("\"open\":true")
+  no_frame(frames)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn live_poll_current_timer_closes_once_test() -> Nil {
+  let assert Ok(polls) = store.start()
+  let assert Ok(clock) = timer.start()
+  let sockets = start_raw(raw.init, raw.update(raw.Timed, polls, clock, 0))
+  let frames = connect(sockets, "client")
+  send(sockets, "client", "poll:demo", "phx_join", empty())
+  recv(frames) |> contains("\"status\":\"ok\"")
+  recv(frames) |> contains("\"poll_closed\"")
+  send(sockets, "client", "poll:demo", "get_state", empty())
+  recv(frames) |> contains("\"open\":false")
+  send(sockets, "client", "poll:demo", "close_poll", empty())
+  recv(frames) |> contains("\"status\":\"ok\"")
+  no_frame(frames)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn live_poll_room_name_rejection_parity_test() -> Nil {
+  list.each([raw.ReadOnly, raw.Voting, raw.Timed], fn(stage) {
+    let assert Ok(polls) = store.start()
+    let assert Ok(clock) = timer.start()
+    let sockets = start_raw(raw.init, raw.update(stage, polls, clock, 0))
+    assert_invalid_poll_room(sockets, polls)
+  })
+
+  let assert Ok(polls) = store.start()
+  let assert Ok(clock) = timer.start()
+  let assert Ok(#(sockets, specification)) =
+    channel.child_spec(
+      beryl.config(wire.phoenix_codec()),
+      handlers: channel_handler.handlers(polls, clock, 0),
+    )
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(specification)
+    |> static_supervisor.start()
+  assert_invalid_poll_room(sockets, polls)
+}
+
+fn assert_invalid_poll_room(sockets: beryl.Sockets, polls: store.Store) -> Nil {
+  let frames = connect(sockets, "client")
+  list.each(
+    [
+      #("poll:", "", "invalid_topic"),
+      #("poll:team:west", "team:west", "unknown_topic"),
+    ],
+    fn(invalid) {
+      let #(topic, room, reason) = invalid
+      send(sockets, "client", topic, "phx_join", empty())
+      let rejection = recv(frames)
+      rejection |> contains("\"status\":\"error\"")
+      rejection |> contains("\"reason\":\"" <> reason <> "\"")
+      store.close(polls, room) |> should.equal(store.RoomNotFound)
+    },
+  )
+  no_frame(frames)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
 /// The browser simulation follows the real Voting checkpoint's recipients.
 pub fn tutorial_shared_poll_recipients_and_cleanup_test() -> Nil {
   let assert Ok(polls) = store.start()

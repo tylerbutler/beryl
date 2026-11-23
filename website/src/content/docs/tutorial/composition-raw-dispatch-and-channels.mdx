@@ -34,6 +34,8 @@ work. It also works well when one effect list must coordinate several topics.
 The live-poll example already shows the start of this cost:
 
 ```gleam
+import gleam/erlang/reference.{type Reference} as erlang_reference
+
 pub type Stage {
   ReadOnly
   Voting
@@ -41,7 +43,7 @@ pub type Stage {
 }
 
 pub type Message {
-  ClosePoll(topic: String)
+  ClosePoll(topic: String, generation: Reference)
 }
 
 pub type Model {
@@ -125,33 +127,49 @@ fn poll_channel(
   duration_ms: Int,
 ) -> channel.Handler {
   channel.handler("poll:*", fn(context) {
-    let room = case context.parameters {
-      [room] -> room
-      _ -> ""
-    }
-    store.join(polls, room)
-    timer.after(clock, duration_ms, fn() {
-      channel.notify(context.self, ClosePoll)
-    })
+    case poll.room_name(context.topic) {
+      Error(Nil) ->
+        channel.reject(json.object([#("reason", json.string("unknown_topic"))]))
+      Ok(room) -> {
+        // The store monitors this worker; cleanup also happens if it is killed.
+        let generation = store.join(polls, room)
+        timer.after(clock, duration_ms, fn() {
+          case channel.notify(context.self, ClosePoll) {
+            Ok(Nil) -> Nil
+            Error(error) ->
+              io.println_error(
+                "[live_poll] timer notification rejected: "
+                <> overload.describe(error),
+              )
+          }
+        })
 
-    channel.accept(room)
-    |> channel.on_message(fn(room, message) {
-      handle_message(polls, room, message)
-    })
-    |> channel.on_info(fn(room, message) {
-      let ClosePoll = message
-      case store.close(polls, room) {
-        store.ClosedNow(state) ->
-          channel.next(room, [
-            channel.broadcast("poll_closed", poll.to_json(state)),
-          ])
-        store.AlreadyClosed(_) | store.RoomNotFound -> channel.stay(room)
+        channel.accept(room)
+        |> channel.on_decoded_message(
+          decode: poll.decode_command,
+          handle: fn(room, command, reply) {
+            handle_command(polls, room, command, reply)
+          },
+          on_error: handle_invalid_message,
+        )
+        |> channel.on_info(fn(room, message) {
+          let ClosePoll = message
+          case store.expire(polls, room, generation) {
+            Ok(state) -> {
+              let #(event, payload) = encode_event(PollClosed(state))
+              channel.next(room, [
+                channel.broadcast(event, payload),
+              ])
+            }
+            Error(Nil) -> channel.stay(room)
+          }
+        })
+        |> channel.on_terminate(fn(room, _reason) {
+          store.leave(polls, room)
+          []
+        })
       }
-    })
-    |> channel.on_terminate(fn(room, _reason) {
-      store.leave(polls, room)
-      []
-    })
+    }
   })
 }
 ```
@@ -161,10 +179,12 @@ This exact excerpt comes from
 Read it from the top:
 
 - `channel.handler` pairs the pattern `poll:*` with the join function.
-- `context.parameters` holds the part of the topic that matched `*`. For
-  `poll:demo`, that is `["demo"]`.
+- `poll.room_name(context.topic)` checks the full topic before the handler
+  joins the store or schedules a timer. It accepts one non-empty room segment,
+  just as the raw handler does. The wildcard alone also matches embedded colons.
 - `context.self` is a typed sender for this channel. The timer uses it to send
-  `ClosePoll` later.
+  `ClosePoll` later. The callback keeps the generation from `store.join`, so
+  `store.expire` cannot close a replacement poll.
 - `channel.accept(room)` accepts the join. The argument is the channel's
   starting state. Here, the state is the room name.
 - Each `on_*` call adds a callback. A callback receives the current state and

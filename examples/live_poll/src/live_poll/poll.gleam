@@ -2,6 +2,7 @@ import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/json
 import gleam/result
+import gleam/string
 
 pub type Choice {
   Gleam
@@ -40,6 +41,14 @@ pub type CommandError {
 
 pub fn new() -> Poll {
   Poll(gleam_votes: 0, erlang_votes: 0, status: Open)
+}
+
+/// Accept one non-empty room segment in a `poll:<room>` topic.
+pub fn room_name(topic: String) -> Result(String, Nil) {
+  case string.split(topic, ":") {
+    ["poll", room] if room != "" -> Ok(room)
+    _ -> Error(Nil)
+  }
 }
 
 pub fn command(event: String, payload: Dynamic) -> Command {

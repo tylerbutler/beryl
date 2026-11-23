@@ -66,6 +66,25 @@ pub fn empty_rooms_are_removed_test() -> Nil {
   store.get(polls, "demo") |> should.equal(poll.new())
 }
 
+pub fn expiry_is_bound_to_the_shared_poll_generation_test() -> Nil {
+  let assert Ok(polls) = store.start()
+  let original = store.join(polls, "demo")
+  store.join(polls, "demo") |> should.equal(original)
+  let assert Ok(voted) = store.vote(polls, "demo", poll.Gleam)
+  let assert poll.ClosedNow(closed) = poll.close(voted)
+  store.expire(polls, "demo", original) |> should.equal(Ok(closed))
+  store.expire(polls, "demo", original) |> should.equal(Error(Nil))
+
+  store.leave(polls, "demo")
+  store.expire(polls, "demo", original) |> should.equal(Error(Nil))
+  let replacement = store.join(polls, "demo")
+  should.be_false(replacement == original)
+  store.expire(polls, "demo", original) |> should.equal(Error(Nil))
+  store.get(polls, "demo") |> should.equal(poll.new())
+  let assert poll.ClosedNow(closed) = poll.close(poll.new())
+  store.expire(polls, "demo", replacement) |> should.equal(Ok(closed))
+}
+
 pub fn memberships_are_per_owner_and_room_test() -> Nil {
   let assert Ok(polls) = store.start()
   store.join(polls, "first")
