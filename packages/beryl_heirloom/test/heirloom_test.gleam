@@ -27,6 +27,9 @@ fn check_unnamed_labels(
 @external(erlang, "heirloom_test_ffi", "check_invalid_names")
 fn check_invalid_names() -> Nil
 
+@external(erlang, "heirloom_test_ffi", "check_recipient_death_during_transfer")
+fn check_recipient_death_during_transfer(check: fn(process.Pid) -> Nil) -> Nil
+
 fn table(name: String) -> heirloom.Table(String, String) {
   let assert Ok(table) = heirloom.create(heirloom.spec(name, heirloom.Set))
   table
@@ -532,9 +535,71 @@ pub fn heirloom_rejects_give_away_to_dead_process_test() -> Nil {
     process.new_selector()
     |> process.select_specific_monitor(monitor, fn(down) { down })
     |> process.selector_receive(500)
+  heirloom.set_heir(table, recipient, Nil)
+  |> should.equal(Error(heirloom.InvalidOwnershipHeir))
   heirloom.give_away(table, to: recipient, data: Nil)
   |> should.equal(Error(heirloom.RecipientNotAlive))
   heirloom.delete(table) |> should.equal(Ok(Nil))
+}
+
+pub fn heirloom_reports_recipient_death_during_transfer_test() -> Nil {
+  heirloom.spec("heirloom_recipient_death_race", heirloom.Set)
+  |> recipient_death_during_transfer
+}
+
+pub fn heirloom_named_recipient_death_preserves_instance_test() -> Nil {
+  heirloom.spec("heirloom_named_recipient_death_race", heirloom.Set)
+  |> heirloom.with_named_table
+  |> recipient_death_during_transfer
+}
+
+fn recipient_death_during_transfer(specification: heirloom.Spec(Nil)) -> Nil {
+  check_recipient_death_during_transfer(fn(recipient) {
+    let assert Ok(table): Result(heirloom.Table(String, String), _) =
+      heirloom.create(specification)
+    let assert Ok(Nil) = heirloom.insert(table, "key", "original")
+    let assert Ok(Nil) =
+      heirloom.set_heir(table, process.self(), "configured-heir")
+    let transferred =
+      heirloom.give_away(table, to: recipient, data: "recipient-death-race")
+    let owner = heirloom.owner(table)
+    let heir = heirloom.heir(table)
+    let contents = heirloom.lookup(table, "key")
+    heirloom.delete(table) |> should.equal(Ok(Nil))
+    #(transferred, owner, heir, contents)
+    |> should.equal(#(
+      Error(heirloom.RecipientNotAlive),
+      Ok(process.self()),
+      Ok(Some(process.self())),
+      Ok(Some("original")),
+    ))
+  })
+}
+
+pub fn heirloom_preserves_ownership_error_precedence_test() -> Nil {
+  let table = table("heirloom_transfer_ownership_errors")
+  let outcome = process.new_subject()
+  let worker =
+    process.spawn_unlinked(fn() {
+      process.send(
+        outcome,
+        heirloom.give_away(table, to: process.self(), data: Nil),
+      )
+    })
+  let monitor = process.monitor(worker)
+  let result = process.receive(outcome, 500)
+  let down =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+    |> process.selector_receive(500)
+  heirloom.delete(table) |> should.equal(Ok(Nil))
+  let missing = heirloom.give_away(table, to: process.self(), data: Nil)
+  let assert Ok(_) = down
+  #(result, missing)
+  |> should.equal(#(
+    Ok(Error(heirloom.NotOwner)),
+    Error(heirloom.OwnershipTableDoesNotExist),
+  ))
 }
 
 pub fn heirloom_reports_invalid_transfer_data_test() -> Nil {

@@ -236,6 +236,8 @@ pub fn clear_heir(table: Table(key, value)) -> Result(Nil, OwnershipError)
 ///
 /// The caller must own the table. The recipient observes completion through
 /// an `ETS-TRANSFER` message. The configured heir is unchanged.
+/// If the recipient exits before ETS transfers ownership, this returns
+/// `RecipientNotAlive` and the caller keeps the table.
 @external(erlang, "beryl_heirloom_ffi", "give_away")
 pub fn give_away(
   table: Table(key, value),

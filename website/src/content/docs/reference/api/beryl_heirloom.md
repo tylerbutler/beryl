@@ -269,6 +269,8 @@ Give the table to another live local process.
 
  The caller must own the table. The recipient observes completion through
  an `ETS-TRANSFER` message. The configured heir is unchanged.
+ If the recipient exits before ETS transfers ownership, this returns
+ `RecipientNotAlive` and the caller keeps the table.
 
 <div class="api-entry-anchor" id="api-function-heir" aria-hidden="true"></div>
 
