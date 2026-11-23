@@ -142,7 +142,7 @@ give_away(Table, Recipient, Data) ->
                     try ets:give_away(Table, Recipient, transfer_data(Table, Data)) of
                         true -> {ok, nil}
                     catch
-                        error:badarg -> ownership_error(Table)
+                        error:badarg -> transfer_error(Table)
                     end
             end
     end.
@@ -275,6 +275,12 @@ ownership_error(Table) ->
     case ownership_precheck(Table) of
         {error, Error} -> {error, Error};
         ok -> {error, invalid_ownership_heir}
+    end.
+
+transfer_error(Table) ->
+    case ownership_precheck(Table) of
+        {error, Error} -> {error, Error};
+        ok -> {error, recipient_not_alive}
     end.
 
 table_exists(Table) ->
