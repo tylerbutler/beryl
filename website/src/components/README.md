@@ -13,7 +13,7 @@ events with browser-local simulations.
   for its title, tagline, image, and actions. `isHome` selects the gem and code
   presentation when `gem` is present.
 - [InstallDependencies.astro](./InstallDependencies.astro) renders the
-  `dependencies` TOML snippet for `beryl` and `beryl_mist` using a release `ref`.
+  `dependencies` TOML snippet for Ewe and the `beryl` and `beryl_ewe` packages at the same release `ref`.
 - [SharedPollDemo.astro](./SharedPollDemo.astro), [SocketLoopDemo.astro](./SocketLoopDemo.astro),
   and [TopicCompositionDemo.astro](./TopicCompositionDemo.astro) register
   `shared-poll-demo`, `socket-loop-demo`, and `topic-composition-demo`.

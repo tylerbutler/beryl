@@ -2,7 +2,8 @@ import beryl
 import beryl/channel
 import beryl/transport/server
 import beryl/wire
-import beryl_mist
+import beryl_ewe
+import ewe
 import example_helper/static
 import gleam/erlang/process
 import gleam/io
@@ -10,7 +11,6 @@ import gleam/otp/static_supervisor
 import lustre_presence/auth
 import lustre_presence/dashboard
 import lustre_presence/router
-import mist
 
 pub fn main() -> Nil {
   let secret = auth.new_secret()
@@ -43,13 +43,13 @@ pub fn main() -> Nil {
 
   let assert Ok(_) =
     fn(http_request) {
-      beryl_mist.upgrade(http_request, channels, transport_config, fn() {
-        router.handle_request(http_request, router_context)
-      })
+      use <- beryl_ewe.upgrade(http_request, channels, transport_config)
+      router.handle_request(http_request, router_context)
     }
-    |> mist.new
-    |> mist.port(8002)
-    |> mist.start
+    |> ewe.new
+    |> ewe.listening(on: 8002)
+    |> ewe.bind(to: "localhost")
+    |> ewe.start
 
   io.println("beryl Lustre presence example")
   io.println("Open http://localhost:8002")

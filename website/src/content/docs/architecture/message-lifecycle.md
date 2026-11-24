@@ -7,8 +7,8 @@ diagram shows one phase of beryl's message processing.
 
 ## Connect and initialize a socket
 
-When a client requests a WebSocket upgrade, Mist creates a unique socket ID. It
-builds a `ConnectSeed` from the path, query, and headers. Mist then sends the
+When a client requests a WebSocket upgrade, the transport creates a unique socket ID. It
+builds a `ConnectSeed` from the path, query, and headers. The transport sends the
 socket and its send functions through the router to a new socket actor. The
 socket actor calls your app's `init` with `ConnectInfo`. This value contains
 the socket ID, seed, and typed `Sender`. The actor stores the model that `init`
@@ -17,14 +17,14 @@ returns.
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as beryl_mist
+  participant Transport as WebSocket adapter
   participant Router as router
   participant Socket as socket actor
   participant App as your init
-  Client->>Mist: WebSocket upgrade
-  Mist->>Mist: generate socket id, build ConnectSeed
-  Mist->>Socket: start one actor
-  Mist->>Router: admit_socket(actor, owner, ...)
+  Client->>Transport: WebSocket upgrade
+  Transport->>Transport: generate socket id, build ConnectSeed
+  Transport->>Socket: start one actor
+  Transport->>Router: admit_socket(actor, owner, ...)
   Router->>Socket: admission accepted
   Socket->>App: init(ConnectInfo)
   App-->>Socket: #(model, effects)
@@ -40,13 +40,13 @@ decodes the frame. The router forwards it to the socket actor, which sends a
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as beryl_mist
+  participant Transport as WebSocket adapter
   participant Wire as wire/codec
   participant Router as router
   participant Socket as socket actor
   participant App as your update
-  Client->>Mist: text frame [join_ref, ref, topic, "phx_join", payload]
-  Mist->>Wire: decode_text
+  Client->>Transport: text frame [join_ref, ref, topic, "phx_join", payload]
+  Transport->>Wire: decode_text
   Wire-->>Router: route_decoded(join)
   Router->>Socket: forward decoded join
   Socket->>Socket: validate topic (length, reserved names, rate, cap)
@@ -117,7 +117,7 @@ sequenceDiagram
 
 ## Disconnect a socket
 
-When a client closes the WebSocket, Mist notifies the router. The router
+When a client closes the WebSocket, the transport notifies the router. The router
 forwards the close to the socket actor. The actor sends `Closed(topic, reason)`
 to `update` for each joined topic, then removes its socket state and asks the
 router to remove its subscriptions.
@@ -125,12 +125,12 @@ router to remove its subscriptions.
 ```mermaid
 sequenceDiagram
   participant Client
-  participant Mist as beryl_mist
+  participant Transport as WebSocket adapter
   participant Router as router
   participant Socket as socket actor
   participant App as your update
-  Client->>Mist: socket close
-  Mist->>Router: socket_disconnected(id)
+  Client->>Transport: socket close
+  Transport->>Router: socket_disconnected(id)
   Router->>Socket: disconnect
   Socket->>App: update(model, Closed(topic, reason)) per joined topic
   Socket->>Router: remove subscriptions and actor entry
@@ -168,7 +168,7 @@ index updates and broadcasts in its own mailbox. Tests must select the exact mes
 
 ## Source files
 
-- `packages/beryl_mist/src/beryl_mist.gleam`: connect, close, decode, and route frames
+- `packages/beryl_ewe/src/beryl_ewe.gleam` and `packages/beryl_mist/src/beryl_mist.gleam`: connect, close, decode, and route frames
 - `src/beryl/runtime.gleam`: event dispatch, effect application, heartbeat timer
 - `src/beryl/wire.gleam`, `src/beryl/wire/codec.gleam`: decode/encode frames
 - `src/beryl/pubsub.gleam`: send broadcasts to subscribers

@@ -43,14 +43,15 @@ so the announcement goes through `example_helper/broadcast_hub`, a small actor h
 ```sh
 cd examples/showcase
 gleam test      # channel behavior over the transport SPI
-pnpm test       # Playwright end-to-end against a running server
+pnpm test       # browser flows and deployment lifecycle
 ```
 
 ## Routing
 
-Each example's router was refactored to accept a `base_path` field on its
-`Context`. The standalone demos still pass `""` and serve assets at
-`/static/...`. The showcase passes `"/cursors"`, `"/chat"`, and `"/docs"`
+`beryl_ewe.upgrade` handles `/socket/websocket` and passes requests for
+other paths to the showcase router. Each example's router takes a
+`base_path` field on its `Context`. The standalone demos pass `""` and serve
+assets at `/static/...`. The showcase passes `"/cursors"`, `"/chat"`, and `"/docs"`
 respectively, so each example's HTML emits prefixed asset URLs and its
 `serve_static` mount lives under the prefix. The Phoenix JS client in
 each example uses `new Socket("/socket")` so all three share the same
@@ -65,6 +66,20 @@ gleam run
 ```
 
 Honors `PORT` and `BIND_ADDRESS` like the standalone cursors demo.
+
+## Startup and shutdown
+
+`gleam run` and the shipment entrypoint both call `showcase.main`. It asks the
+showcase OTP application to start the server tree. `gleam test` uses another
+entrypoint, so it does not bind the server port.
+
+The server supervisor starts the groups actor, seeds `public` with the three
+chat rooms, and starts beryl before it starts `ewe.supervised`. If the groups
+actor restarts, its child specification restores the rooms. On an application
+stop, the supervisor stops Ewe first. Ewe sends WebSocket close code `1001`
+(going away) while beryl and the domain processes are still available.
+If the service tree exhausts its restart budget, the shipment exits
+with a failure status so the host can restart it.
 
 ## Run in Docker
 
@@ -177,10 +192,9 @@ service if you no longer need it, so it does not keep billing.
 
 ## Interface
 
-`src/showcase.gleam:Dependencies`, `handlers`, and `main` expose dependency
-assembly, handler composition, and startup. `gleam.toml` declares sibling
-example packages and shared helpers as path dependencies; they own the
-reused routers, stores, and utilities.
+`src/showcase.gleam` defines the OTP callbacks, channel handlers, and server
+entrypoint. `gleam.toml` declares sibling example packages and shared helpers
+as path dependencies; they own the reused routers, stores, and utilities.
 
 ## Invariants
 
@@ -188,14 +202,13 @@ reused routers, stores, and utilities.
   though the `document:*` WebSocket channel is active.
 - `chatroom/app.room` uses the atomic 20-user cap; `collab_document/app`
   validates tenant tokens and limits state to 65,536 bytes.
-- `src/showcase.gleam:main` sets frame/message/join rates to 35/30/5 per second
+- `src/showcase.gleam` sets frame/message/join rates to 35/30/5 per second
   and cursor/room/document topic rates to 30/10/10.
 
 ## Side effects
 
-`src/showcase.gleam:main` starts presence, document storage, the broadcast hub,
-groups, supervision, and the listener. Channel callbacks change shared
-example state and broadcast events. State remains local to the demo process.
+Channel callbacks change shared example state and broadcast events.
+State remains local to the demo process.
 
 ## Verification
 

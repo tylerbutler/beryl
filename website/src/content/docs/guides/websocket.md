@@ -1,50 +1,15 @@
 ---
 title: Use a WebSocket transport
-description: Connect Mist or Ewe to beryl, authenticate connections, and use the Phoenix wire protocol.
+description: Connect Ewe or Mist to beryl, authenticate connections, and use the Phoenix wire protocol.
 ---
 
-beryl provides WebSocket transports for [Mist](https://hexdocs.pm/mist/) and
-[Ewe](https://hexdocs.pm/ewe/). Both transports use the same beryl runtime,
+The examples use [Ewe](https://hexdocs.pm/ewe/) to serve HTTP and WebSockets.
+If your application uses [Mist](https://hexdocs.pm/mist/), use the [Mist setup](#mist).
+Both transports use the same beryl runtime,
 configuration, authentication, origin checks, connection limits, and wire
 codecs.
 
 ## Add WebSocket upgrades
-
-### Mist
-
-Use `mist_transport.upgrade` to add WebSocket support:
-
-```gleam
-import beryl
-import beryl/transport/server
-import beryl_mist as mist_transport
-import gleam/bytes_tree
-import gleam/http/request
-import gleam/http/request.{type Request}
-import gleam/http/response
-import mist
-
-fn handle_request(
-  http_request: Request(mist.Connection),
-  channels: beryl.Sockets,
-) -> response.Response(mist.ResponseData) {
-  // Upgrade /socket/websocket requests to WebSocket
-  use <- mist_transport.upgrade(
-    http_request,
-    channels,
-    server.default_config("/socket/websocket"),
-  )
-
-  // Non-WebSocket requests fall through here
-  case request.path_segments(http_request) {
-    [] -> response.new(200) |> response.set_body(mist.Bytes(bytes_tree.new()))
-    _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
-  }
-}
-```
-
-The `upgrade` function checks the request path. It upgrades a matching request
-and connects it to the beryl runtime.
 
 ### Ewe
 
@@ -90,6 +55,41 @@ pipeline and sends every other request to the fallback function. Use
 `ewe_transport.upgrade` instead when an existing Ewe handler already controls
 the fallback.
 
+### Mist
+
+If you already serve HTTP with Mist, pass your HTTP handler to `beryl_mist.handler`.
+Keep your beryl configuration and socket path:
+
+```gleam
+import beryl
+import beryl/transport/server
+import beryl_mist
+import gleam/bytes_tree
+import gleam/http/request
+import gleam/http/response
+import mist
+
+pub fn start_mist(sockets: beryl.Sockets) -> Nil {
+  let assert Ok(_) =
+    beryl_mist.handler(
+      sockets,
+      server.default_config("/socket/websocket"),
+      fn(req) {
+        case request.path_segments(req) {
+          [] ->
+            response.new(200)
+            |> response.set_body(mist.Bytes(bytes_tree.from_string("Hello!")))
+          _ -> response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
+        }
+      },
+    )
+    |> mist.new
+    |> mist.port(8000)
+    |> mist.start
+  Nil
+}
+```
+
 Both transports work with both beryl APIs. A handle from
 `channel.child_spec` is the same `beryl.Sockets` type as one from
 `beryl.child_spec`, so the setup is identical for both.
@@ -112,15 +112,14 @@ Use `with_on_connect` to authenticate a connection before the upgrade. It is
 similar to Phoenix `UserSocket.connect/3`. The hook runs once for each socket
 before any channel join. It can reject the connection.
 
-The example below uses Mist request types. With Ewe, use
-`Request(ewe.Connection)` in the callback and pass the resulting configuration
-to `ewe_transport.handler` or `ewe_transport.upgrade`. The configuration
-builders and rejection behavior are the same.
+Pass the resulting configuration to `ewe_transport.handler`. With Mist,
+use `Request(mist.Connection)` in the callback and pass the configuration to
+`beryl_mist.handler`. Both adapters use the same configuration builders.
 
 ```gleam
 let websocket_config =
   server.default_config("/socket/websocket")
-  |> server.with_on_connect(fn(http_request: Request(mist.Connection)) {
+  |> server.with_on_connect(fn(http_request: Request(ewe.Connection)) {
     // Check auth token, session, etc.
     case validate_token(http_request) {
       Ok(_user) -> Ok([])                        // Allow; no connect metadata
@@ -128,7 +127,7 @@ let websocket_config =
     }
   })
 
-use <- mist_transport.upgrade(http_request, channels, websocket_config)
+ewe_transport.handler(channels, websocket_config, http_fallback)
 ```
 
 Return `Error(server.ConnectRejected)` to send HTTP 403 before the WebSocket
@@ -152,7 +151,7 @@ the full `Origin` header exactly: scheme, host, and port when present.
 let websocket_config =
   server.default_config("/socket/websocket")
   |> server.with_allowed_origins(["https://app.example.com"])
-  |> server.with_on_connect(fn(http_request: Request(mist.Connection)) {
+  |> server.with_on_connect(fn(http_request: Request(ewe.Connection)) {
     validate_cookie_session(http_request)
   })
 ```
@@ -202,7 +201,7 @@ Then `init` can read it instead of decoding the request again:
 ```gleam
 let websocket_config =
   server.default_config("/socket/websocket")
-  |> server.with_on_connect(fn(http_request: Request(mist.Connection)) {
+  |> server.with_on_connect(fn(http_request: Request(ewe.Connection)) {
     // Validate once; reject the whole connection on failure.
     case validate_token(http_request) {
       Ok(user_id) -> Ok([#("user_id", user_id)])

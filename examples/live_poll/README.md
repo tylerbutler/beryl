@@ -26,7 +26,7 @@ stages on ports 8101–8105. `server.gleam:run` hosts each checkpoint.
 
 ## Side effects
 
-`src/live_poll/server.gleam:run` starts supervision and Mist and blocks
+`src/live_poll/server.gleam:run` starts supervision and Ewe and blocks
 indefinitely. The store and timer actors send messages; handlers broadcast
 state and closure events.
 

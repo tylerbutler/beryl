@@ -17,7 +17,7 @@ configuration the supervisor needs to build that system again.
 ## Put the child specification in your application tree
 
 The live-poll example starts beryl under a root supervisor. Then it starts the
-Mist listener:
+Ewe listener:
 
 ```gleam
 let assert Ok(#(sockets, child_specification)) =
@@ -36,7 +36,8 @@ The first excerpt comes from
 [`step_05.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/step_05.gleam).
 The supervisor code comes from
 [`server.gleam`](https://github.com/tylerbutler/beryl/blob/main/examples/live_poll/src/live_poll/server.gleam).
-The server then passes `sockets` to `mist_transport.upgrade`.
+The server then passes `sockets` to `beryl_ewe.upgrade`, with the poll page and
+health endpoint as the HTTP fallback.
 
 The order matters. You get the handle when `child_spec` returns. But no runtime
 process exists until a supervisor starts `child_specification`. Before that,
@@ -186,10 +187,12 @@ A recommended startup order makes four decisions, in this order:
 3. Add beryl's specification to your application supervisor and start it.
 4. Start the HTTP/WebSocket listener with the running `Sockets` handle.
 
-Each part then has a clear recovery path. beryl's supervisor restores the
-router. Clients restore socket actors and subscriptions when they reconnect.
-Your own processes or storage keep the domain state. Graceful shutdown drains
-socket callbacks without stopping unrelated services.
+For a deployed Ewe server, add `ewe.supervised` **after** beryl in a supervisor
+owned by an OTP application. OTP stops children in reverse order: Ewe closes
+its WebSockets with code `1001` (going away) while beryl can still run channel
+callbacks. Starting Ewe from `main` alone does not give it this shutdown path.
+The [showcase deployment](https://github.com/tylerbutler/beryl/tree/main/examples/showcase#startup-and-shutdown)
+does this without starting the listeners of the demos it imports.
 
 ## Sources and further reading
 
@@ -205,7 +208,7 @@ cd examples/live_poll && gleam run -m live_poll/step_05
 ```
 
 The checkpoint creates the `Sockets` handle and specification, starts the
-supervision tree, and then starts Mist on `http://localhost:8105`. Stop it with
+supervision tree, and then starts Ewe on `http://localhost:8105`. Stop it with
 Ctrl-C to end the application process and its linked tree.
 
 Back to the [tutorial overview](/tutorial/).

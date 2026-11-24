@@ -29,10 +29,10 @@ the tree from release.
 ## Interface
 
 The child contracts identify executable modules, handler factories, and
-browser APIs. The manifests declare local package ownership: most server
-examples use beryl and transport path dependencies; `portable_channels`
-uses the portable protocol package and Roost. The nested document and
-Lustre clients are separate JavaScript-targeted Gleam packages.
+browser APIs. The browser demos use `beryl_ewe` for WebSockets and Ewe for
+HTTP on the same listener. `load_test` runs the same benchmark on Mist or Ewe;
+`portable_channels` uses the portable protocol package and Roost. The nested
+document and Lustre clients are separate JavaScript-targeted Gleam packages.
 
 ## Invariants
 

@@ -1,10 +1,10 @@
 import beryl
 import collab_document/auth
 import collab_document/document_store
+import ewe.{type Body, type Connection}
 import example_helper/static
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
-import mist.{type Connection, type ResponseData}
 
 /// Tenant the demo will issue tokens for. In a real app this comes from
 /// a session, IdP claim, or other auth context.
@@ -23,7 +23,7 @@ pub type Context {
 pub fn handle_request(
   http_request: Request(Connection),
   context: Context,
-) -> Response(ResponseData) {
+) -> Response(Body) {
   use <- static.serve_static(
     http_request,
     under: context.base_path <> "/static",
@@ -36,7 +36,7 @@ pub fn handle_request(
   }
 }
 
-fn index_page(context: Context) -> Response(ResponseData) {
+fn index_page(context: Context) -> Response(Body) {
   let token = auth.sign_tenant(demo_tenant, context.secret)
   let base = context.base_path
   let html = "<!DOCTYPE html>

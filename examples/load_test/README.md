@@ -4,7 +4,7 @@
 
 This headless application is the target for the repository's Phoenix V2
 [k6 load suite](../../load/README.md). It exposes the same channel contract
-through Mist and Ewe so transport runs are comparable.
+through Ewe and Mist so transport runs are comparable.
 
 ## Prerequisites
 
@@ -15,19 +15,21 @@ for the pinned k6 commands in the load guide.
 
 ## Run from source
 
-From the repository root, choose one transport:
+From the repository root, start Ewe or select Mist for a comparison:
 
 ```sh
-just load-server-mist
 just load-server-ewe
+# Or:
+just load-server-mist
 ```
 
 The equivalent direct commands are:
 
 ```sh
 cd examples/load_test
-gleam run -m load_test_mist
-gleam run -m load_test_ewe
+gleam run
+# Or:
+SERVER=mist gleam run
 ```
 
 Both servers bind to `127.0.0.1:8000` by default. They provide:
@@ -69,7 +71,7 @@ rate is non-positive, the limit is disabled regardless of its burst value.
 |---|---:|---|
 | `BIND_ADDRESS` | `127.0.0.1` | Listener interface |
 | `PORT` | `8000` | Listener TCP port |
-| `SERVER` | Mist | `ewe` selects Ewe in the shipment entry point; every other value selects Mist |
+| `SERVER` | `ewe` | Leave unset or set to `ewe` for Ewe. Use `mist` for Mist. Other explicitly set values also select Mist. |
 | `BENCH_CALLBACK_ELAPSED_US` | `0` | Minimum elapsed time added to each message callback, in microseconds |
 | `BERYL_HEARTBEAT_TIMEOUT_MS` | `60000` | Server staleness/eviction window, in ms |
 | `BERYL_MAX_CONNECTIONS_PER_IP` | `0` | Concurrent connections per real peer IP; `<= 0` is unlimited |
@@ -149,10 +151,9 @@ Build from the repository root because the example uses workspace path
 dependencies:
 
 ```sh
-just load-server-docker mist beryl-load-test:mist
-just load-server-docker ewe beryl-load-test:ewe
+just load-server-docker
 
-docker run --rm -p 8000:8000 beryl-load-test:mist
+docker run --rm -p 8000:8000 beryl-load-test
 curl --fail http://127.0.0.1:8000/health
 ```
 
@@ -161,29 +162,29 @@ To build and run the shipment without Docker:
 ```sh
 cd examples/load_test
 gleam export erlang-shipment
-SERVER=ewe BIND_ADDRESS=127.0.0.1 PORT=8000 \
+BIND_ADDRESS=127.0.0.1 PORT=8000 \
   ./build/erlang-shipment/entrypoint.sh run
 ```
 
 `load-server-docker` passes `SERVER` as a build argument. The Dockerfile
-defaults `SERVER=mist`, rejects build values other than `mist` or `ewe`,
+defaults to `SERVER=ewe`, rejects build values other than `ewe` or `mist`,
 exports a production Erlang shipment, and copies that shipment into the final
 image. The final image sets `BIND_ADDRESS=0.0.0.0`, `PORT=8000`, and `SERVER`
-to the build value. Runtime `-e` values may override them; `SERVER=ewe`
-selects Ewe and every other runtime value selects Mist:
+to the build value. To run Mist with the same image, override `SERVER` at
+startup:
 
 ```sh
 docker run --rm -p 9000:9000 \
-  -e SERVER=ewe -e BIND_ADDRESS=0.0.0.0 -e PORT=9000 \
+  -e SERVER=mist -e BIND_ADDRESS=0.0.0.0 -e PORT=9000 \
   -e BERYL_TELEMETRY=true -e BERYL_MAX_CONNECTIONS=10000 \
-  beryl-load-test:mist
+  beryl-load-test
 ```
 
 The generated `entrypoint.sh run` starts `load_test` with `erl -noshell`;
 `shell` starts an Erlang shell.
 
 The two stages use `erlang:27.2.1-alpine`. `GLEAM_VERSION` is a build argument
-with default `v1.16.0`; the build downloads the matching musl archive for
+with default `v1.19.2`; the build downloads the matching musl archive for
 `aarch64` or `x86_64`. For reproducible benchmark records, retain the image
 digest and built image ID as well as these version values: the base image is
 tag-pinned, not digest-pinned, and the downloaded Gleam archive is not checked

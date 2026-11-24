@@ -33,7 +33,7 @@ ephemeral room events.
 ## Capabilities and Constraints
 
 - The browser uses vanilla JavaScript, CSS, and the Phoenix JavaScript client.
-- The server uses beryl's app-side dispatch with the Mist transport.
+- The server uses beryl's app-side dispatch with the Ewe transport.
 - The example has no frontend build step and should remain dependency-light.
 - Realtime events are ephemeral; the demo does not persist room history.
 

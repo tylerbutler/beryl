@@ -2,16 +2,16 @@ import beryl
 import beryl/channel
 import beryl/transport/server
 import beryl/wire
-import beryl_mist as mist_transport
+import beryl_ewe
 import collab_document/app as document_app
 import collab_document/auth
 import collab_document/document_store
 import collab_document/router
+import ewe
 import example_helper/static
 import gleam/erlang/process
 import gleam/io
 import gleam/otp/static_supervisor
-import mist
 
 pub fn main() -> Nil {
   let assert Ok(static_directory) = static.priv_static("collab_document")
@@ -40,16 +40,17 @@ pub fn main() -> Nil {
 
   let assert Ok(_) =
     fn(http_request) {
-      mist_transport.upgrade(
+      use <- beryl_ewe.upgrade(
         http_request,
         channels,
         server.default_config("/socket/websocket"),
-        fn() { router.handle_request(http_request, context_router) },
       )
+      router.handle_request(http_request, context_router)
     }
-    |> mist.new
-    |> mist.port(8002)
-    |> mist.start
+    |> ewe.new
+    |> ewe.listening(on: 8002)
+    |> ewe.bind(to: "localhost")
+    |> ewe.start
 
   process.sleep_forever()
 }

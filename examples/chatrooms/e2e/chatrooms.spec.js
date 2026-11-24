@@ -385,6 +385,16 @@ test.describe("Chat Rooms Demo", () => {
   });
 
   test.describe("Authentication", () => {
+    test("plain HTTP on the socket path checks the token before the handshake", async ({
+      request,
+    }) => {
+      const denied = await request.get("/socket/websocket");
+      expect(denied.status()).toBe(403);
+
+      const noHandshake = await request.get("/socket/websocket?token=beryl-demo");
+      expect(noHandshake.status()).toBe(400);
+    });
+
     test("WebSocket connects with valid token", async ({ page }) => {
       page.on("dialog", (dialog) => dialog.accept("AuthUser"));
 

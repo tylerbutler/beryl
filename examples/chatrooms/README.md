@@ -35,7 +35,7 @@ This demo is designed to complement the [cursors demo](../cursors/README.md) by 
 | Feature | Module | Usage |
 |---|---|---|
 | **Groups** | `beryl/group` | Rooms organized in "public" group |
-| **on_connect auth** | `beryl_mist` | Token query param validated before WS upgrade |
+| **on_connect auth** | `beryl_ewe` | The callback checks the query token before the WebSocket upgrade |
 | **Join rejection** | `beryl/channel` | Room capacity check rejects when full |
 | **Replies** | `beryl/channel` | Message delivery confirmed on the client's ref |
 | **Broadcasts** | `beryl/channel` | System join/leave messages broadcast to room |
@@ -54,8 +54,8 @@ This demo is designed to complement the [cursors demo](../cursors/README.md) by 
 Browser (vanilla JS + Phoenix client CDN)
   ↕ WebSocket (Phoenix wire protocol, token auth)
 Gleam/BEAM server (port 8001)
-  ├── Mist HTTP routing (static files, /api/rooms)
-  ├── Mist WebSocket transport (on_connect auth)
+  ├── Ewe HTTP routing (static files, /api/rooms)
+  ├── Ewe WebSocket transport (on_connect auth)
   ├── beryl app-side dispatch
   │   ├── lobby (persistent room-directory invalidation channel)
   │   └── room:* (replaceable chat-room channels)
@@ -67,7 +67,7 @@ Gleam/BEAM server (port 8001)
 
 ```bash
 npm install           # First time only
-npx playwright test   # 43 e2e tests
+npx playwright test
 ```
 
 ## API
@@ -76,6 +76,9 @@ npx playwright test   # 43 e2e tests
 - `GET /api/rooms` — JSON list of rooms with user counts
 - `GET /static/*` — Static assets (CSS, JS)
 - `WS /socket/websocket?token=beryl-demo` — WebSocket endpoint
+
+The server reserves `/socket/websocket` for upgrades. A plain `GET` there
+returns 403 without the demo token, or 400 with the token but no handshake.
 
 ## Channel events
 
@@ -104,7 +107,7 @@ loads the current counts from `GET /api/rooms`.
 `src/chatroom.gleam:main` starts the Erlang package named `chatroom`.
 `src/chatroom/app.gleam:handlers` supplies lobby and room channels;
 `src/chatroom/router.gleam:handle_request` supplies HTTP routing.
-`gleam.toml` declares path dependencies on beryl, its Mist transport, and
+`gleam.toml` declares path dependencies on beryl, its Ewe transport, and
 the shared example helpers.
 
 ## Invariants

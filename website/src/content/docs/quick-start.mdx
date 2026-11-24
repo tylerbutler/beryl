@@ -38,7 +38,7 @@ a complete walkthrough, use the [Build a live poll tutorial](/tutorial/).
 
 - Gleam >= 1.18 project targeting **Erlang** (`gleam new my_app`)
 - The Git dependencies from the [Installation guide](/installation/) added to
-  `gleam.toml` (`beryl` and `beryl_mist`)
+  `gleam.toml` (`beryl` and `beryl_ewe`), plus the `ewe` HTTP server
 
 ## 1. Write a channel
 
@@ -128,10 +128,10 @@ Each action applies to the current channel's topic. beryl applies actions in lis
 - **`channel.stay(state)`:** Stay joined with no actions. Pending reply references still consume capacity.
 </Aside>
 
-## 2. Start beryl and Mist
+## 2. Start beryl and Ewe
 
 Give the handlers to beryl. `channel.child_spec` returns a `beryl.Sockets`
-handle for the Mist WebSocket server. It also returns a child specification
+handle for the Ewe WebSocket server. It also returns a child specification
 that tells the OTP supervisor how to start and restart beryl.
 
 ```gleam
@@ -140,13 +140,12 @@ import beryl
 import beryl/transport/server
 import beryl/wire
 import beryl/channel
-import beryl_mist as mist_transport
-import gleam/bytes_tree
+import beryl_ewe
+import ewe
 import gleam/erlang/process
 import gleam/http/request
 import gleam/http/response
 import gleam/otp/static_supervisor
-import mist
 import my_app/room_channel
 
 pub fn handlers() -> List(channel.Handler) {
@@ -167,31 +166,24 @@ pub fn main() -> Nil {
     |> static_supervisor.start()
 
   let assert Ok(_) =
-    fn(http_request) {
-      mist_transport.upgrade(
-        http_request,
-        sockets,
-        server.default_config("/socket/websocket"),
-        fn() { handle_http(http_request) },
-      )
-    }
-    |> mist.new
-    |> mist.port(8000)
-    |> mist.start
+    beryl_ewe.handler(sockets, server.default_config("/socket/websocket"), handle_http)
+    |> ewe.new
+    |> ewe.listening(on: 8000)
+    |> ewe.start
 
   process.sleep_forever()
 }
 
 fn handle_http(
-  http_request: request.Request(mist.Connection),
-) -> response.Response(mist.ResponseData) {
+  http_request: request.Request(ewe.Connection),
+) -> response.Response(ewe.Body) {
   case request.path_segments(http_request) {
     [] ->
       response.new(200)
-      |> response.set_body(mist.Bytes(bytes_tree.from_string("Hello!")))
+      |> response.set_body(ewe.Text("Hello!"))
     _ ->
       response.new(404)
-      |> response.set_body(mist.Bytes(bytes_tree.new()))
+      |> response.set_body(ewe.Empty)
   }
 }
 ```

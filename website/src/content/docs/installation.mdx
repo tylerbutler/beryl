@@ -25,11 +25,12 @@ gleam deps download
 `gleam add` installs only Hex packages. Add these entries by hand.
 
 `beryl` includes the core runtime and the recommended `beryl/channel` API.
-`beryl_mist` provides the [Mist](https://hex.pm/packages/mist) WebSocket
-transport. For [Ewe](https://hex.pm/packages/ewe), use
-`path = "packages/beryl_ewe"`. Use the same `git` and `ref` values for all
-packages. The [WebSocket transport guide](/guides/websocket/) shows setup for
-both servers.
+The quick start and browser examples use [Ewe](https://hex.pm/packages/ewe)
+with `beryl_ewe`. If your app already serves HTTP with Mist, keep your `mist`
+dependency instead of adding `ewe`. Use `beryl_mist` in place of `beryl_ewe`,
+with `path = "packages/beryl_mist"`.
+Use the same `git` and `ref` values as `beryl`. See the
+[Mist setup](/guides/websocket/#mist) for a complete listener.
 
 beryl supports only the **Erlang (BEAM)** target. It does not support the
 JavaScript target.
@@ -41,8 +42,8 @@ A typical application needs beryl and one WebSocket transport.
 | Package | Add it when |
 |---------|-------------|
 | `beryl` | Always — the runtime, raw dispatch API, `beryl/channel`, wire codec, presence, PubSub, and groups |
-| `beryl_mist` | You serve HTTP with [Mist](https://hex.pm/packages/mist) |
 | `beryl_ewe` | You serve HTTP with [Ewe](https://hex.pm/packages/ewe) |
+| `beryl_mist` | You serve HTTP with [Mist](https://hex.pm/packages/mist) |
 
 Import `beryl/channel` for the recommended channel model, or `beryl/socket`
 for raw dispatch. See [Choose an API](/choosing-an-api/) for the tradeoff.

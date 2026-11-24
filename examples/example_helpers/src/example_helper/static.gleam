@@ -7,17 +7,16 @@
 //// this module extracts it so each example's router shrinks to its
 //// app-specific routes.
 
-import gleam/bytes_tree
+import ewe.{type Body, type Connection}
 import gleam/erlang/application
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/list
-import gleam/option
+import gleam/option.{None}
 import gleam/result
 import gleam/string
 import gleam/uri
-import mist.{type Connection, type ResponseData}
 
 /// Serve files from `directory` under the URL prefix `prefix`. Falls through
 /// to `handler` for non-GET requests and for paths that don't match.
@@ -25,8 +24,8 @@ pub fn serve_static(
   http_request: Request(Connection),
   under prefix: String,
   from directory: String,
-  next handler: fn() -> Response(ResponseData),
-) -> Response(ResponseData) {
+  next handler: fn() -> Response(Body),
+) -> Response(Body) {
   let path = drop_leading_slashes(http_request.path)
   let prefix = drop_leading_slashes(prefix)
 
@@ -50,7 +49,14 @@ pub fn serve_static(
             "" -> not_found()
             _ -> {
               let file_path = directory <> "/" <> relative
-              case mist.send_file(file_path, offset: 0, limit: option.None) {
+              case
+                ewe.file(
+                  http_request.body,
+                  file_path,
+                  offset: None,
+                  limit: None,
+                )
+              {
                 Ok(body) ->
                   response.new(200)
                   |> response.set_header(
@@ -58,12 +64,14 @@ pub fn serve_static(
                     mime_type_for(file_path),
                   )
                   |> response.set_body(body)
-                Error(mist.UnknownFileError) ->
+                Error(ewe.UnknownError)
+                | Error(ewe.InvalidOffset)
+                | Error(ewe.InvalidLimit) ->
                   response.new(500)
-                  |> response.set_body(mist.Bytes(bytes_tree.new()))
-                Error(mist.IsDir)
-                | Error(mist.NoAccess)
-                | Error(mist.NoEntry) -> not_found()
+                  |> response.set_body(ewe.Empty)
+                Error(ewe.IsDirectory)
+                | Error(ewe.AccessDenied)
+                | Error(ewe.NotFound) -> not_found()
               }
             }
           }
@@ -82,23 +90,23 @@ pub fn serve_static(
 }
 
 /// Build a 200 HTML response from a string body.
-pub fn html_response(html: String) -> Response(ResponseData) {
+pub fn html_response(html: String) -> Response(Body) {
   response.new(200)
   |> response.set_header("content-type", "text/html; charset=utf-8")
-  |> response.set_body(mist.Bytes(bytes_tree.from_string(html)))
+  |> response.set_body(ewe.Text(html))
 }
 
 /// Build a 200 JSON response from an already-serialized JSON string body.
-pub fn json_response(json: String) -> Response(ResponseData) {
+pub fn json_response(json: String) -> Response(Body) {
   response.new(200)
   |> response.set_header("content-type", "application/json; charset=utf-8")
-  |> response.set_body(mist.Bytes(bytes_tree.from_string(json)))
+  |> response.set_body(ewe.Text(json))
 }
 
 /// Build a plain `404 Not found` response.
-pub fn not_found() -> Response(ResponseData) {
+pub fn not_found() -> Response(Body) {
   response.new(404)
-  |> response.set_body(mist.Bytes(bytes_tree.from_string("Not found")))
+  |> response.set_body(ewe.Text("Not found"))
 }
 
 /// Strip consecutive leading slashes from a path.

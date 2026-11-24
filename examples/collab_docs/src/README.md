@@ -19,7 +19,7 @@ The child channel requires a tenant-signed token and bounds state updates.
 ## Side effects
 
 - `collab_document.gleam:main` initializes assets, the document-store actor,
-  and supervision, starts Mist on port 8002, and sleeps indefinitely.
+  and supervision, starts Ewe on port 8002, and sleeps indefinitely.
 - `collab_docs_ffi.erl:timestamp_ms` reads time; `random_id` allocates a
   positive monotonic unique integer.
 

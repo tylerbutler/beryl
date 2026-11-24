@@ -12,9 +12,8 @@ message arrives.
 
 **Checks:**
 
-1. **Check that the HTTP server is listening.** With Mist, confirm that
-   `mist.start` returned `Ok(_)`. With Ewe, confirm that `ewe.start` returned
-   `Ok(_)`. Handle the `Error` case.
+1. **Check that the HTTP server is listening.** Confirm that `ewe.start`
+   (or `mist.start` with Mist) returned `Ok(_)`. Handle the `Error` case.
 
 2. **Path mismatch.** The Phoenix JS client appends `/websocket` to the socket path you pass:
    ```js
@@ -58,11 +57,7 @@ state. It does not receive `phx_reply`.
    from `beryl.child_spec` or `channel.child_spec` to the selected transport
    after its child specification starts:
    ```gleam
-   // Mist
-   use <- mist_transport.upgrade(request, channels, config)
-
-   // Ewe
-   ewe_transport.handler(channels, config, http_fallback)
+   beryl_ewe.handler(channels, config, http_fallback)
    ```
 
 3. **Check for a `Join` crash.** A crash during `Join` rejects the join but

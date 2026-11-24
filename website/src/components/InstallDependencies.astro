@@ -16,7 +16,8 @@ if (!ref) {
 
 const dependencies = `[dependencies]
 beryl = { git = "${repository}", ref = "${ref}", path = "packages/beryl" }
-beryl_mist = { git = "${repository}", ref = "${ref}", path = "packages/beryl_mist" }`;
+beryl_ewe = { git = "${repository}", ref = "${ref}", path = "packages/beryl_ewe" }
+ewe = ">= 9.0.0 and < 10.0.0"`;
 ---
 
 <Code code={dependencies} lang="toml" />

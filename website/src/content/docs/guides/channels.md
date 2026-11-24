@@ -94,13 +94,12 @@ import beryl
 import beryl/transport/server
 import beryl/wire
 import beryl/channel
-import beryl_mist as mist_transport
-import gleam/bytes_tree
+import beryl_ewe
+import ewe
 import gleam/erlang/process
 import gleam/http/request
 import gleam/http/response
 import gleam/otp/static_supervisor
-import mist
 import my_app/room_channel
 
 pub fn handlers() -> List(channel.Handler) {
@@ -123,30 +122,30 @@ pub fn main() -> Nil {
   // `sockets` is an ordinary core handle: hand it to a transport, to
   // `beryl.broadcast`, and to `beryl.stop`.
   let assert Ok(_) =
-    mist_transport.handler(
+    beryl_ewe.handler(
       sockets,
       server.default_config("/socket/websocket"),
       handle_http,
     )
-    |> mist.new
-    |> mist.port(8000)
-    |> mist.start
+    |> ewe.new
+    |> ewe.listening(on: 8000)
+    |> ewe.start
 
   process.sleep_forever()
 }
 
 fn handle_http(
-  _req: request.Request(mist.Connection),
-) -> response.Response(mist.ResponseData) {
+  _req: request.Request(ewe.Connection),
+) -> response.Response(ewe.Body) {
   response.new(404)
-  |> response.set_body(mist.Bytes(bytes_tree.new()))
+  |> response.set_body(ewe.Empty)
 }
 ```
 
-`handle_http` is the HTTP fallback. `mist_transport.handler` routes WebSocket
+`handle_http` is the HTTP fallback. `beryl_ewe.handler` routes WebSocket
 upgrades on the configured path to beryl. It sends all other requests to
 `handle_http`. The
-[Quick Start](/quick-start/#2-start-beryl-and-mist)
+[Quick start](/quick-start/#2-start-beryl-and-ewe)
 shows how to serve pages from this function.
 
 Both APIs use the same runtime, wire codec, presence, abuse controls, and

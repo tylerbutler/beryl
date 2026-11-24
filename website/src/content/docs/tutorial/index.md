@@ -51,7 +51,7 @@ configuration and starts the shared modules:
   poll commands.
 - `store.gleam` keeps poll state in a Gleam OTP actor.
 - `timer.gleam` runs delayed callbacks from its own actor.
-- `server.gleam` starts the beryl child specification and the Mist transport,
+- `server.gleam` starts the beryl child specification and the Ewe transport,
   serves the browser client, and can serve `/healthz`.
 - `test/live_poll_test.gleam` tests the poll types and the protocol decoder.
 

@@ -8,7 +8,7 @@ test("installation pins core and transport to the same minor release", async ({ 
 	expect(refs).toHaveLength(2);
 	expect(refs[0]).toBe(refs[1]);
 	expect(dependencies).toContain('path = "packages/beryl"');
-	expect(dependencies).toContain('path = "packages/beryl_mist"');
+	expect(dependencies).toContain('path = "packages/beryl_ewe"');
 
 	const llms = await request.get("/llms-full.txt");
 	expect(llms.ok()).toBe(true);

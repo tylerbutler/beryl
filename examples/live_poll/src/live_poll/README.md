@@ -37,7 +37,7 @@ a configuration with explicit limits.
   synchronous calls with 1,000 ms timeouts.
 - `timer.gleam:after` schedules actions. Raw and composed handlers notify
   senders and broadcast poll updates.
-- `server.gleam:run` starts supervision and Mist, prints the URL, and sleeps
+- `server.gleam:run` starts supervision and Ewe, prints the URL, and sleeps
   indefinitely. `step_05.gleam:main` enables health and guide behavior and limits.
 
 ## Verification

@@ -10,10 +10,11 @@
 #
 # Running `docker build .` from inside examples/showcase/ will fail to
 # resolve the local path dependencies.
-FROM ghcr.io/gleam-lang/gleam:v1.16.0-erlang-alpine AS build
+FROM erlang:28-alpine AS build
+COPY --from=ghcr.io/gleam-lang/gleam:v1.19.2-erlang-alpine /bin/gleam /usr/local/bin/gleam
 
-# git is required by `gleam deps download` for resolving dependencies.
-RUN apk add --no-cache git
+# Use the same OTP as the runtime stage to compile Erlang dependencies.
+RUN apk add --no-cache git rebar3
 
 WORKDIR /src
 
@@ -21,7 +22,7 @@ WORKDIR /src
 # are present; fail fast with a clear message if the build context is wrong
 # (e.g. someone ran `docker build .` from examples/showcase/).
 COPY . .
-RUN test -f /src/packages/beryl/gleam.toml && test -f /src/packages/beryl_mist/gleam.toml || ( \
+RUN test -f /src/packages/beryl/gleam.toml && test -f /src/packages/beryl_ewe/gleam.toml || ( \
   echo "ERROR: build context does not contain the beryl repository root."; \
   echo "Run from the repo root: docker build -f examples/showcase/Dockerfile ."; \
   exit 1 \
@@ -32,8 +33,6 @@ RUN gleam deps download \
  && gleam export erlang-shipment
 
 # Runtime stage: minimal Erlang image running the shipment.
-# OTP must match the build image (Gleam v1.16.0-erlang-alpine ships OTP 28);
-# mismatched OTP between build and runtime corrupts .beam atom tables.
 FROM erlang:28-alpine AS runtime
 
 RUN apk add --no-cache libstdc++ ncurses-libs openssl ca-certificates

@@ -1,10 +1,9 @@
+import ewe.{type Body, type Connection}
 import example_helper/static
-import gleam/bytes_tree
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import lustre_presence/auth
-import mist.{type Connection, type ResponseData}
 
 pub type Context {
   Context(secret: BitArray, static_directory: String)
@@ -13,7 +12,7 @@ pub type Context {
 pub fn handle_request(
   http_request: Request(Connection),
   context: Context,
-) -> Response(ResponseData) {
+) -> Response(Body) {
   use <- static.serve_static(
     http_request,
     under: "/static",
@@ -31,14 +30,14 @@ pub fn handle_request(
 fn dashboard_or_login(
   http_request: Request(Connection),
   context: Context,
-) -> Response(ResponseData) {
+) -> Response(Body) {
   case auth.authenticate_request(http_request, context.secret) {
     Ok(user) -> dashboard(user)
     Error(Nil) -> login_page()
   }
 }
 
-fn login(user_id: String, context: Context) -> Response(ResponseData) {
+fn login(user_id: String, context: Context) -> Response(Body) {
   case auth.find_user(user_id) {
     Error(Nil) -> static.not_found()
     Ok(user) ->
@@ -50,7 +49,7 @@ fn login(user_id: String, context: Context) -> Response(ResponseData) {
   }
 }
 
-fn logout() -> Response(ResponseData) {
+fn logout() -> Response(Body) {
   redirect("/")
   |> response.set_header(
     "set-cookie",
@@ -58,7 +57,7 @@ fn logout() -> Response(ResponseData) {
   )
 }
 
-fn login_page() -> Response(ResponseData) {
+fn login_page() -> Response(Body) {
   page(
     "Sign in",
     "<main><h1>Sign in</h1><p>Select a demo user.</p>"
@@ -67,7 +66,7 @@ fn login_page() -> Response(ResponseData) {
   )
 }
 
-fn dashboard(user: auth.User) -> Response(ResponseData) {
+fn dashboard(user: auth.User) -> Response(Body) {
   page(
     "Online users",
     "<header><p>Signed in as "
@@ -78,7 +77,7 @@ fn dashboard(user: auth.User) -> Response(ResponseData) {
   )
 }
 
-fn page(title: String, body: String) -> Response(ResponseData) {
+fn page(title: String, body: String) -> Response(Body) {
   static.html_response(
     "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
     <> "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -90,8 +89,8 @@ fn page(title: String, body: String) -> Response(ResponseData) {
   )
 }
 
-fn redirect(location: String) -> Response(ResponseData) {
+fn redirect(location: String) -> Response(Body) {
   response.new(303)
   |> response.set_header("location", location)
-  |> response.set_body(mist.Bytes(bytes_tree.new()))
+  |> response.set_body(ewe.Empty)
 }

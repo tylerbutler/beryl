@@ -1,11 +1,10 @@
 import beryl
+import ewe.{type Body, type Connection}
 import example_helper/session_presence
 import example_helper/static
-import gleam/bytes_tree
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/json
-import mist.{type Connection, type ResponseData}
 
 pub type Context {
   Context(
@@ -19,7 +18,7 @@ pub type Context {
 pub fn handle_request(
   http_request: Request(Connection),
   context: Context,
-) -> Response(ResponseData) {
+) -> Response(Body) {
   case request.path_segments(http_request) {
     ["healthz"] -> healthz()
     _ -> {
@@ -38,20 +37,20 @@ pub fn handle_request(
   }
 }
 
-fn user_count(context: Context) -> Response(ResponseData) {
+fn user_count(context: Context) -> Response(Body) {
   session_presence.count(context.presence, "cursor:lobby")
   |> json.int
   |> json.to_string
   |> static.json_response
 }
 
-fn healthz() -> Response(ResponseData) {
+fn healthz() -> Response(Body) {
   response.new(200)
   |> response.set_header("content-type", "text/plain; charset=utf-8")
-  |> response.set_body(mist.Bytes(bytes_tree.from_string("ok")))
+  |> response.set_body(ewe.Text("ok"))
 }
 
-fn index_page(context: Context) -> Response(ResponseData) {
+fn index_page(context: Context) -> Response(Body) {
   let base = context.base_path
   let html = "<!DOCTYPE html>
 <html lang=\"en\">

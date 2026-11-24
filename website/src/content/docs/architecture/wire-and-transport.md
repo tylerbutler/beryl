@@ -135,15 +135,14 @@ and peer-IP functions:
    `transport.runtime_pid` and monitors that PID. It then calls
    `transport.admit_socket` with the send functions, closer, codec, and
    `ConnectSeed`. A restart or registration failure closes the connection.
-3. **Route text frames:** The connection process decodes `mist.Text` frames
+3. **Route text frames:** The connection process decodes text frames
    with `transport.active_codec`. It routes them with
    `transport.route_decoded`.
 4. **Route binary frames:** If the codec provides `decode_binary`, the
-   connection process decodes `mist.Binary` frames. It routes them with
+   connection process decodes binary frames. It routes them with
    `transport.route_decoded_binary`. This keeps normal `Join` and `Message`
    behavior and binary telemetry classification. Without a binary decoder,
    `transport.route_binary` sends the raw `BitArray` to the app as `Binary`.
-   Ewe uses the same contract.
 5. **Notify on close:** Each server adapter calls the shared close path. This
    path releases the connection permit and calls
    `transport.socket_disconnected`.

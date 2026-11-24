@@ -23,7 +23,8 @@ to `gleam.toml`:
 ```toml
 [dependencies]
 beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
-beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
+beryl_ewe = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_ewe" }
+ewe = ">= 9.0.0 and < 10.0.0"
 ```
 
 ```sh
@@ -31,9 +32,9 @@ gleam deps download
 ```
 
 `beryl` includes raw dispatch and the recommended `beryl/channel` composition
-layer. `beryl_mist` provides the [Mist](https://hex.pm/packages/mist)
-WebSocket transport. `beryl_ewe` provides an
-[Ewe](https://hex.pm/packages/ewe) transport with the same API.
+layer. The examples serve HTTP and WebSockets with [Ewe](https://hex.pm/packages/ewe)
+and `beryl_ewe`. If your application uses Mist, use
+[`beryl_mist` instead](https://beryl.tylerbutler.com/guides/websocket/#mist).
 
 The `beryl`, `beryl_mist`, and `beryl_ewe` packages support the
 **Erlang/BEAM** runtime. The separate `beryl_protocol` package supports Erlang
@@ -49,11 +50,12 @@ import beryl
 import beryl/transport/server
 import beryl/wire
 import beryl/channel
-import beryl_mist as mist_transport
+import beryl_ewe
+import ewe
 import gleam/erlang/process
+import gleam/http/response
 import gleam/json
 import gleam/otp/static_supervisor
-import mist
 
 type State {
   State(room: String)
@@ -91,23 +93,20 @@ pub fn main() {
     |> static_supervisor.start()
 
   let assert Ok(_) =
-    mist_transport.handler(channels, server.default_config("/socket/websocket"), fn(_req) {
-      // your HTTP handler here
-      panic as "not implemented"
+    beryl_ewe.handler(channels, server.default_config("/socket/websocket"), fn(_req) {
+      response.new(404) |> response.set_body(ewe.Empty)
     })
-    |> mist.new
-    |> mist.port(8000)
-    |> mist.start
+    |> ewe.new
+    |> ewe.listening(on: 8000)
+    |> ewe.start
 
   process.sleep_forever()
 }
 ```
 
-`mist_transport.handler` combines the WebSocket upgrade and your HTTP handler
-in one Mist request handler. It sends WebSocket upgrades on the configured
-path to beryl. It sends all other requests to the HTTP fallback. To control
-the upgrade decision, use `mist_transport.upgrade` and
-`beryl/transport/server.is_websocket_request`.
+`beryl_ewe.handler` serves WebSockets and HTTP on one Ewe listener. It sends
+WebSocket requests on `/socket/websocket` to beryl. Other requests go to the
+HTTP fallback, which returns 404 here.
 
 For a full example with Phoenix JS client code, see the
 **[Quick Start guide](https://beryl.tylerbutler.com/quick-start/)**.
@@ -132,14 +131,14 @@ flowchart TD
     beryl["beryl\nserver runtime"]
     aquamarine["aquamarine\nclient runtime"]
     gluegun["gluegun\nclient WebSocket transport"]
-    mist["mist\nserver WebSocket transport"]
+    transport["beryl_ewe or beryl_mist\nserver WebSocket transport"]
 
     fixtures -. "test fixtures" .-> roost
     fixtures -. "test fixtures" .-> beryl
     fixtures -. "test fixtures" .-> aquamarine
 
     roost --> aquamarine
-    mist --> beryl
+    transport --> beryl
     gluegun --> aquamarine
 
     aquamarine <-- "Phoenix channel wire" --> beryl
@@ -156,7 +155,7 @@ flowchart TD
 ## Interface
 
 `beryl.child_spec` and `beryl/channel.child_spec` construct supervised
-application specifications. Mist and Ewe expose `upgrade` and `handler`;
+application specifications. The Ewe and Mist adapters expose `upgrade` and `handler`;
 both use `beryl/transport/server.TransportConfig`. The portable
 `beryl_protocol.step` returns state and ordered actions for a host to execute.
 The [package blueprint](./packages/README.md) links each interface to its source.
@@ -165,7 +164,7 @@ The [package blueprint](./packages/README.md) links each interface to its source
 
 | Directory | Contract |
 |---|---|
-| [Packages](./packages/README.md) | Portable protocol, BEAM runtime, and Mist/Ewe adapters. |
+| [Packages](./packages/README.md) | Portable protocol, BEAM runtime, and Ewe/Mist adapters. |
 | [Examples](./examples/README.md) | Runnable servers, browser clients, tutorial checkpoints, and a Durable Object host. |
 | [Website](./website/README.md) | Astro/Starlight site, interactive demos, and documentation generators. |
 | [Scripts](./scripts/README.md) | Dependency preparation, portable dependency checks, and Erlang FFI analysis. |
@@ -234,7 +233,7 @@ and benchmark checks. `just ci` runs the main CI checks (`justfile:protocol-test
 - **PubSub:** Publish and subscribe across Erlang nodes with `pg`.
 - **Typed server messages:** Send a message to a socket through
   `Sender(msg)`. `update` receives it as `Info(msg)` without a cast.
-- **WebSocket transport:** Use Mist with the Phoenix wire protocol.
+- **WebSocket transport:** Use Ewe or Mist with the Phoenix wire protocol.
 - **Connect hook:** Use socket-level `on_connect` authentication, similar to
   Phoenix `UserSocket.connect/3`. The hook runs once for each socket and can
   reject the connection before a join. `ConnectSeed` passes request data to

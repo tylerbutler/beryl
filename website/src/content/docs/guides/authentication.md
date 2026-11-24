@@ -39,10 +39,9 @@ import gleam/http/request.{type Request}
 import gleam/list
 import gleam/result
 import gleam/string
-import mist
 
 /// Prefer the Authorization: Bearer header, fall back to a ?token= query param.
-fn extract_token(http_request: Request(mist.Connection)) -> Result(String, Nil) {
+fn extract_token(http_request: Request(body)) -> Result(String, Nil) {
   case bearer_token(request.get_header(http_request, "authorization")) {
     Ok(token) -> Ok(token)
     Error(_) ->
@@ -72,7 +71,6 @@ You can also use a JWT library for signed identity-provider tokens. The
 function must validate the signature and expiry and return typed `Claims`.
 
 ```gleam
-import beryl_mist as mist_transport
 import beryl/transport/server
 
 // let verify_token: fn(String) -> Result(Claims, Nil)

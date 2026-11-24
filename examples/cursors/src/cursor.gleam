@@ -1,10 +1,11 @@
 import beryl
 import beryl/transport/server
 import beryl/wire
-import beryl_mist as mist_transport
+import beryl_ewe
 import cursor/app as cursor_app
 import cursor/router
 import envoy
+import ewe
 import example_helper/session_presence
 import example_helper/static
 import gleam/erlang/process
@@ -12,7 +13,6 @@ import gleam/int
 import gleam/io
 import gleam/otp/static_supervisor
 import gleam/result
-import mist
 
 pub fn main() -> Nil {
   let assert Ok(static_directory) = static.priv_static("cursor")
@@ -62,17 +62,17 @@ pub fn main() -> Nil {
 
   let assert Ok(_) =
     fn(http_request) {
-      mist_transport.upgrade(
+      use <- beryl_ewe.upgrade(
         http_request,
         channels,
         server.default_config("/socket/websocket"),
-        fn() { router.handle_request(http_request, context_router) },
       )
+      router.handle_request(http_request, context_router)
     }
-    |> mist.new
-    |> mist.bind(interface)
-    |> mist.port(port)
-    |> mist.start
+    |> ewe.new
+    |> ewe.listening(on: port)
+    |> ewe.bind(to: interface)
+    |> ewe.start
 
   process.sleep_forever()
 }

@@ -17,7 +17,7 @@ The executable starts the raw-dispatch cursor app and HTTP/WebSocket server.
 
 ## Side effects
 
-`cursor.gleam:main` starts session presence, supervision, and Mist, then
+`cursor.gleam:main` starts session presence, supervision, and Ewe, then
 sleeps indefinitely.
 
 ## Verification

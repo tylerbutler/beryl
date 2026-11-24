@@ -59,7 +59,7 @@ a Phoenix channel crash skips `terminate/2`. See
 
 | Phoenix | beryl channel layer (`beryl/channel`) | beryl raw dispatch (`beryl`) |
 | --- | --- | --- |
-| `socket "/socket", UserSocket` in the Endpoint | `beryl_mist` / `beryl_ewe` mounted on your HTTP server | same |
+| `socket "/socket", UserSocket` in the Endpoint | `beryl_ewe` or `beryl_mist` mounted on your HTTP server | same |
 | `UserSocket.connect(params, socket)` | transport `on_connect`; request data reaches `join` as `context.seed` | `init(info)`; request data is in `info.seed` |
 | `channel "room:*", RoomChannel` routing table | the handler list passed to `channel.child_spec` | topic pattern match in `update`, with `beryl/topic` helpers |
 | One channel process per joined topic | one socket actor per connection and one worker process per joined topic, each with its own private state | one socket actor and one `model` per connection, covering all its topics |
@@ -361,6 +361,6 @@ message arrives as a typed `on_info` call. With raw dispatch, keep the
 - [Channels](/guides/channels/): build handlers with private state and callbacks
 - [Raw Dispatch](/guides/dispatch/): route socket events and order effects
 - [Choose an API](/choosing-an-api/): compare channels and raw dispatch
-- [WebSocket Transport](/guides/websocket/): connect beryl to Mist
+- [WebSocket transport](/guides/websocket/): connect beryl to Ewe or Mist
 - [Presence](/guides/presence/): track users and synchronize nodes
 - [PubSub](/guides/pubsub/): publish to subscribers through Erlang `pg`
