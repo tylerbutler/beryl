@@ -2,7 +2,7 @@
 
 ## Overview
 
-The executable wires the chat handlers, groups, presence, and Mist transport.
+The executable wires the chat handlers, groups, presence, and Ewe transport.
 
 ## Interface
 

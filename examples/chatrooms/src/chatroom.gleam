@@ -3,9 +3,10 @@ import beryl/channel
 import beryl/group
 import beryl/transport/server
 import beryl/wire
-import beryl_mist as mist_transport
+import beryl_ewe
 import chatroom/app as chat_app
 import chatroom/router
+import ewe
 import example_helper/broadcast_hub
 import example_helper/session_presence
 import example_helper/static
@@ -15,7 +16,6 @@ import gleam/io
 import gleam/list
 import gleam/otp/static_supervisor
 import gleam/result
-import mist
 
 pub fn main() -> Nil {
   let assert Ok(static_directory) = static.priv_static("chatroom")
@@ -77,19 +77,19 @@ pub fn main() -> Nil {
 
   let assert Ok(_) =
     fn(http_request) {
-      mist_transport.upgrade(http_request, channels, ws_config, fn() {
-        router.handle_request(http_request, context_router)
-      })
+      use <- beryl_ewe.upgrade(http_request, channels, ws_config)
+      router.handle_request(http_request, context_router)
     }
-    |> mist.new
-    |> mist.port(8001)
-    |> mist.start
+    |> ewe.new
+    |> ewe.listening(on: 8001)
+    |> ewe.bind(to: "localhost")
+    |> ewe.start
 
   process.sleep_forever()
 }
 
 fn get_query_param(
-  http_request: request.Request(mist.Connection),
+  http_request: request.Request(body),
   name: String,
 ) -> Result(String, Nil) {
   request.get_query(http_request)

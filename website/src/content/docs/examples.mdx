@@ -54,7 +54,7 @@ gleam run
 Browser (Phoenix JS clients across /cursors, /chat, /docs)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
-  ├── Mist HTTP — serves the landing page and each example UI
+  ├── Ewe HTTP — serves the landing page and each example UI
   ├── beryl/channel — handler table owning cursor:*, room:*, document:
   ├── per-channel state — private to each joined topic
   ├── session presence — shared across cursors and chat
@@ -85,7 +85,7 @@ gleam run
 | **Session presence (ETS)** | The example-local `session_presence` tracker stores connected users and their username + color metadata in ETS |
 | **`broadcast_from`** | Sends cursor moves to all *other* clients, excluding the sender |
 | **Rate limiting** | `beryl.with_message_rate` throttles high-frequency cursor events |
-| **WebSocket transport** | `mist_transport.upgrade` handles Phoenix-compatible WebSocket requests |
+| **WebSocket transport** | `beryl_ewe.upgrade` handles the socket path and passes other requests to the cursor router |
 | **Phoenix JS client** | Frontend uses the official `phoenix` package over the standard wire protocol |
 
 ### How it fits together
@@ -94,7 +94,7 @@ gleam run
 Browser (vanilla JS + Phoenix JS client)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
-  ├── Mist HTTP — serves HTML + static files
+  ├── Ewe HTTP — serves HTML + static files
   ├── beryl app dispatch — cursor:* topics
   ├── example session_presence — ETS-backed user tracking
   └── beryl pubsub — broadcast_from cursor positions
@@ -137,8 +137,8 @@ This example uses parts of the beryl API that the cursor example does not use:
 Browser (vanilla JS + Phoenix JS client, token auth)
   │  WebSocket (Phoenix wire protocol, ?token=beryl-demo)
 Server (Gleam)
-  ├── Mist HTTP — static files, /api/rooms
-  ├── Mist WebSocket transport — on_connect validates token
+  ├── Ewe HTTP — static files, /api/rooms
+  ├── Ewe WebSocket transport — on_connect validates token
   ├── beryl/channel — lobby + room:* handlers
   ├── beryl groups — "public" group → general, random, help
   └── example session_presence — ETS-backed online users + typing indicators
@@ -187,7 +187,7 @@ cd examples/collab_docs && gleam run
 Browser (vanilla JS + Phoenix JS client + lattice CRDT packages)
   │  WebSocket (Phoenix wire protocol)
 Server (Gleam)
-  ├── Mist HTTP — serves HTML + static files
+  ├── Ewe HTTP — serves HTML + static files
   ├── beryl/channel — document:* handler with tenant/document validation
   ├── document cache — merged state for late joiners
   └── beryl pubsub — sends CRDT updates to subscribers

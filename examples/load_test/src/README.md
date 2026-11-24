@@ -2,7 +2,8 @@
 
 ## Overview
 
-The Mist and Ewe executables host the same benchmark app and HTTP endpoints.
+`gleam run` starts Ewe by default. Set `SERVER=mist` to run the same
+benchmark app and HTTP endpoints on Mist.
 
 ## Interface
 

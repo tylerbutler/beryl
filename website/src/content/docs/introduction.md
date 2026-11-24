@@ -52,7 +52,7 @@ indicators. beryl provides:
 - **PubSub:** Broadcast events across Erlang nodes with built-in `pg` process
   groups.
 - **Groups:** Put topics in named groups for multi-topic broadcasts.
-- **WebSocket servers:** Connect through Mist or Ewe and choose how beryl
+- **WebSocket servers:** Connect through Ewe or Mist and choose how beryl
   encodes messages.
 
 ## Choose handlers or one update function
@@ -161,7 +161,7 @@ and leaves that happen at the same time on different Erlang nodes.
 
 The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`,
 `gleam_json`, `gleam_crypto`, `lattice_presence`, and `palabres`. A WebSocket
-transport such as `beryl_mist` adds `mist` and `gleam_http`. The core package
+transport such as `beryl_ewe` adds `ewe` and `gleam_http`. The core package
 includes `beryl/channel`. beryl does not require an external message broker or
 database.
 

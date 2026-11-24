@@ -1,6 +1,7 @@
 import beryl
 import beryl/error
 import beryl/group
+import ewe.{type Body, type Connection}
 import example_helper/session_presence
 import example_helper/static
 import gleam/http/request.{type Request}
@@ -10,7 +11,6 @@ import gleam/json
 import gleam/list
 import gleam/set
 import gleam/string
-import mist.{type Connection, type ResponseData}
 
 pub type Context {
   Context(
@@ -25,7 +25,7 @@ pub type Context {
 pub fn handle_request(
   http_request: Request(Connection),
   context: Context,
-) -> Response(ResponseData) {
+) -> Response(Body) {
   use <- static.serve_static(
     http_request,
     under: context.base_path <> "/static",
@@ -39,7 +39,7 @@ pub fn handle_request(
   }
 }
 
-fn rooms_api(context: Context) -> Response(ResponseData) {
+fn rooms_api(context: Context) -> Response(Body) {
   use topics <- with_public_topics(context)
   let rooms =
     topics
@@ -61,7 +61,7 @@ fn rooms_api(context: Context) -> Response(ResponseData) {
   static.json_response(body)
 }
 
-fn index_page(context: Context) -> Response(ResponseData) {
+fn index_page(context: Context) -> Response(Body) {
   // Build room list for initial render
   use topics <- with_public_topics(context)
   let rooms =
@@ -134,8 +134,8 @@ fn index_page(context: Context) -> Response(ResponseData) {
 
 fn with_public_topics(
   context: Context,
-  render: fn(set.Set(String)) -> Response(ResponseData),
-) -> Response(ResponseData) {
+  render: fn(set.Set(String)) -> Response(Body),
+) -> Response(Body) {
   case group.topics(context.groups, "public") {
     Ok(topics) -> render(topics)
     Error(group.GroupAlreadyExists(_)) | Error(group.GroupNotFound(_)) ->

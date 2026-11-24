@@ -14,18 +14,19 @@ dispatch with one `init`/`update` pair, or the `beryl/channel` handler layer.
 Both share the Phoenix-compatible wire protocol, topic matching, broadcasts,
 CRDT-backed presence, pg-based PubSub, and built-in abuse controls.
 
-To serve sockets over WebSockets, pair it with a transport package such as
-[`beryl_mist`](https://github.com/tylerbutler/beryl/tree/main/packages/beryl_mist).
+To serve sockets over WebSockets, the examples pair beryl with
+[`beryl_ewe`](https://github.com/tylerbutler/beryl/tree/main/packages/beryl_ewe).
 beryl packages are currently distributed from GitHub, not Hex:
 
 ```toml
 [dependencies]
 beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
-beryl_mist = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_mist" }
+beryl_ewe = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_ewe" }
+ewe = ">= 9.0.0 and < 10.0.0"
 ```
 
 Use the same git ref for beryl and your transport package. See the
-[installation guide](https://beryl.tylerbutler.com/installation/) for Ewe,
+[installation guide](https://beryl.tylerbutler.com/installation/) for Mist,
 API-choice, and release-tag guidance.
 
 beryl targets the **Erlang/BEAM** runtime only. It does not support the
@@ -92,7 +93,7 @@ on both targets, and `just beam-check` for Erlang FFI boundaries.
 
 The `beryl/transport` module is the public SPI for transport authors: socket
 lifecycle announcements, inbound routing, codec access, and per-connection
-rate limiting. `beryl_mist` is the reference implementation.
+rate limiting. See `beryl_ewe` and `beryl_mist` for working implementations.
 
 ## Licence
 

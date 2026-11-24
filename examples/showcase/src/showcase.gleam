@@ -16,7 +16,7 @@ import beryl/channel
 import beryl/group
 import beryl/transport/server
 import beryl/wire
-import beryl_mist as mist_transport
+import beryl_ewe
 import chatroom/app as chat_app
 import chatroom/router as chatroom_router
 import collab_document/app as document_app
@@ -25,6 +25,7 @@ import collab_document/document_store
 import collab_document/router as document_router
 import cursor/router as cursor_router
 import envoy
+import ewe
 import example_helper/broadcast_hub as hub
 import example_helper/session_presence
 import example_helper/static
@@ -34,7 +35,6 @@ import gleam/io
 import gleam/otp/static_supervisor
 import gleam/result
 import gleam/string
-import mist
 import showcase/channel/cursor as cursor_channel
 import showcase/router
 
@@ -193,17 +193,17 @@ pub fn main() -> Nil {
   // example targets this URL out of the box.
   let assert Ok(_) =
     fn(http_request) {
-      mist_transport.upgrade(
+      use <- beryl_ewe.upgrade(
         http_request,
         channels,
         server.default_config("/socket/websocket"),
-        fn() { router.handle_request(http_request, showcase_context) },
       )
+      router.handle_request(http_request, showcase_context)
     }
-    |> mist.new
-    |> mist.bind(interface)
-    |> mist.port(port)
-    |> mist.start
+    |> ewe.new
+    |> ewe.listening(on: port)
+    |> ewe.bind(to: interface)
+    |> ewe.start
 
   process.sleep_forever()
 }

@@ -86,7 +86,7 @@ This smoke test starts the real load-test application and verifies the Phoenix V
 <details>
 <summary><strong>How to run a real load test</strong></summary>
 
-1. Run the target and load generator on separate, monitored hosts. Start Mist or Ewe with \`just load-server-mist\` or \`just load-server-ewe\`, then target its reachable \`ws://\` or \`wss://\` URL.
+1. Run the target and load generator on separate, monitored hosts. Start Ewe with \`just load-server-ewe\` (or Mist with \`just load-server-mist\`), then target its reachable \`ws://\` or \`wss://\` URL.
 2. Pass \`protocol-smoke\`, warm the complete system without recording the result, then run at least three measured repetitions with unique \`RUN_ID\` and \`SUMMARY_PATH\` values.
 3. Choose the workload for the question:
    - Connection throughput: \`RATE=100 DURATION=2m just load-run connection-rate <url> <transport>\`

@@ -26,27 +26,23 @@ Either API can provide the `beryl.Sockets` handle.
 
 ## Add a private publish endpoint
 
-Run the endpoint on the Mist listener that serves the WebSocket transport.
+Run the endpoint on the Ewe listener that serves the WebSocket transport.
 Protect it with a shared secret. Only the backend must be able to publish.
 
 ```gleam
 import beryl
 import beryl/transport/server
-import beryl_mist as mist_transport
-import gleam/bytes_tree
+import beryl_ewe
+import ewe
 import gleam/http.{Post}
-import gleam/http/request
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
-import mist
 
-fn handle_request(
-  http_request: Request(mist.Connection),
+fn handler(
   sockets: beryl.Sockets,
-  websocket_config: server.TransportConfig(mist.Connection),
-) -> Response(mist.ResponseData) {
-  use <- mist_transport.upgrade(http_request, sockets, websocket_config)
-
+  websocket_config: server.TransportConfig(ewe.Connection),
+) -> fn(Request(ewe.Connection)) -> Response(ewe.Body) {
+  use http_request <- beryl_ewe.handler(sockets, websocket_config)
   case request.path_segments(http_request), http_request.method {
     ["internal", "publish"], Post -> publish(http_request, sockets)
     _, _ -> not_found()
@@ -67,9 +63,9 @@ pub type PublishRequest {
 }
 
 fn publish(
-  http_request: Request(mist.Connection),
+  http_request: Request(ewe.Connection),
   sockets: beryl.Sockets,
-) -> Response(mist.ResponseData) {
+) -> Response(ewe.Body) {
   case authorized_internal(http_request) {
     False -> forbidden()
     True ->
@@ -92,10 +88,10 @@ fn publish(
 }
 
 fn read_publish_request(
-  http_request: Request(mist.Connection),
+  http_request: Request(ewe.Connection),
 ) -> Result(PublishRequest, Nil) {
   use http_request <- result.try(
-    mist.read_body(http_request, 1_000_000) |> result.replace_error(Nil),
+    ewe.read_body(http_request, limit: 1_000_000) |> result.replace_error(Nil),
   )
   let decoder = {
     use topic <- decode.field("topic", decode.string)
@@ -112,7 +108,7 @@ fn read_publish_request(
 ```gleam
 import gleam/crypto
 
-fn authorized_internal(http_request: Request(mist.Connection)) -> Bool {
+fn authorized_internal(http_request: Request(body)) -> Bool {
   case request.get_header(http_request, "x-internal-secret") {
     Ok(provided) ->
       crypto.secure_compare(
@@ -130,23 +126,22 @@ browsers access it.
 ## Response helpers
 
 ```gleam
-import gleam/http/response
 import gleam/http/response.{type Response}
 
-fn accepted() -> Response(mist.ResponseData) {
-  response.new(202) |> response.set_body(mist.Bytes(bytes_tree.new()))
+fn accepted() -> Response(ewe.Body) {
+  response.new(202) |> response.set_body(ewe.Empty)
 }
 
-fn bad_request() -> Response(mist.ResponseData) {
-  response.new(400) |> response.set_body(mist.Bytes(bytes_tree.new()))
+fn bad_request() -> Response(ewe.Body) {
+  response.new(400) |> response.set_body(ewe.Empty)
 }
 
-fn forbidden() -> Response(mist.ResponseData) {
-  response.new(403) |> response.set_body(mist.Bytes(bytes_tree.new()))
+fn forbidden() -> Response(ewe.Body) {
+  response.new(403) |> response.set_body(ewe.Empty)
 }
 
-fn not_found() -> Response(mist.ResponseData) {
-  response.new(404) |> response.set_body(mist.Bytes(bytes_tree.new()))
+fn not_found() -> Response(ewe.Body) {
+  response.new(404) |> response.set_body(ewe.Empty)
 }
 ```
 

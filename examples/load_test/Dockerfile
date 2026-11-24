@@ -1,6 +1,7 @@
+ARG SERVER=ewe
 FROM erlang:27.2.1-alpine AS build
-ARG GLEAM_VERSION=v1.16.0
-ARG SERVER=mist
+ARG GLEAM_VERSION=v1.19.2
+ARG SERVER
 RUN apk add --no-cache git rebar3 curl ca-certificates \
  && case "$(uname -m)" in \
       aarch64) GLEAM_ARCH=aarch64-unknown-linux-musl ;; \
@@ -17,7 +18,7 @@ RUN gleam deps download \
  && gleam export erlang-shipment
 
 FROM erlang:27.2.1-alpine
-ARG SERVER=mist
+ARG SERVER
 RUN apk add --no-cache libstdc++ ncurses-libs openssl ca-certificates
 WORKDIR /app
 COPY --from=build /src/examples/load_test/build/erlang-shipment ./

@@ -101,16 +101,16 @@ Node.js 22, and Docker. Then, from the repository root:
 just deps
 just load-check
 
-# Terminal 1: choose one
-just load-server-mist
+# Terminal 1
 just load-server-ewe
 
 # Terminal 2
-just load-run protocol-smoke ws://127.0.0.1:8000/socket mist
+just load-run protocol-smoke ws://127.0.0.1:8000/socket ewe
 ```
 
-The servers default to `127.0.0.1:8000`, with WebSockets at `/socket` and JSON
-at `/health` and `/stats`. For `mixed-ws-http`, also set
+To compare Mist, use `just load-server-mist` and pass `mist` instead of `ewe`
+to `just load-run`. The servers default to `127.0.0.1:8000`, with WebSockets
+at `/socket` and JSON at `/health` and `/stats`. For `mixed-ws-http`, also set
 `HTTP_TARGET_URL=http://127.0.0.1:8000/health`. `just load-check [profile]`
 runs Node syntax and helper/profile/lifecycle checks, then uses the pinned
 `grafana/k6:2.1.0` image to inspect the selected profile without contacting a
@@ -277,13 +277,13 @@ distribute VUs round-robin:
 
 ```sh
 GIT_SHA="$(git rev-parse HEAD)" \
-RUNTIME="OTP 28; Gleam 1.16.0" \
+RUNTIME="OTP 28; Gleam 1.19.2" \
 HARDWARE="8 vCPU, 16 GiB, Linux kernel x.y" \
 SOURCE_IP="198.51.100.10" \
 CLUSTER="2 nodes, round-robin load balancer" \
-TARGET_LABEL="staging-a" RUN_ID="mist-001" \
+TARGET_LABEL="staging-a" RUN_ID="ewe-001" \
 just load-run push-round-trip \
-  wss://node-a.example/socket,wss://node-b.example/socket mist
+  wss://node-a.example/socket,wss://node-b.example/socket ewe
 ```
 
 For multiple generators, use disjoint k6 execution segments. Every host must
@@ -293,14 +293,14 @@ use the same sequence, profile, target list, and effective settings:
 # Generator 0
 EXECUTION_SEGMENT="0:1/2" EXECUTION_SEGMENT_SEQUENCE="0,1/2,1" \
 LOAD_GENERATOR="load-a" LOAD_GENERATOR_INDEX=0 LOAD_GENERATOR_COUNT=2 \
-SOURCE_IP="198.51.100.10" RUN_ID="mist-002" \
-just load-run idle-connections wss://target.example/socket mist
+SOURCE_IP="198.51.100.10" RUN_ID="ewe-002" \
+just load-run idle-connections wss://target.example/socket ewe
 
 # Generator 1
 EXECUTION_SEGMENT="1/2:1" EXECUTION_SEGMENT_SEQUENCE="0,1/2,1" \
 LOAD_GENERATOR="load-b" LOAD_GENERATOR_INDEX=1 LOAD_GENERATOR_COUNT=2 \
-SOURCE_IP="198.51.100.11" RUN_ID="mist-002" \
-just load-run idle-connections wss://target.example/socket mist
+SOURCE_IP="198.51.100.11" RUN_ID="ewe-002" \
+just load-run idle-connections wss://target.example/socket ewe
 ```
 
 `EXECUTION_SEGMENT` partitions work. `LOAD_GENERATOR_INDEX` only namespaces

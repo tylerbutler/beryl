@@ -217,15 +217,15 @@ examples-test: examples-build
 examples-cursors-docker tag="beryl-cursors":
     docker build -f examples/cursors/Dockerfile -t {{ tag }} .
 
-# Run the headless benchmark target with Mist or Ewe.
-load-server-mist:
-    cd examples/load_test && gleam run -m load_test_mist
-
+# Run the headless benchmark target with Ewe or Mist.
 load-server-ewe:
     cd examples/load_test && gleam run -m load_test_ewe
 
-# Build the benchmark image from the repository root. Select SERVER=mist|ewe.
-load-server-docker server="mist" tag="beryl-load-test":
+load-server-mist:
+    cd examples/load_test && gleam run -m load_test_mist
+
+# Build the benchmark image from the repository root. Select SERVER=ewe|mist.
+load-server-docker server="ewe" tag="beryl-load-test":
     docker build -f examples/load_test/Dockerfile --build-arg SERVER={{ server }} -t {{ tag }} .
 
 # === MAINTENANCE ===

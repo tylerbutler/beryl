@@ -56,7 +56,7 @@ The Phoenix JS client in `priv/static/app.js` uses a relative `/socket` URL, so 
 | **Session presence (ETS)** | The example-local `session_presence` tracker stores connected users and their username + color metadata in ETS |
 | **PubSub** | `broadcast_from` fans out cursor moves and reactions to all other clients |
 | **Wire protocol** | Phoenix-compatible format — works with the official Phoenix JS client |
-| **WebSocket transport** | `mist_transport.upgrade()` handles Phoenix-compatible WebSocket requests |
+| **WebSocket transport** | `beryl_ewe.upgrade` handles `/socket/websocket` and sends requests for other paths to the HTTP router |
 | **Rate limiting** | Throttles high-frequency cursor movement messages |
 
 ## Architecture
@@ -66,7 +66,7 @@ Browser (vanilla JS + Phoenix client)
   ├── cursor movement
   └── selectable, animated reactions
 Server (Gleam)
-  ├── Mist HTTP routing ── serves HTML + static files
+  ├── Ewe HTTP routing ── serves HTML + static files
   ├── beryl app-side dispatch ── cursor:* topics (cursor/app)
   ├── example session_presence ── ETS-backed user tracking
   └── beryl pubsub ── broadcast cursor positions and reactions
@@ -74,7 +74,7 @@ Server (Gleam)
 
 ## Stack
 
-- **Backend**: Gleam, beryl, mist
+- **Backend**: Gleam, beryl, Ewe
 - **Frontend**: Vanilla JS, CSS animations, [Phoenix JS client](https://www.npmjs.com/package/phoenix) (CDN)
 - **No build step** — just `gleam run`
 
@@ -88,7 +88,7 @@ Server (Gleam)
 `src/cursor.gleam:main` starts the Erlang package named `cursor`.
 `src/cursor/app.gleam:cursor_rooms_init` and `cursor_rooms_update` implement
 socket-wide dispatch; `router.gleam:handle_request` supplies HTTP routing.
-`gleam.toml` declares the shared helpers and beryl/Mist as path dependencies.
+`gleam.toml` declares the shared helpers, `beryl`, and `beryl_ewe` as path dependencies.
 
 ## Invariants
 

@@ -34,8 +34,8 @@ payload accessors, colors, and static HTTP responses.
   work; rejected broadcasts and publishing before binding produce logs.
 - `session_presence.gleam:start` creates processes and ETS state; tracking
   changes that state and broadcasts rosters. `stop` releases the store.
-- `static.gleam:serve_static` sends files; `priv_static` resolves an OTP
-  application private directory.
+- `static.gleam:serve_static` sends files with `ewe.file`. `priv_static`
+  returns the path to an OTP application's `priv/static` directory.
 
 ## Verification
 

@@ -5,11 +5,10 @@
 import chatroom/router as chatroom_router
 import collab_document/router as document_router
 import cursor/router as cursor_router
+import ewe.{type Body, type Connection}
 import example_helper/static
-import gleam/bytes_tree
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
-import mist.{type Connection, type ResponseData}
 
 pub type Context {
   Context(
@@ -22,7 +21,7 @@ pub type Context {
 pub fn handle_request(
   http_request: Request(Connection),
   context: Context,
-) -> Response(ResponseData) {
+) -> Response(Body) {
   case request.path_segments(http_request) {
     [] -> landing_page()
     ["healthz"] -> healthz()
@@ -39,13 +38,13 @@ pub fn handle_request(
   }
 }
 
-fn healthz() -> Response(ResponseData) {
+fn healthz() -> Response(Body) {
   response.new(200)
   |> response.set_header("content-type", "text/plain; charset=utf-8")
-  |> response.set_body(mist.Bytes(bytes_tree.from_string("ok")))
+  |> response.set_body(ewe.Text("ok"))
 }
 
-fn landing_page() -> Response(ResponseData) {
+fn landing_page() -> Response(Body) {
   let html =
     "<!DOCTYPE html>
 <html lang=\"en\">

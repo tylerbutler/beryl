@@ -20,7 +20,7 @@ dashboard channel.
 
 ## Side effects
 
-`lustre_presence.gleam:main` generates the secret, starts supervision and Mist
+`lustre_presence.gleam:main` generates the secret, starts supervision and Ewe
 on port 8002, prints startup URLs, and sleeps indefinitely.
 
 ## Verification

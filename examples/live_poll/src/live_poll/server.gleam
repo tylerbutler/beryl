@@ -1,7 +1,7 @@
 import beryl
 import beryl/transport/server
-import beryl_mist as mist_transport
-import gleam/bytes_tree
+import beryl_ewe
+import ewe
 import gleam/erlang/process
 import gleam/http/request
 import gleam/http/response
@@ -9,7 +9,6 @@ import gleam/int
 import gleam/io
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
-import mist
 
 pub type HealthEndpoint {
   HealthEndpointEnabled
@@ -38,43 +37,40 @@ pub fn run(
 
   let assert Ok(_) =
     fn(http_request) {
-      mist_transport.upgrade(
+      use <- beryl_ewe.upgrade(
         http_request,
         sockets,
         server.default_config("/socket/websocket"),
-        fn() {
-          case request.path_segments(http_request), health_endpoint {
-            ["healthz"], HealthEndpointEnabled -> text(200, "ok")
-            ["healthz"], HealthEndpointDisabled -> text(404, "Not found")
-            [], HealthEndpointEnabled | [], HealthEndpointDisabled ->
-              html(guide_channel)
-            [_, ..], HealthEndpointEnabled | [_, ..], HealthEndpointDisabled ->
-              text(404, "Not found")
-          }
-        },
       )
+      case request.path_segments(http_request), health_endpoint {
+        ["healthz"], HealthEndpointEnabled -> text(200, "ok")
+        ["healthz"], HealthEndpointDisabled -> text(404, "Not found")
+        [], HealthEndpointEnabled | [], HealthEndpointDisabled ->
+          html(guide_channel)
+        [_, ..], HealthEndpointEnabled | [_, ..], HealthEndpointDisabled ->
+          text(404, "Not found")
+      }
     }
-    |> mist.new
-    |> mist.port(port)
-    |> mist.start
+    |> ewe.new
+    |> ewe.listening(on: port)
+    |> ewe.bind(to: "localhost")
+    |> ewe.start
 
   io.println(title)
   io.println("Open http://localhost:" <> int.to_string(port))
   process.sleep_forever()
 }
 
-fn text(status: Int, body: String) -> response.Response(mist.ResponseData) {
+fn text(status: Int, body: String) -> response.Response(ewe.Body) {
   response.new(status)
   |> response.set_header("content-type", "text/plain; charset=utf-8")
-  |> response.set_body(mist.Bytes(bytes_tree.from_string(body)))
+  |> response.set_body(ewe.Text(body))
 }
 
-fn html(guide_channel: GuideChannel) -> response.Response(mist.ResponseData) {
+fn html(guide_channel: GuideChannel) -> response.Response(ewe.Body) {
   response.new(200)
   |> response.set_header("content-type", "text/html; charset=utf-8")
-  |> response.set_body(
-    mist.Bytes(bytes_tree.from_string(client_html(guide_channel))),
-  )
+  |> response.set_body(ewe.Text(client_html(guide_channel)))
 }
 
 fn client_html(guide_channel: GuideChannel) -> String {

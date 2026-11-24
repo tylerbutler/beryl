@@ -53,6 +53,7 @@ beryl packages are currently distributed from GitHub, not Hex:
 [dependencies]
 beryl = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl" }
 beryl_ewe = { git = "https://github.com/tylerbutler/beryl.git", ref = "main", path = "packages/beryl_ewe" }
+ewe = ">= 9.0.0 and < 10.0.0"
 ```
 
 Use the same git ref for beryl and beryl_ewe.
@@ -69,6 +70,7 @@ import beryl/transport/server
 import beryl_ewe as ewe_transport
 import ewe
 import gleam/erlang/process
+import gleam/http/response
 import gleam/option.{None}
 import gleam/otp/static_supervisor
 
@@ -99,7 +101,7 @@ pub fn main() {
     ewe_transport.handler(
       sockets,
       server.default_config("/socket"),
-      fn(_req) { panic as "not implemented" },
+      fn(_req) { response.new(404) |> response.set_body(ewe.Empty) },
     )
     |> ewe.new
     |> ewe.listening(on: 8000)
@@ -115,11 +117,9 @@ upgrade, validates the `Origin` header (same-authority by default, allow-list,
 or allow-all), and enforces beryl's frame-size, frame-rate, and connection
 limits at the edge.
 
-It mirrors the
+If your application uses Mist, use
 [`beryl_mist`](https://github.com/tylerbutler/beryl/tree/main/packages/beryl_mist)
-package: both use the shared transport-server config builders and matching
-handler APIs, so you can run beryl sockets on either web server by choosing the
-matching transport package.
+with the same transport configuration.
 
 ## Documentation
 

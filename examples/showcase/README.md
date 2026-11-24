@@ -48,9 +48,10 @@ pnpm test       # Playwright end-to-end against a running server
 
 ## Routing
 
-Each example's router was refactored to accept a `base_path` field on its
-`Context`. The standalone demos still pass `""` and serve assets at
-`/static/...`. The showcase passes `"/cursors"`, `"/chat"`, and `"/docs"`
+`beryl_ewe.upgrade` handles `/socket/websocket` and passes requests for
+other paths to the showcase router. Each example's router takes a
+`base_path` field on its `Context`. The standalone demos pass `""` and serve
+assets at `/static/...`. The showcase passes `"/cursors"`, `"/chat"`, and `"/docs"`
 respectively, so each example's HTML emits prefixed asset URLs and its
 `serve_static` mount lives under the prefix. The Phoenix JS client in
 each example uses `new Socket("/socket")` so all three share the same

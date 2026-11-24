@@ -54,6 +54,7 @@ gleam_otp = ">= 1.0.0 and < 2.0.0"
 gleam_json = ">= 3.0.0 and < 4.0.0"
 gleam_crypto = ">= 1.4.0 and < 2.0.0"
 gleam_http = ">= 4.0.0 and < 5.0.0"
+ewe = ">= 9.0.0 and < 10.0.0"
 mist = ">= 6.0.0 and < 7.0.0"
 beryl = { path = "../../packages/beryl" }
 beryl_mist = { path = "../../packages/beryl_mist" }

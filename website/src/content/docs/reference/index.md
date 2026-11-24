@@ -38,8 +38,8 @@ frames, or select a compatible client.
 | `beryl/transport` | Public interface for socket setup, incoming messages, and rate limiting | Writing a custom transport package |
 | `beryl/transport/origin` | Origin and Phoenix version checks | Validating WebSocket upgrades |
 | `beryl/transport/server` | Shared connection and frame handling for any WebSocket server | Implementing a WebSocket transport |
-| `beryl_mist` | Mist WebSocket upgrade and request handler integration (separate `beryl_mist` package) | Wiring beryl to a Mist HTTP server |
 | `beryl_ewe` | Ewe WebSocket transport integration (separate `beryl_ewe` package) | Wiring beryl to an Ewe HTTP server |
+| `beryl_mist` | Mist WebSocket upgrade and request handler integration (separate `beryl_mist` package) | Wiring beryl to a Mist HTTP server |
 
 ---
 
