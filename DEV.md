@@ -120,8 +120,9 @@ just pr
 
 ### Dependency audits
 
-Local and CI audit tasks use `licence_audit` v1.0.0-rc.2, a release candidate
-pinned in `.mise.toml`.
+Local and CI audit tasks use `licence_audit` v1.0.0-rc.3, a release candidate
+pinned in `.mise.toml`. This version adds local path dependencies to SBOMs.
+It replaces `check --vulns` with `check --checks=all` for combined enforcement.
 Install it with `mise install github:tylerbutler/licence_audit`. mise selects
 the self-contained platform archive; the repo's Erlang version is unchanged.
 
@@ -130,6 +131,8 @@ just audit-licences          # Report licences and preview the existing policy
 just audit-vulns             # Report known vulnerabilities from OSV
 just audit-check             # Enforce licences and the vulnerability threshold
 just audit-check beryl_mist  # Limit the task to one package
+just sbom                   # Generate five reproducible CycloneDX 1.6 SBOMs
+just sbom beryl_ewe          # Generate one package's SBOM
 ```
 
 These tasks default to `beryl_heirloom`, `beryl_protocol`, `beryl`,
@@ -140,10 +143,10 @@ Examples are not included by default. To report on an example, pass its
 package name, such as `just audit-licences cursor`.
 Examples need an approved licence policy before licence enforcement is useful.
 
-The report tasks do not fail on findings; `audit-check` uses `check --vulns`
+The report tasks do not fail on findings; `audit-check` uses `check --checks=all`
 and propagates failures. The policies allow Apache-2.0, ISC, and MIT.
-`beryl`, `beryl_mist`, and `beryl_ewe` also allow BSD-3-Clause for their
-development dependencies.
+`beryl_heirloom`, `beryl`, `beryl_mist`, and `beryl_ewe` also allow
+BSD-3-Clause for their development dependencies.
 The default vulnerability threshold is `high`; unknown severity does not
 block. CI runs `audit-check` after dependency preparation for source-relevant
 changes, including changes to the CI workflow. `just ci` also runs this gate.
@@ -153,6 +156,40 @@ Licence reports cover locked Hex dependencies, not Git or local path sources.
 Vulnerability reports cover Hex and GitHub dependencies; other sources are
 skipped. This does not audit npm dependencies. OSV requires network access;
 an unavailable service means the audit is incomplete.
+
+`just sbom` writes `packages/<package>/build/sbom.cdx.json`. Each document
+describes the package's full locked graph, including development dependencies
+with their CycloneDX scopes and local workspace components. The command
+does not enforce licence or vulnerability policy. Reproducible generation
+requires locked archive metadata and Hex publication checks for local
+name/version pairs. Missing evidence fails generation. A local component's
+publication identity does not prove that its source matches a Hex archive.
+
+CI uploads the five files in the `sboms-<run-attempt>` artifact for
+source-relevant changes, using GitHub's default retention. The publish
+workflow attaches `<package>-v<version>.cdx.json` to matching exact package
+releases. `beryl_heirloom` and `beryl_protocol` remain bundled packages;
+they have CI SBOMs but no standalone releases.
+
+The trusted main-branch publish job signs provenance for the exact SBOM
+asset bytes before upload. On a retry, it verifies existing provenance
+against the same source commit and signer workflow before reusing it.
+To verify a downloaded release SBOM, supply the release tag's commit:
+
+```bash
+RELEASE_SHA="$(git rev-parse 'beryl-v0.6.2^{commit}')"
+gh attestation verify beryl-v0.6.2.cdx.json \
+  --repo tylerbutler/beryl \
+  --signer-workflow tylerbutler/beryl/.github/workflows/publish.yml \
+  --source-digest "$RELEASE_SHA" --source-ref refs/heads/main \
+  --deny-self-hosted-runners
+```
+
+This verifies the SBOM document's provenance. It does not associate the
+document with a binary, deployment, or GitHub's automatic source archive.
+The workflow signs release SBOM assets only; it leaves PR and CI artifacts
+unsigned. These inventories do not cover npm dependencies or a deployed
+BEAM runtime.
 
 Use `mise exec -- licence_audit --version` to see the installed version.
 If Hex metadata requests time out, the licence audit is incomplete. Retry the
