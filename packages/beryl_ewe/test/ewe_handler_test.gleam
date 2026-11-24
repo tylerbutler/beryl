@@ -770,6 +770,93 @@ pub fn handler_releases_slot_when_client_closes_during_init_test() -> Nil {
   beryl.stop(channels) |> should.equal(Ok(Nil))
 }
 
+pub fn joined_owner_exit_closes_once_and_preserves_healthy_peer_test() -> Nil {
+  use <- unitest.tag("serial")
+  let connected = process.new_subject()
+  let closed = process.new_subject()
+  let assert Ok(channels) =
+    app_test_helper.start(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections(2)
+        |> beryl.with_max_connections_per_ip(2)
+        |> beryl.with_heartbeat(60_000),
+      init: fn(info: socket.ConnectInfo(Nil)) {
+        process.send(connected, info.socket_id)
+        #(info.socket_id, [])
+      },
+      update: fn(model, input) {
+        case input {
+          socket.Join(_, _, reference) ->
+            socket.Next(model, [socket.AcceptJoin(reference, option.None)])
+          socket.Closed(topic, reason) -> {
+            process.send(closed, #(model, topic, reason))
+            socket.Next(model, [])
+          }
+          socket.Message(..) | socket.Binary(..) | socket.Info(..) ->
+            socket.Next(model, [])
+        }
+      },
+    )
+  let #(port, server_pid) = start_server(channels)
+  let assert Ok(lost_client) = connect_websocket(port, "/socket")
+  let assert Ok(lost_id) = process.receive(connected, 1000)
+  let assert Ok(healthy_client) = connect_websocket(port, "/socket")
+  let assert Ok(healthy_id) = process.receive(connected, 1000)
+  let assert Ok(lost_client) =
+    send_text(lost_client, "[null,\"lost\",\"room:lobby\",\"phx_join\",{}]")
+  let assert Ok(healthy_client) =
+    send_text(
+      healthy_client,
+      "[null,\"healthy\",\"room:lobby\",\"phx_join\",{}]",
+    )
+  receive_text(lost_client, 1000) |> should.be_ok
+  receive_text(healthy_client, 1000) |> should.be_ok
+  wait_for_socket_counts(channels, #(2, 2), 1000)
+  |> should.equal(Ok(#(2, 2)))
+  websocket_upgrade_status(port, "/socket") |> should.equal(Ok(429))
+
+  let assert Ok(owner) = suspend_server_peer(lost_client)
+  let monitor = process.monitor(owner)
+  process.kill(owner)
+  process.new_selector()
+  |> process.select_specific_monitor(monitor, fn(_) { Nil })
+  |> process.selector_receive(1000)
+  |> should.equal(Ok(Nil))
+  process.demonitor_process(monitor)
+
+  process.receive(closed, 1000)
+  |> should.equal(Ok(#(lost_id, "room:lobby", socket.Normal)))
+  wait_for_socket_counts(channels, #(1, 1), 1000)
+  |> should.equal(Ok(#(1, 1)))
+  receive_text(lost_client, 1000) |> should.equal(Error(Nil))
+  close(lost_client)
+  process.receive(closed, 100) |> should.be_error
+
+  let assert Ok(replacement) = connect_websocket(port, "/socket")
+  let assert Ok(_) = process.receive(connected, 1000)
+  let assert Ok(replacement) =
+    send_text(
+      replacement,
+      "[null,\"replacement\",\"phoenix\",\"heartbeat\",{}]",
+    )
+  receive_text(replacement, 1000) |> should.be_ok
+  let assert Ok(healthy_client) =
+    send_text(healthy_client, "[null,\"alive\",\"phoenix\",\"heartbeat\",{}]")
+  receive_text(healthy_client, 1000) |> should.be_ok
+  wait_for_socket_counts(channels, #(2, 1), 1000)
+  |> should.equal(Ok(#(2, 1)))
+
+  close(replacement)
+  close(healthy_client)
+  process.receive(closed, 1000)
+  |> should.equal(Ok(#(healthy_id, "room:lobby", socket.Normal)))
+  wait_for_socket_counts(channels, #(0, 0), 1000)
+  |> should.equal(Ok(#(0, 0)))
+  process.receive(closed, 100) |> should.be_error
+  stop_supervisor(server_pid)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
+
 fn reconnect_when_released(
   port: Int,
   attempts: Int,
