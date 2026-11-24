@@ -1,0 +1,11 @@
+package = "beryl_ewe"
+kind = "Fixed"
+body = '''
+#### Runtime exit cancels stalled HTTP/2 WebSocket writes.
+
+HTTP/2 WebSockets now end when their owning beryl runtime exits, even when
+flow control blocks an outbound write. The affected stream releases its
+connection slot and Ewe discards its unsent buffered output. The shared
+HTTP/2 connection stays open for streams owned by other runtimes. HTTP/1
+behavior is unchanged.
+'''

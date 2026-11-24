@@ -115,6 +115,34 @@ fn suspend_server_peer(client: WebsocketClient) -> Result(process.Pid, Nil)
 @external(erlang, "beryl_ewe_transport_test_ffi", "outbound_queue_usage")
 fn outbound_queue_usage(pid: process.Pid) -> #(Int, Int)
 
+// Typed Ewe/Glisten/alpacki APIs cover configuration and all wire exchanges.
+// Only Ewe's opaque callback metadata and BEAM stack/monitor introspection
+// need test FFI; gleam_erlang does not expose those process_info fields.
+@external(erlang, "beryl_ewe_transport_test_ffi", "with_http2_fixture")
+fn with_http2_fixture(action: fn() -> Nil) -> Nil
+
+@external(erlang, "beryl_ewe_transport_test_ffi", "observe_http2_worker")
+fn observe_http2_worker(
+  response: response.Response(ewe.Body),
+  observer: process.Pid,
+  path: String,
+) -> response.Response(ewe.Body)
+
+@external(erlang, "beryl_ewe_transport_test_ffi", "receive_http2_worker")
+fn receive_http2_worker(path: String) -> Result(process.Pid, Nil)
+
+@external(erlang, "beryl_ewe_transport_test_ffi", "http2_writer_waiting")
+fn http2_writer_waiting(worker: process.Pid, binary: Bool) -> Bool
+
+@external(erlang, "beryl_ewe_transport_test_ffi", "lifecycle_watcher")
+fn lifecycle_watcher(
+  runtime: process.Pid,
+  owner: process.Pid,
+) -> Result(process.Pid, Nil)
+
+@external(erlang, "beryl_ewe_transport_test_ffi", "monotonic_ms")
+fn monotonic_ms() -> Int
+
 // Runtime log capture distinguishes edge shedding from runtime shedding.
 type CapturedLog {
   CapturedLog(message: String, metadata: dict.Dict(String, String))
@@ -389,6 +417,25 @@ fn http2_connect(
   )
   // RFC 8441: do not send extended CONNECT until the server advertises it.
   use _ <- result.try(http2_wait(client, 4, 16))
+  let block = http2_connect_headers(authority, origin, path)
+  use _ <- result.try(http2_send(client, http2_frame(1, 4, 1, block)))
+  use block <- result.try(http2_wait(client, 1, 16))
+  use #(status, _) <- result.try(http2_status(block, alpacki.new_dynamic(4096)))
+  case status {
+    "200" -> {
+      use _ <- result.try(http2_send_heartbeat(client, 1))
+      use reply <- result.try(http2_heartbeat_reply(client, <<>>, 16))
+      Ok(#(status, reply))
+    }
+    _ -> Ok(#(status, ""))
+  }
+}
+
+fn http2_connect_headers(
+  authority: String,
+  origin: String,
+  path: String,
+) -> BitArray {
   let fields =
     [
       #(":method", "CONNECT"),
@@ -409,10 +456,15 @@ fn http2_connect(
   // Deliberately no Host, Upgrade, Connection, or sec-websocket-key headers.
   let #(block, _) =
     alpacki.encode_header_block(fields, alpacki.new_dynamic(4096), False)
-  use _ <- result.try(http2_send(client, http2_frame(1, 4, 1, block)))
-  use block <- result.try(http2_wait(client, 1, 16))
+  block
+}
+
+fn http2_status(
+  block: BitArray,
+  decoder: alpacki.DynamicTable,
+) -> Result(#(String, alpacki.DynamicTable), Http2TestError) {
   use decoded <- result.try(
-    alpacki.decode_header_block(block, alpacki.new_dynamic(4096))
+    alpacki.decode_header_block(block, decoder)
     |> result.map_error(HpackFailure),
   )
   use status <- result.try(case decoded.remaining {
@@ -425,24 +477,23 @@ fn http2_connect(
     bit_array.to_string(status)
     |> result.replace_error(InvalidHttp2Response(status)),
   )
-  case status {
-    "200" -> {
-      let heartbeat = "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]"
-      // A masked, final text frame. The fixed zero mask is valid for this
-      // deterministic test fixture, not for a production WebSocket client.
-      let frame = <<
-        0x81,
-        1:1,
-        string.byte_size(heartbeat):7,
-        0:32,
-        heartbeat:utf8,
-      >>
-      use _ <- result.try(http2_send(client, http2_frame(0, 0, 1, frame)))
-      use reply <- result.try(http2_heartbeat_reply(client, <<>>, 16))
-      Ok(#(status, reply))
-    }
-    _ -> Ok(#(status, ""))
-  }
+  Ok(#(status, decoded.dynamic_table))
+}
+
+fn http2_send_heartbeat(
+  client: tcp_socket.Socket,
+  stream: Int,
+) -> Result(Nil, Http2TestError) {
+  let heartbeat = "[null,\"hb\",\"phoenix\",\"heartbeat\",{}]"
+  // A fixed zero mask is valid for this deterministic fixture only.
+  let frame = <<
+    0x81,
+    1:1,
+    string.byte_size(heartbeat):7,
+    0:32,
+    heartbeat:utf8,
+  >>
+  http2_send(client, http2_frame(0, 0, stream, frame))
 }
 
 fn http2_frame(
@@ -470,11 +521,17 @@ fn http2_wait(
   wanted: Int,
   remaining: Int,
 ) -> Result(BitArray, Http2TestError) {
-  use <- bool.guard(remaining <= 0, Error(Http2FrameLimit))
+  http2_wait_stream(client, wanted, 1, remaining)
+}
+
+fn http2_read(
+  client: tcp_socket.Socket,
+  timeout: Int,
+) -> Result(#(Int, Int, Int, BitArray), Http2TestError) {
   use header <- result.try(
-    tcp.receive_timeout(client, 9, 1000) |> result.map_error(TcpFailure),
+    tcp.receive_timeout(client, 9, timeout) |> result.map_error(TcpFailure),
   )
-  use frame <- result.try(case header {
+  case header {
     <<length:24, kind, flags, 0:1, stream:31>> if length <= 16_384 -> {
       let payload = case length {
         0 -> Ok(<<>>)
@@ -485,24 +542,44 @@ fn http2_wait(
       result.map(payload, fn(payload) { #(kind, flags, stream, payload) })
     }
     _ -> Error(UnexpectedHttp2Frame(header))
-  })
+  }
+}
+
+fn http2_wait_stream(
+  client: tcp_socket.Socket,
+  wanted: Int,
+  stream: Int,
+  remaining: Int,
+) -> Result(BitArray, Http2TestError) {
+  use <- bool.guard(remaining <= 0, Error(Http2FrameLimit))
+  use frame <- result.try(http2_read(client, 1000))
   case frame {
     #(4, 0, 0, payload) -> {
       use _ <- result.try(http2_send(client, http2_frame(4, 1, 0, <<>>)))
       case wanted == 4 && enables_connect(payload) {
         True -> Ok(payload)
-        False -> http2_wait(client, wanted, remaining - 1)
+        False -> http2_wait_stream(client, wanted, stream, remaining - 1)
       }
     }
     #(4, 1, 0, <<>>) | #(8, 0, _, _) ->
-      http2_wait(client, wanted, remaining - 1)
+      http2_wait_stream(client, wanted, stream, remaining - 1)
     #(6, 0, 0, payload) -> {
       use _ <- result.try(http2_send(client, http2_frame(6, 1, 0, payload)))
-      http2_wait(client, wanted, remaining - 1)
+      http2_wait_stream(client, wanted, stream, remaining - 1)
     }
-    #(1, 4, 1, payload) | #(1, 5, 1, payload) if wanted == 1 -> Ok(payload)
-    #(0, 0, 1, payload) if wanted == 0 -> Ok(payload)
-    _ -> Error(UnexpectedHttp2Frame(header))
+    #(1, 4, received, payload)
+      | #(1, 5, received, payload)
+      if wanted == 1 && received == stream
+    -> Ok(payload)
+    #(0, 0, received, payload) if wanted == 0 && received == stream ->
+      Ok(payload)
+    #(3, 0, received, payload) if wanted == 3 && received == stream ->
+      Ok(payload)
+    #(6, 1, 0, payload) if wanted == 6 -> Ok(payload)
+    _ ->
+      Error(
+        UnexpectedHttp2Frame(http2_frame(frame.0, frame.1, frame.2, frame.3)),
+      )
   }
 }
 
@@ -528,6 +605,349 @@ fn http2_heartbeat_reply(
       use data <- result.try(http2_wait(client, 0, 16))
       http2_heartbeat_reply(client, <<buffered:bits, data:bits>>, remaining - 1)
     }
+  }
+}
+
+pub fn http2_stalled_text_runtime_cancellation_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- with_http2_fixture
+  check_http2_stalled_runtime_cancellation(False)
+}
+
+pub fn http2_stalled_binary_runtime_cancellation_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- with_http2_fixture
+  check_http2_stalled_runtime_cancellation(True)
+}
+
+// One real TCP connection carries two independent Beryl instances. The slow
+// instance has exactly one permit; the healthy sibling must survive its death.
+// No suspension, artificial send queue, or production introspection exports.
+fn check_http2_stalled_runtime_cancellation(binary: Bool) -> Nil {
+  let phoenix = wire.phoenix_codec()
+  let slow_codec = case binary {
+    False -> phoenix
+    True ->
+      codec.new(
+        decode_text: wire.decode_message,
+        encode_reply: codec.encode_reply(phoenix),
+        encode_push: codec.encode_push(phoenix),
+        encode_heartbeat_reply: fn(_) {
+          Ok(codec.BinaryFrame(bit_array.from_string(heartbeat_reply)))
+        },
+      )
+  }
+  let slow =
+    start_app_system(
+      beryl.config(slow_codec)
+      |> beryl.with_max_connections(1)
+      |> beryl.with_max_connections_per_ip(1),
+    )
+  let healthy = start_channels()
+  let assert Ok(runtime) = beryl.app_runtime_pid(slow)
+  let assert Ok(healthy_runtime) = beryl.app_runtime_pid(healthy)
+  let #(port, listener) = start_http2_flow_server(slow, healthy)
+  let assert Ok(client) = connect_tcp(port)
+  // Every server stream starts without credit. A 65-byte WebSocket reply
+  // exceeds Ewe's 16-byte send-buffer limit, but not Beryl's default budget.
+  let settings = http2_frame(4, 0, 0, <<4:16, 0:32>>)
+  http2_send(client, <<
+    "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n":utf8,
+    settings:bits,
+  >>)
+  |> should.equal(Ok(Nil))
+  http2_wait(client, 4, 24) |> should.be_ok
+  let decoder = alpacki.new_dynamic(4096)
+  let decoder = http2_open(client, port, 1, "/healthy", "200", decoder)
+  let assert Ok(sibling) = receive_http2_worker("/healthy")
+  let sibling_watcher = wait_http2_watcher(healthy_runtime, sibling)
+  http2_credit(client, 1)
+  check_http2_heartbeat(client, 1, False)
+
+  // Positive control: observe the actual write receive, then release it with
+  // real WINDOW_UPDATE and check the complete text/binary WebSocket payload.
+  let decoder = http2_open(client, port, 3, "/slow", "200", decoder)
+  let assert Ok(control) = receive_http2_worker("/slow")
+  let control_watcher = wait_http2_watcher(runtime, control)
+  http2_send_heartbeat(client, 3) |> should.equal(Ok(Nil))
+  wait_http2_condition(
+    fn() { http2_writer_waiting(control, binary) },
+    monotonic_ms() + 1000,
+  )
+  http2_credit(client, 3)
+  http2_websocket_reply(client, 3, binary, <<>>, 16)
+  |> should.equal(Ok(bit_array.from_string(heartbeat_reply)))
+  wait_http2_condition(
+    fn() { !http2_writer_waiting(control, binary) },
+    monotonic_ms() + 1000,
+  )
+  // Client reset is a separate lifecycle exit, not runtime cancellation.
+  http2_stream_down(control, control_watcher, fn() {
+    http2_send(client, http2_frame(3, 0, 3, <<8:32>>))
+    |> should.equal(Ok(Nil))
+  })
+  |> should.be_ok
+  wait_for_socket_counts(slow, #(0, 0), 1000)
+  |> should.equal(Ok(#(0, 0)))
+
+  let decoder = http2_open(client, port, 5, "/slow", "200", decoder)
+  let assert Ok(stalled) = receive_http2_worker("/slow")
+  let stalled_watcher = wait_http2_watcher(runtime, stalled)
+  http2_send_heartbeat(client, 5) |> should.equal(Ok(Nil))
+  wait_http2_condition(
+    fn() { http2_writer_waiting(stalled, binary) },
+    monotonic_ms() + 1000,
+  )
+  let decoder = http2_open(client, port, 7, "/slow", "429", decoder)
+  // Ewe resets the unread rejected CONNECT body after sending its response.
+  // Drain only that exact stream's NO_ERROR, never an arbitrary reset.
+  http2_wait_stream(client, 3, 7, 24) |> should.equal(Ok(<<0:32>>))
+  http2_writer_waiting(stalled, binary) |> should.be_true
+
+  // Both owner and watcher must die within a shared 1000ms deadline. Killing
+  // the runtime is the sole trigger: the test never kills the stalled owner.
+  http2_stream_down(stalled, stalled_watcher, fn() { process.kill(runtime) })
+  |> should.equal(Ok(process.Killed))
+  http2_wait_stream(client, 3, 5, 24) |> should.equal(Ok(<<8:32>>))
+  wait_http2_condition(
+    fn() {
+      case beryl.app_runtime_pid(slow) {
+        Ok(current) -> current != runtime
+        Error(Nil) -> False
+      }
+    },
+    monotonic_ms() + 2000,
+  )
+  let assert Ok(restarted) = beryl.app_runtime_pid(slow)
+  // Real reconnect proves the old owner released its single admission slot,
+  // including when forced termination bypassed on_close.
+  let replacement_stream =
+    http2_reconnect(client, port, decoder, 9, monotonic_ms() + 1000)
+  let assert Ok(replacement) = receive_http2_worker("/slow")
+  let replacement_watcher = wait_http2_watcher(restarted, replacement)
+  http2_credit(client, replacement_stream)
+  check_http2_heartbeat(client, replacement_stream, binary)
+
+  process.is_alive(sibling) |> should.be_true
+  process.is_alive(sibling_watcher) |> should.be_true
+  beryl.app_runtime_pid(healthy) |> should.equal(Ok(healthy_runtime))
+  check_http2_heartbeat(client, 1, False)
+  // Late credit cannot resurrect the reset stream's buffered reply.
+  http2_credit(client, 5)
+  check_http2_heartbeat(client, 1, False)
+  let token = <<"alive123":utf8>>
+  http2_send(client, http2_frame(6, 0, 0, token)) |> should.equal(Ok(Nil))
+  http2_wait_stream(client, 6, 0, 24) |> should.equal(Ok(token))
+  http2_no_late_data(client, monotonic_ms() + 300, 16)
+  |> should.equal(Ok(Nil))
+
+  // Normal WebSocket close also reaps the watcher, for both instances.
+  http2_stream_down(replacement, replacement_watcher, fn() {
+    http2_send_close(client, replacement_stream)
+  })
+  |> should.be_ok
+  http2_stream_down(sibling, sibling_watcher, fn() {
+    http2_send_close(client, 1)
+  })
+  |> should.be_ok
+  tcp.close(client) |> should.equal(Ok(Nil))
+  stop_supervisor(listener)
+  beryl.stop(slow) |> should.equal(Ok(Nil))
+  beryl.stop(healthy) |> should.equal(Ok(Nil))
+}
+
+fn start_http2_flow_server(
+  slow: beryl.Sockets,
+  healthy: beryl.Sockets,
+) -> #(Int, process.Pid) {
+  let observer = process.self()
+  let fallback = fn(_) { response.new(418) |> response.set_body(ewe.Empty) }
+  let slow_handler =
+    ewe_transport.handler(slow, server.default_config("/slow"), fallback)
+  let healthy_handler =
+    ewe_transport.handler(healthy, server.default_config("/healthy"), fallback)
+  let handler = fn(request: request.Request(ewe.Connection)) {
+    let response = case request.path {
+      "/slow" -> slow_handler(request)
+      _ -> healthy_handler(request)
+    }
+    observe_http2_worker(response, observer, request.path)
+  }
+  let options =
+    ewe.Http2Options(..ewe.default_http2_options(), send_buffer_limit: 16)
+  let assert Ok(started) =
+    handler
+    |> ewe.new
+    |> ewe.listening_random
+    |> ewe.bind("127.0.0.1")
+    |> ewe.quiet
+    |> ewe.with_http2(options)
+    |> ewe.start
+  let assert ewe.TcpSocketAddress(_, port) = started.data
+  #(port, started.pid)
+}
+
+fn http2_request_status(
+  client: tcp_socket.Socket,
+  port: Int,
+  stream: Int,
+  path: String,
+  decoder: alpacki.DynamicTable,
+) -> Result(#(String, alpacki.DynamicTable), Http2TestError) {
+  let authority = "127.0.0.1:" <> int.to_string(port)
+  let headers = http2_connect_headers(authority, "http://" <> authority, path)
+  use _ <- result.try(http2_send(client, http2_frame(1, 4, stream, headers)))
+  use block <- result.try(http2_wait_stream(client, 1, stream, 24))
+  http2_status(block, decoder)
+}
+
+fn http2_open(
+  client: tcp_socket.Socket,
+  port: Int,
+  stream: Int,
+  path: String,
+  status: String,
+  decoder: alpacki.DynamicTable,
+) -> alpacki.DynamicTable {
+  let assert Ok(#(actual, decoder)) =
+    http2_request_status(client, port, stream, path, decoder)
+  actual |> should.equal(status)
+  decoder
+}
+
+fn http2_reconnect(
+  client: tcp_socket.Socket,
+  port: Int,
+  decoder: alpacki.DynamicTable,
+  stream: Int,
+  deadline: Int,
+) -> Int {
+  let assert Ok(#(status, decoder)) =
+    http2_request_status(client, port, stream, "/slow", decoder)
+  case status {
+    "200" -> stream
+    _ -> {
+      status |> should.equal("429")
+      http2_wait_stream(client, 3, stream, 24) |> should.equal(Ok(<<0:32>>))
+      { monotonic_ms() < deadline } |> should.be_true
+      process.sleep(5)
+      http2_reconnect(client, port, decoder, stream + 2, deadline)
+    }
+  }
+}
+
+fn http2_credit(client: tcp_socket.Socket, stream: Int) -> Nil {
+  http2_send(client, http2_frame(8, 0, stream, <<0:1, 65_535:31>>))
+  |> should.equal(Ok(Nil))
+}
+
+fn check_http2_heartbeat(
+  client: tcp_socket.Socket,
+  stream: Int,
+  binary: Bool,
+) -> Nil {
+  http2_send_heartbeat(client, stream) |> should.equal(Ok(Nil))
+  http2_websocket_reply(client, stream, binary, <<>>, 16)
+  |> should.equal(Ok(bit_array.from_string(heartbeat_reply)))
+}
+
+fn http2_websocket_reply(
+  client: tcp_socket.Socket,
+  stream: Int,
+  binary: Bool,
+  buffered: BitArray,
+  remaining: Int,
+) -> Result(BitArray, Http2TestError) {
+  let opcode = case binary {
+    True -> 0x82
+    False -> 0x81
+  }
+  case buffered {
+    <<received, 0:1, length:7, payload:bytes-size(length)>>
+      if received == opcode && length < 126
+    -> Ok(payload)
+    _ if remaining <= 0 -> Error(Http2FrameLimit)
+    _ -> {
+      use data <- result.try(http2_wait_stream(client, 0, stream, 24))
+      http2_websocket_reply(
+        client,
+        stream,
+        binary,
+        <<buffered:bits, data:bits>>,
+        remaining - 1,
+      )
+    }
+  }
+}
+
+fn wait_http2_condition(check: fn() -> Bool, deadline: Int) -> Nil {
+  case check() {
+    True -> Nil
+    False -> {
+      { monotonic_ms() < deadline } |> should.be_true
+      process.sleep(5)
+      wait_http2_condition(check, deadline)
+    }
+  }
+}
+
+fn wait_http2_watcher(runtime: process.Pid, owner: process.Pid) -> process.Pid {
+  wait_http2_condition(
+    fn() { result.is_ok(lifecycle_watcher(runtime, owner)) },
+    monotonic_ms() + 1000,
+  )
+  let assert Ok(watcher) = lifecycle_watcher(runtime, owner)
+  watcher
+}
+
+fn http2_stream_down(
+  owner: process.Pid,
+  watcher: process.Pid,
+  action: fn() -> Nil,
+) -> Result(process.ExitReason, Nil) {
+  let owner_monitor = process.monitor(owner)
+  let watcher_monitor = process.monitor(watcher)
+  let deadline = monotonic_ms() + 1000
+  action()
+  let owner_down =
+    process.new_selector()
+    |> process.select_specific_monitor(owner_monitor, fn(down) { down.reason })
+    |> process.selector_receive(int.max(0, deadline - monotonic_ms()))
+  let watcher_down =
+    process.new_selector()
+    |> process.select_specific_monitor(watcher_monitor, fn(down) { down })
+    |> process.selector_receive(int.max(0, deadline - monotonic_ms()))
+  process.demonitor_process(owner_monitor)
+  process.demonitor_process(watcher_monitor)
+  watcher_down |> should.be_ok
+  owner_down
+}
+
+fn http2_send_close(client: tcp_socket.Socket, stream: Int) -> Nil {
+  http2_send(client, http2_frame(0, 0, stream, <<0x88, 0x80, 0:32>>))
+  |> should.equal(Ok(Nil))
+}
+
+// A timeout is success only for this bounded post-reset observation, never
+// for detecting cancellation. Reject DATA (including old stream 5), resets,
+// GOAWAY, or anything other than known connection-maintenance frames.
+fn http2_no_late_data(
+  client: tcp_socket.Socket,
+  deadline: Int,
+  remaining: Int,
+) -> Result(Nil, Http2TestError) {
+  use <- bool.guard(remaining <= 0, Error(Http2FrameLimit))
+  use <- bool.guard(monotonic_ms() >= deadline, Ok(Nil))
+  case http2_read(client, int.max(1, deadline - monotonic_ms())) {
+    Error(TcpFailure(tcp_socket.Timeout)) -> Ok(Nil)
+    Error(error) -> Error(error)
+    Ok(#(8, 0, _, _)) -> http2_no_late_data(client, deadline, remaining - 1)
+    Ok(#(6, 0, 0, payload)) -> {
+      use _ <- result.try(http2_send(client, http2_frame(6, 1, 0, payload)))
+      http2_no_late_data(client, deadline, remaining - 1)
+    }
+    Ok(#(kind, flags, stream, payload)) ->
+      Error(UnexpectedHttp2Frame(http2_frame(kind, flags, stream, payload)))
   }
 }
 

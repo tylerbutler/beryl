@@ -28,6 +28,11 @@ come from `beryl/transport/server`.
   server. Message handling forwards text/binary frames to that server and
   reports outbound write completion (`beryl_ewe.gleam:do_upgrade`,
   `beryl_ewe.gleam:on_message`).
+- An HTTP/2 WebSocket has a separate lifecycle watcher for its captured
+  runtime and stream worker. Runtime exit kills that worker even if flow
+  control blocks a write; Ewe resets only that stream and discards its
+  unsent buffered output. This does not impose a general write deadline
+  (`beryl_ewe.gleam:watch_runtime`).
 
 ## Side effects
 
@@ -36,6 +41,9 @@ come from `beryl/transport/server`.
   `beryl_ewe.gleam:on_message`).
 - The force-close callback kills the connection-owner process
   (`beryl_ewe.gleam:force_close`).
+- HTTP/2 lifecycle watchers end when their runtime or stream worker exits.
+  HTTP/1 keeps its existing selector-based runtime monitor
+  (`beryl_ewe.gleam:watch_runtime`, `beryl_ewe.gleam:do_upgrade`).
 - Shared server calls perform beryl admission, routing, and disconnect cleanup
   (`beryl_ewe.gleam:upgrade`, `beryl_ewe.gleam:on_message`).
 

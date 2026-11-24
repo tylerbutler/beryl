@@ -57,6 +57,12 @@ import gleam/result
 ///
 /// HTTP/2 extended CONNECT uses Ewe's parsed `:authority` for origin checks
 /// when there is no `Host` header.
+///
+/// Each HTTP/2 WebSocket monitors its beryl runtime outside the frame
+/// handler. If that runtime exits, the stream worker is killed even when
+/// a write is blocked by flow control. Ewe resets that stream and discards
+/// its unsent buffered output without closing the shared HTTP/2 connection.
+/// This is runtime-exit cancellation, not a general write deadline.
 pub fn upgrade(
   request: Request(Connection),
   channels: Sockets,
@@ -156,6 +162,7 @@ fn do_upgrade(
   telemetry: transport.Telemetry,
 ) -> Response(Body) {
   let seed = server.connect_seed(request, connect_metadata)
+  let method = request.method
   ewe.websocket(
     request,
     on_init: fn(_connection, base_selector: Selector(SendRequest)) {
@@ -163,6 +170,10 @@ fn do_upgrade(
       // frames to this connection's process as `ewe.UserMessage(SendRequest)`
       // messages.
       let owner = process.self()
+      case method {
+        http.Connect -> watch_runtime(channels, owner)
+        _ -> Nil
+      }
       server.init_connection(
         sockets: channels,
         seed: seed,
@@ -180,6 +191,41 @@ fn do_upgrade(
   )
 }
 
+type LifecycleExit {
+  RuntimeExited
+  ConnectionExited
+}
+
+fn watch_runtime(channels: Sockets, owner: process.Pid) -> Nil {
+  case transport.runtime_pid(channels) {
+    Error(Nil) -> process.kill(owner)
+    Ok(runtime) -> {
+      // Ewe's pending-write receive cannot select the runtime's DOWN message.
+      let _watcher =
+        process.spawn_unlinked(fn() {
+          let runtime_monitor = process.monitor(runtime)
+          let owner_monitor = process.monitor(owner)
+          let exited =
+            process.new_selector()
+            |> process.select_specific_monitor(runtime_monitor, fn(_) {
+              RuntimeExited
+            })
+            |> process.select_specific_monitor(owner_monitor, fn(_) {
+              ConnectionExited
+            })
+            |> process.selector_receive_forever
+          process.demonitor_process(runtime_monitor)
+          process.demonitor_process(owner_monitor)
+          case exited {
+            RuntimeExited -> process.kill(owner)
+            ConnectionExited -> Nil
+          }
+        })
+      Nil
+    }
+  }
+}
+
 fn force_close(owner: process.Pid) -> Result(Nil, server.ForceCloseError) {
   process.kill(owner)
   Ok(Nil)
@@ -189,8 +235,8 @@ fn force_close(owner: process.Pid) -> Result(Nil, server.ForceCloseError) {
 ///
 /// Inbound frames run the shared size/rate/decode pipeline; outbound
 /// `SendRequest`s from the runtime are written to the Ewe connection. Ewe
-/// does not deliver a close message to the handler; cleanup happens in
-/// `on_close`.
+/// does not deliver a close message to the handler. Normal cleanup runs in
+/// `on_close`; the connection limiter reclaims the slot after a forced exit.
 fn on_message(
   connection: WebsocketConnection,
   state: ConnectionState,
