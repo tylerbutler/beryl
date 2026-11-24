@@ -57,7 +57,10 @@ command = "mise exec -- licence_audit"
 command = "mise exec -- licence_audit vulns"
 
 [tools.trellis.tasks.audit-check]
-command = "mise exec -- licence_audit check --vulns"
+command = "mise exec -- licence_audit check --checks=all"
+
+[tools.trellis.tasks.sbom]
+command = "mkdir -p build && mise exec -- licence_audit sbom --reproducible --output=build/sbom.cdx.json"
 
 [tools.trellis.changelog]
 strictness = "warn"

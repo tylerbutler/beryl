@@ -111,6 +111,10 @@ audit-vulns *PACKAGES="beryl_heirloom beryl_protocol beryl beryl_mist beryl_ewe"
 audit-check *PACKAGES="beryl_heirloom beryl_protocol beryl beryl_mist beryl_ewe":
     mise exec -- trellis run audit-check --serial --keep-going {{ PACKAGES }}
 
+# Generate reproducible CycloneDX SBOMs in each package's build directory
+sbom *PACKAGES="beryl_heirloom beryl_protocol beryl beryl_mist beryl_ewe":
+    mise exec -- trellis run sbom --serial {{ PACKAGES }}
+
 # === DOCUMENTATION ===
 
 # Build Gleam API documentation for publishable workspace packages

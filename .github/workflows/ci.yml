@@ -157,6 +157,23 @@ jobs:
         if: needs.changes.outputs.source == 'true'
         run: just audit-check
 
+      - name: Generate CycloneDX SBOMs
+        if: needs.changes.outputs.source == 'true'
+        run: just sbom
+
+      - name: Upload CycloneDX SBOMs
+        if: needs.changes.outputs.source == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # ratchet:actions/upload-artifact@v7
+        with:
+          name: sboms-${{ github.run_attempt }}
+          path: |
+            packages/beryl_heirloom/build/sbom.cdx.json
+            packages/beryl_protocol/build/sbom.cdx.json
+            packages/beryl/build/sbom.cdx.json
+            packages/beryl_mist/build/sbom.cdx.json
+            packages/beryl_ewe/build/sbom.cdx.json
+          if-no-files-found: error
+
       - name: Save Gleam dependencies
         if: >-
           ${{

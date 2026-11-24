@@ -18,10 +18,11 @@ on:
 jobs:
   test:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true &&
-       github.event.pull_request.head.ref == 'release/pending' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.pull_request.merged == true &&
+        github.event.pull_request.head.ref == 'release/pending' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     permissions:
       actions: read
       contents: read
@@ -30,14 +31,30 @@ jobs:
 
   publish:
     needs: test
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.pull_request.merged == true &&
+        github.event.pull_request.head.ref == 'release/pending' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha || 'main' }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
+
+      - name: Verify release revision
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
+            test "$(jq -r '.pull_request.merge_commit_sha' "$GITHUB_EVENT_PATH")" = "$GITHUB_SHA"
+          fi
 
       - name: Setup environment
         uses: tylerbutler/actions/setup-gleam@ed7d5e5f1d4370a5ccf06503916e3c301102ab1c # ratchet:tylerbutler/actions/setup-gleam@main
@@ -48,7 +65,82 @@ jobs:
       - name: Setup mise tools
         uses: ./.github/actions/mise
 
+      - name: Generate CycloneDX SBOMs
+        run: just sbom
+
       - name: Tag and create GitHub releases
         run: trellis tag create --push --github-release
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Stage release SBOMs and check existing provenance
+        id: sboms
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-sboms" "$RUNNER_TEMP/unsigned-sboms"
+          git tag --points-at "$GITHUB_SHA" > "$RUNNER_TEMP/release-tags"
+          : > "$RUNNER_TEMP/sbom-releases"
+          unsigned=false
+          while IFS= read -r tag; do
+            case "$tag" in
+              beryl-v*|beryl_mist-v*|beryl_ewe-v*) package="${tag%-v*}" ;;
+              *) continue ;;
+            esac
+            sbom="packages/$package/build/sbom.cdx.json"
+            jq -e --arg name "$package" --arg tag "$tag" \
+              '.metadata.component | .name == $name and ($name + "-v" + .version) == $tag' "$sbom"
+            test "$(git rev-parse "$tag^{commit}")" = "$GITHUB_SHA"
+            asset="$RUNNER_TEMP/release-sboms/$tag.cdx.json"
+            cp "$sbom" "$asset"
+            printf '%s\n' "$tag" >> "$RUNNER_TEMP/sbom-releases"
+
+            digest="$(sha256sum "$asset" | cut -d ' ' -f 1)"
+            response="$RUNNER_TEMP/attestations-$tag"
+            needs_attestation=false
+            if gh api --include --paginate \
+              --jq '.attestations | if type == "array" then length else error("Invalid attestation list") end' \
+              "repos/$GITHUB_REPOSITORY/attestations/sha256:$digest" > "$response" 2> "$response.err"; then
+              if grep -Eq '^[1-9][0-9]*$' "$response"; then
+                gh attestation verify "$asset" --repo "$GITHUB_REPOSITORY" \
+                  --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish.yml" \
+                  --source-digest "$GITHUB_SHA" --source-ref refs/heads/main \
+                  --deny-self-hosted-runners
+              else
+                grep -Eq '^0$' "$response"
+                needs_attestation=true
+              fi
+            elif grep -Eq '^HTTP/[^ ]+ 404( |$)' "$response"; then
+              needs_attestation=true
+            else
+              cat "$response.err" >&2
+              exit 1
+            fi
+            if [[ "$needs_attestation" == true ]]; then
+              cp "$asset" "$RUNNER_TEMP/unsigned-sboms/$tag.cdx.json"
+              unsigned=true
+            fi
+          done < "$RUNNER_TEMP/release-tags"
+          echo "unsigned=$unsigned" >> "$GITHUB_OUTPUT"
+
+      - name: Attest release SBOM provenance
+        if: steps.sboms.outputs.unsigned == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # ratchet:actions/attest@v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/unsigned-sboms/*.cdx.json
+          create-storage-record: false
+
+      - name: Verify provenance and attach release SBOMs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            asset="$RUNNER_TEMP/release-sboms/$tag.cdx.json"
+            gh attestation verify "$asset" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish.yml" \
+              --source-digest "$GITHUB_SHA" --source-ref refs/heads/main \
+              --deny-self-hosted-runners
+            gh release upload "$tag" "$asset" --clobber
+          done < "$RUNNER_TEMP/sbom-releases"
