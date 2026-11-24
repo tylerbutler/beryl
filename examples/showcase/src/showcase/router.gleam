@@ -30,7 +30,7 @@ pub fn handle_request(
     ["chat", ..] ->
       chatroom_router.handle_request(http_request, context.chatroom)
     // TODO: re-enable the collab_docs demo. The handler is still
-    // registered in showcase.main so reinstating the route + landing
+    // registered in showcase.handlers so reinstating the route + landing
     // card is a one-line change.
     // ["docs", ..] ->
     //   document_router.handle_request(http_request, context.collab_document)

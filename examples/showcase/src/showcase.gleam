@@ -29,16 +29,21 @@ import ewe
 import example_helper/broadcast_hub as hub
 import example_helper/session_presence
 import example_helper/static
+import gleam/erlang/application
 import gleam/erlang/process
 import gleam/int
 import gleam/io
+import gleam/otp/actor
+import gleam/otp/factory_supervisor as factory
 import gleam/otp/static_supervisor
+import gleam/otp/supervision
 import gleam/result
 import gleam/string
+import relay_supervisor as relay
 import showcase/channel/cursor as cursor_channel
 import showcase/router
 
-/// Everything the showcase channels read. Assembled in `main` and passed
+/// Everything the showcase channels read. Assembled at startup and passed
 /// to `handlers`, which is also what the tests register, so the deployed
 /// table and the tested table cannot drift.
 pub type Dependencies {
@@ -87,7 +92,88 @@ fn room_display_name(topic: String) -> String {
   }
 }
 
+/// Start the service under its OTP application. Other entrypoints, including
+/// `gleam test`, start the application but do not open a listening port.
 pub fn main() -> Nil {
+  let entrypoint = entrypoint_name()
+  let assert Ok(Nil) = process.register(process.self(), entrypoint)
+  let server = factory.get_by_name(server_name())
+  let assert Ok(started) = factory.start_child(server, Nil)
+  process.new_selector()
+  |> process.select_specific_monitor(process.monitor(started.pid), fn(_) { Nil })
+  |> process.selector_receive_forever
+  // Restart exhaustion also exits with `shutdown`. Only prep_stop authorizes
+  // a successful exit, and its notice precedes the shutdown of the tree.
+  let assert Ok(Nil) = process.receive(process.named_subject(entrypoint), 0)
+    as "showcase service stopped outside application shutdown"
+  Nil
+}
+
+// The OTP callbacks and the deployment entrypoint run in separate processes.
+// Only the two literal names below enter the atom table.
+@external(erlang, "erlang", "binary_to_atom")
+fn registered_name(label: String) -> process.Name(message)
+
+fn server_name() -> process.Name(factory.Message(Nil, relay.Supervisor)) {
+  registered_name("showcase")
+}
+
+fn entrypoint_name() -> process.Name(Nil) {
+  registered_name("showcase_entrypoint")
+}
+
+/// OTP application callback. Only the server entrypoint starts a child.
+pub fn start(
+  _type: application.StartType,
+  _arguments: List(Nil),
+) -> Result(process.Pid, actor.StartError) {
+  factory.supervisor_child(start_server)
+  |> factory.named(server_name())
+  |> factory.start
+  |> result.map(fn(started) { started.pid })
+}
+
+/// Notify the deployment before OTP starts shutting down its supervisor.
+pub fn prep_stop(state: a) -> a {
+  let entrypoint = entrypoint_name()
+  // OTP also calls prep_stop after an unexpected exit of the root supervisor.
+  case process.named(server_name()), process.named(entrypoint) {
+    Ok(_), Ok(_) -> process.send(process.named_subject(entrypoint), Nil)
+    _, _ -> Nil
+  }
+  state
+}
+
+/// OTP stops the server tree before it calls `stop`.
+pub fn stop(_state: a) -> Nil {
+  Nil
+}
+
+fn start_server(_argument: Nil) -> actor.StartResult(relay.Supervisor) {
+  // The domain owner starts the helpers that return process-specific handles.
+  // Its younger sibling uses those handles and must stop before the owner.
+  let owner =
+    relay.Template(
+      start: fn(_) {
+        actor.new_with_initialiser(5000, fn(_) {
+          Ok(actor.initialised(Nil) |> actor.returning(server_tree()))
+        })
+        |> actor.start
+      },
+      child_type: supervision.Worker(5000),
+    )
+  let server =
+    relay.Template(
+      start: static_supervisor.start,
+      child_type: supervision.Supervisor,
+    )
+  relay.new(fn(children) {
+    children |> relay.add(relay.child(owner)) |> relay.add(relay.child(server))
+  })
+  |> relay.start
+}
+
+fn server_tree() -> static_supervisor.Builder {
   let assert Ok(cursor_static_directory) = static.priv_static("cursor")
   let assert Ok(chatroom_static_directory) = static.priv_static("chatroom")
   let assert Ok(document_static_directory) =
@@ -97,7 +183,7 @@ pub fn main() -> Nil {
   let assert Ok(presence_tracker) = session_presence.start()
 
   // Chatrooms-specific state.
-  let #(groups, groups_specification) = group.child_spec()
+  let #(groups, groups_specification) = public_rooms()
 
   // collab_docs-specific state.
   let document_secret = document_auth.new_secret()
@@ -135,15 +221,6 @@ pub fn main() -> Nil {
 
   session_presence.configure(presence_tracker, channels)
   hub.bind(hub, channels)
-  let assert Ok(_root) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(groups_specification)
-    |> static_supervisor.add(beryl_specification)
-    |> static_supervisor.start()
-  let assert Ok(_) = group.create(groups, "public")
-  let assert Ok(_) = group.add(groups, "public", "room:general")
-  let assert Ok(_) = group.add(groups, "public", "room:random")
-  let assert Ok(_) = group.add(groups, "public", "room:help")
 
   // Build per-example contexts pinned to their URL prefix.
   let cursor_context =
@@ -184,14 +261,10 @@ pub fn main() -> Nil {
     envoy.get("BIND_ADDRESS")
     |> result.unwrap("localhost")
 
-  io.println("✨ beryl examples showcase (beryl/channel)")
-  io.println("   Listening on " <> interface <> ":" <> int.to_string(port))
-  io.println("")
-
   // Single WebSocket endpoint at /socket/websocket. No token gate — this
   // is a public demo. Phoenix JS client (new Socket("/socket")) in every
   // example targets this URL out of the box.
-  let assert Ok(_) =
+  let listener =
     fn(http_request) {
       use <- beryl_ewe.upgrade(
         http_request,
@@ -203,7 +276,29 @@ pub fn main() -> Nil {
     |> ewe.new
     |> ewe.listening(on: port)
     |> ewe.bind(to: interface)
-    |> ewe.start
+    |> ewe.supervised
 
-  process.sleep_forever()
+  io.println("✨ beryl examples showcase (beryl/channel)")
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(groups_specification)
+  |> static_supervisor.add(beryl_specification)
+  |> static_supervisor.add(listener)
+}
+
+/// Seed the public rooms each time the groups actor starts.
+@internal
+pub fn public_rooms() -> #(
+  group.Groups,
+  supervision.ChildSpecification(process.Subject(group.Message)),
+) {
+  let #(groups, specification) = group.child_spec()
+  let seeded =
+    supervision.map_data(specification, fn(subject) {
+      let assert Ok(Nil) = group.create(groups, "public")
+      let assert Ok(Nil) = group.add(groups, "public", "room:general")
+      let assert Ok(Nil) = group.add(groups, "public", "room:random")
+      let assert Ok(Nil) = group.add(groups, "public", "room:help")
+      subject
+    })
+  #(groups, seeded)
 }

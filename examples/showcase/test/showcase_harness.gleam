@@ -1,14 +1,13 @@
 //// Shared helpers for the showcase channel tests.
 ////
 //// Every test runs the **deployed** handler table — `showcase.handlers`,
-//// the same list `showcase.main` registers — on a real socket system, and
+//// the same list the server registers — on a real socket system, and
 //// drives it through beryl's public transport SPI (`beryl/transport`):
 //// connect, decode a Phoenix frame in the caller, route it, disconnect.
 //// So these assertions are made on the frames a browser would receive.
 
 import beryl
 import beryl/channel
-import beryl/group
 import beryl/socket
 import beryl/transport
 import beryl/wire
@@ -52,7 +51,7 @@ pub fn start(_replica: String) -> System {
 /// Start the deployed handlers with test-specific runtime limits.
 pub fn start_with_config(config: beryl.Config) -> System {
   let assert Ok(presence_tracker) = session_presence.start()
-  let #(groups, groups_specification) = group.child_spec()
+  let #(groups, groups_specification) = showcase.public_rooms()
   let assert Ok(store) = document_store.start()
   let assert Ok(broadcast_hub) = hub.start()
   let secret = auth.new_secret()
@@ -84,9 +83,6 @@ pub fn start_with_config(config: beryl.Config) -> System {
     |> static_supervisor.add(groups_specification)
     |> static_supervisor.add(specification)
     |> static_supervisor.start()
-  let assert Ok(_) = group.create(groups, "public")
-  let assert Ok(_) = group.add(groups, "public", "room:general")
-  let assert Ok(_) = group.add(groups, "public", "room:random")
 
   System(sockets: sockets, secret: secret, presence: presence_tracker)
 }

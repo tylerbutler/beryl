@@ -1,10 +1,16 @@
+import beryl/group
 import beryl/snapshot
 import beryl/transport
 import example_helper/session_presence
+import gleam/erlang/atom
 import gleam/erlang/process
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
 import gleam/result
+import gleam/set
 import gleam/string
 import gleeunit/should
+import showcase
 import showcase_harness
 import unitest
 
@@ -13,6 +19,34 @@ fn without_error_logs(action: fn() -> Nil) -> Bool
 
 @external(erlang, "showcase_harness_test_ffi", "socket_actor")
 fn socket_actor(router: process.Pid, socket_id: String) -> process.Pid
+
+pub fn public_rooms_are_ready_on_start_and_restart_test() -> Nil {
+  let ready = process.new_subject()
+  let #(groups, specification) = showcase.public_rooms()
+  let assert Ok(root) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(
+      supervision.map_data(specification, fn(subject) {
+        let assert Ok(pid) = process.subject_owner(subject)
+        process.send(ready, pid)
+      }),
+    )
+    |> static_supervisor.start
+  let expected = Ok(set.from_list(["room:general", "room:random", "room:help"]))
+  let assert Ok(first) = process.receive(ready, 1000)
+  group.topics(groups, "public") |> should.equal(expected)
+  process.kill(first)
+  let assert Ok(second) = process.receive(ready, 1000)
+  second |> should.not_equal(first)
+  group.topics(groups, "public") |> should.equal(expected)
+  let monitor = process.monitor(root.pid)
+  process.unlink(root.pid)
+  process.send_abnormal_exit(root.pid, atom.create("shutdown"))
+  process.new_selector()
+  |> process.select_specific_monitor(monitor, fn(_) { Nil })
+  |> process.selector_receive(1000)
+  |> should.equal(Ok(Nil))
+}
 
 pub fn socket_crash_removes_cursor_presence_and_publishes_roster_test() -> Nil {
   use <- unitest.tag("serial")

@@ -187,10 +187,12 @@ A recommended startup order makes four decisions, in this order:
 3. Add beryl's specification to your application supervisor and start it.
 4. Start the HTTP/WebSocket listener with the running `Sockets` handle.
 
-Each part then has a clear recovery path. beryl's supervisor restores the
-router. Clients restore socket actors and subscriptions when they reconnect.
-Your own processes or storage keep the domain state. Graceful shutdown drains
-socket callbacks without stopping unrelated services.
+For a deployed Ewe server, add `ewe.supervised` **after** beryl in a supervisor
+owned by an OTP application. OTP stops children in reverse order: Ewe closes
+its WebSockets with code `1001` (going away) while beryl can still run channel
+callbacks. Starting Ewe from `main` alone does not give it this shutdown path.
+The [showcase deployment](https://github.com/tylerbutler/beryl/tree/main/examples/showcase#startup-and-shutdown)
+does this without starting the listeners of the demos it imports.
 
 ## Sources and further reading
 

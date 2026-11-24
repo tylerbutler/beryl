@@ -76,4 +76,5 @@ gleam_json = { version = ">= 2.0.0 and < 4.0.0" }
 gleam_otp = { version = ">= 0.12.0 and < 2.0.0" }
 gleam_stdlib = { version = ">= 0.44.0 and < 2.0.0" }
 gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
+relay_supervisor = { version = ">= 1.0.0-rc1 and < 2.0.0" }
 unitest = { version = ">= 1.6.1 and < 2.0.0" }
