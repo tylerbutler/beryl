@@ -1,9 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = '''
-#### Unchanged presence entries return after retirement.
-
-An unchanged presence entry is restored when the same owner reconnects after
-retirement and answers a fresh snapshot request. Causal history and stale-reply
-fencing remain intact.
-'''

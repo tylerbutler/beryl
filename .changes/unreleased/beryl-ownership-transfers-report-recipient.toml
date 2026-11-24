@@ -1,9 +1,0 @@
-package = "beryl"
-kind = "Fixed"
-body = '''
-#### Ownership transfers report recipient death.
-
-Callers now receive `RecipientNotAlive` if the recipient exits after the
-liveness check but before ETS transfers ownership. The caller keeps the table
-and its configured heir; heir-setting errors remain unchanged.
-'''
