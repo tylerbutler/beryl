@@ -1116,6 +1116,265 @@ fn connected_sockets(sockets: beryl.Sockets) -> Int {
   }
 }
 
+fn connect_owned_socket(
+  sockets: beryl.Sockets,
+  socket_id: String,
+  frames: process.Subject(String),
+  closed: process.Subject(Nil),
+) -> process.Pid {
+  let admitted = process.new_subject()
+  let connection =
+    process.spawn(fn() {
+      let assert Ok(permit) =
+        transport.acquire_connection_slot(sockets, "127.0.0.1")
+      transport.bind_connection_slot(permit) |> should.equal(Ok(Nil))
+      let assert Ok(owner) = transport.runtime_pid(sockets)
+      let result =
+        transport.admit_socket(
+          sockets: sockets,
+          owner: owner,
+          socket_id: socket_id,
+          send: fn(frame) {
+            process.send(frames, frame)
+            Ok(Nil)
+          },
+          send_binary: fn(_) { Ok(Nil) },
+          codec: None,
+          seed: socket.empty_seed(),
+          close: fn() { process.send(closed, Nil) },
+        )
+      process.send(admitted, result)
+      process.sleep_forever()
+    })
+  process.receive(admitted, 1000) |> should.equal(Ok(Ok(Nil)))
+  connection
+}
+
+fn kill_connection(connection: process.Pid) -> Nil {
+  let monitor = process.monitor(connection)
+  process.unlink(connection)
+  process.kill(connection)
+  process.new_selector()
+  |> process.select_specific_monitor(monitor, fn(_) { Nil })
+  |> process.selector_receive(1000)
+  |> should.equal(Ok(Nil))
+  process.demonitor_process(monitor)
+}
+
+pub fn admitted_transport_owner_exit_closes_joined_socket_test() -> Nil {
+  use <- unitest.tag("serial")
+  check_admitted_owner_exit(False)
+}
+
+pub fn normal_disconnect_and_owner_exit_close_join_once_test() -> Nil {
+  use <- unitest.tag("serial")
+  check_admitted_owner_exit(True)
+}
+
+fn check_admitted_owner_exit(disconnect_first: Bool) -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
+  let closed = process.new_subject()
+  let close_gate = new_gate()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(2)
+        |> beryl.with_heartbeat(60_000),
+      init: fn(info: socket.ConnectInfo(Nil)) { #(info.socket_id, []) },
+      update: fn(model, input) {
+        case input {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          socket.Closed(topic, reason) -> {
+            process.send(closed, #(model, topic, reason))
+            case model {
+              "owned" -> wait_for_gate(close_gate)
+              _ -> Nil
+            }
+            Next(model, [])
+          }
+          socket.Message(..) | socket.Binary(..) | socket.Info(..) ->
+            Next(model, [])
+        }
+      },
+    )
+  let assert Ok(healthy_permit) =
+    transport.acquire_connection_slot(sockets, "127.0.0.1")
+  transport.bind_connection_slot(healthy_permit) |> should.equal(Ok(Nil))
+  let healthy_frames = app_test_helper.connect(sockets, "healthy")
+  app_test_helper.join_ok(
+    sockets,
+    healthy_frames,
+    "healthy",
+    "room:a",
+    "healthy-join",
+    "healthy-ref",
+  )
+
+  let frames = process.new_subject()
+  let transport_closed = process.new_subject()
+  let connection =
+    connect_owned_socket(sockets, "owned", frames, transport_closed)
+  app_test_helper.join_ok(sockets, frames, "owned", "room:a", "jr-1", "r-1")
+  connected_sockets(sockets) |> should.equal(2)
+  transport.acquire_connection_slot(sockets, "127.0.0.1") |> should.be_error
+
+  case disconnect_first {
+    True -> {
+      transport.socket_disconnected(sockets, "owned")
+      process.receive(closed, 1000)
+      |> should.equal(Ok(#("owned", "room:a", socket.Normal)))
+    }
+    False -> Nil
+  }
+  kill_connection(connection)
+  case disconnect_first {
+    False ->
+      process.receive(closed, 1000)
+      |> should.equal(Ok(#("owned", "room:a", socket.Normal)))
+    True -> Nil
+  }
+  release_gate(close_gate)
+  process.receive(transport_closed, 1000) |> should.equal(Ok(Nil))
+  let factory = socket_factory_pid(sockets)
+  test_helper.wait_until(
+    fn() { connected_sockets(sockets) == 1 && active_child_count(factory) == 1 },
+    1000,
+    10,
+  )
+  let assert Ok(current) = snapshot.get(sockets)
+  snapshot.joined_socket_topic_pairs(current) |> should.equal(1)
+  active_child_count(factory) |> should.equal(1)
+  process.receive(closed, 100) |> should.be_error
+  process.receive(transport_closed, 0) |> should.be_error
+
+  let assert Ok(replacement_permit) =
+    transport.acquire_connection_slot(sockets, "127.0.0.1")
+  transport.bind_connection_slot(replacement_permit) |> should.equal(Ok(Nil))
+  let replacement_frames = app_test_helper.connect(sockets, "replacement")
+  app_test_helper.route(
+    sockets,
+    "replacement",
+    "[null,\"replacement-ref\",\"phoenix\",\"heartbeat\",{}]",
+  )
+  app_test_helper.recv(replacement_frames)
+  |> string.contains("replacement-ref")
+  |> should.be_true
+  beryl.broadcast(sockets, "room:a", "still-connected", json.null())
+  |> should.equal(Ok(Nil))
+  app_test_helper.recv(healthy_frames)
+  |> string.contains("still-connected")
+  |> should.be_true
+
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  process.receive(closed, 1000)
+  |> should.equal(Ok(#("healthy", "room:a", socket.Shutdown)))
+  transport.release_connection_slot(healthy_permit)
+  transport.release_connection_slot(replacement_permit)
+}
+
+pub fn pending_admission_owner_exit_removes_booting_socket_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  let gate = new_gate()
+  let entered = process.new_subject()
+  let closed = process.new_subject()
+  let transport_closed = process.new_subject()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: fn(_info: socket.ConnectInfo(Nil)) {
+        process.send(entered, Nil)
+        wait_for_gate(gate)
+        #(Nil, [])
+      },
+      update: fn(model, input) {
+        case input {
+          socket.Closed(topic, reason) -> {
+            process.send(closed, #(topic, reason))
+            Next(model, [])
+          }
+          Join(_, _, _)
+          | socket.Message(..)
+          | socket.Binary(..)
+          | socket.Info(..) -> Next(model, [])
+        }
+      },
+    )
+  let connection =
+    process.spawn(fn() {
+      admit(sockets, app_test_helper.runtime_pid(sockets), "booting", fn() {
+        process.send(transport_closed, Nil)
+      })
+    })
+  process.receive(entered, 1000) |> should.equal(Ok(Nil))
+  let factory = socket_factory_pid(sockets)
+  active_child_count(factory) |> should.equal(1)
+
+  kill_connection(connection)
+  test_helper.wait_until(fn() { active_child_count(factory) == 0 }, 1000, 10)
+  test_helper.wait_until(fn() { connected_sockets(sockets) == 0 }, 1000, 10)
+  release_gate(gate)
+  process.receive(transport_closed, 1000) |> should.equal(Ok(Nil))
+  process.receive(closed, 100) |> should.be_error
+  process.receive(transport_closed, 0) |> should.be_error
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+pub fn owner_exit_drains_accepted_router_and_socket_work_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  let gate = new_gate()
+  let messages = process.new_subject()
+  let closed = process.new_subject()
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec()),
+      init: app_test_helper.accepting_init,
+      update: fn(model, input) {
+        case input {
+          Join(_, _, ref) -> Next(model, [AcceptJoin(ref, None)])
+          socket.Message(_, event, _, _) -> {
+            process.send(messages, event)
+            case event {
+              "first" -> wait_for_gate(gate)
+              _ -> Nil
+            }
+            Next(model, [])
+          }
+          socket.Closed(topic, reason) -> {
+            process.send(closed, #(topic, reason))
+            Next(model, [])
+          }
+          socket.Binary(..) | socket.Info(..) -> Next(model, [])
+        }
+      },
+    )
+  let frames = process.new_subject()
+  let transport_closed = process.new_subject()
+  let connection =
+    connect_owned_socket(sockets, "owned", frames, transport_closed)
+  app_test_helper.join_ok(sockets, frames, "owned", "room:a", "jr-1", "r-1")
+  app_test_helper.push(sockets, "owned", "room:a", "first", "r-2")
+  process.receive(messages, 1000) |> should.equal(Ok("first"))
+
+  // The second accepted event is still in the router when owner loss arrives.
+  let runtime = app_test_helper.runtime_pid(sockets)
+  test_helper.suspend_process(runtime)
+  app_test_helper.push(sockets, "owned", "room:a", "second", "r-3")
+  kill_connection(connection)
+  test_helper.resume_process(runtime)
+  process.receive(closed, 0) |> should.be_error
+  release_gate(gate)
+
+  process.receive(messages, 1000) |> should.equal(Ok("second"))
+  process.receive(closed, 1000) |> should.equal(Ok(#("room:a", socket.Normal)))
+  process.receive(transport_closed, 1000) |> should.equal(Ok(Nil))
+  test_helper.wait_until(fn() { connected_sockets(sockets) == 0 }, 1000, 10)
+  process.receive(messages, 0) |> should.be_error
+  process.receive(closed, 100) |> should.be_error
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
 pub fn socket_factory_crash_closes_sockets_and_recovers_test() -> Nil {
   let assert Ok(sockets) =
     app_test_helper.start_app(

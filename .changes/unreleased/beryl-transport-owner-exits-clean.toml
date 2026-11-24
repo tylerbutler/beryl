@@ -1,0 +1,11 @@
+package = "beryl"
+kind = "Fixed"
+body = '''
+#### Admitted sockets close when their transport owner exits.
+
+When a transport owner exits without its normal close callback, beryl now
+removes its socket and topic memberships before heartbeat eviction. Accepted
+work drains before the application receives one normal `Closed` event per
+joined topic. Connection capacity remains reusable, and healthy peers stay
+connected.
+'''

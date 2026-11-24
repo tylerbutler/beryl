@@ -1479,8 +1479,13 @@ fn handle_router_socket_actor_down(
           ref.monitor == monitor || ref.admission_monitor == monitor
         })
       {
-        Ok(#(_, ref)) if ref.admission_monitor == monitor -> {
-          cancel_abandoned_socket(ref)
+        Ok(#(socket_id, ref)) if ref.admission_monitor == monitor -> {
+          case atomic_token.cancel(ref.admission) {
+            True -> process.kill(ref.pid)
+            // Claimed admissions drain through the same coalesced close as
+            // normal transport disconnects; cancelled ones can also close.
+            False -> work_queue.close_target(state.inbox, socket_id)
+          }
           actor.continue(state)
         }
         Ok(#(socket_id, ref)) -> {
@@ -1531,11 +1536,6 @@ fn emit_abnormal_disconnect(
         ),
       )
   }
-}
-
-fn cancel_abandoned_socket(ref: SocketActorRef(message)) -> Nil {
-  use <- bool.guard(when: !atomic_token.cancel(ref.admission), return: Nil)
-  process.kill(ref.pid)
 }
 
 /// Drop one socket actor from the router: demonitor, sweep any topic-index
