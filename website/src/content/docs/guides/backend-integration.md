@@ -44,19 +44,24 @@ fn handler(
 ) -> fn(Request(ewe.Connection)) -> Response(ewe.Body) {
   use http_request <- beryl_ewe.handler(sockets, websocket_config)
   case request.path_segments(http_request), http_request.method {
-    ["internal", "publish"], Post -> publish(http_request, sockets)
-    _, _ -> not_found()
+    ["internal", "publish"], Post ->
+      case authorized_internal(http_request) {
+        True -> publish(http_request, sockets)
+        False -> empty_response(403)
+      }
+    _, _ -> empty_response(404)
   }
 }
 ```
 
-The handler decodes the backend's request into a typed event and forwards it.
+Return `400` for an invalid request and `413` if the body or broadcast is too
+large. If beryl is unavailable or its queue is full, return `503`. A `202`
+means beryl accepted the update, not that every subscriber received it.
 
 ```gleam
+import beryl/overload
 import gleam/dynamic/decode
-import gleam/http/response as response
 import gleam/json
-import gleam/result
 
 pub type PublishRequest {
   PublishRequest(topic: String, order_id: String, status: String)
@@ -66,40 +71,39 @@ fn publish(
   http_request: Request(ewe.Connection),
   sockets: beryl.Sockets,
 ) -> Response(ewe.Body) {
-  case authorized_internal(http_request) {
-    False -> forbidden()
-    True ->
-      case read_publish_request(http_request) {
-        Ok(publish_request) -> {
-          beryl.broadcast(
-            sockets,
-            publish_request.topic,
-            "order_updated",
-            json.object([
-              #("order_id", json.string(publish_request.order_id)),
-              #("status", json.string(publish_request.status)),
-            ]),
-          )
-          accepted()
-        }
-        Error(_) -> bad_request()
+  case ewe.read_body(http_request, limit: 1_000_000) {
+    Error(ewe.BodyTooLarge) -> empty_response(413)
+    Error(ewe.InvalidBody) -> empty_response(400)
+    Ok(request) ->
+      case json.parse_bits(request.body, publish_request_decoder()) {
+        Error(_) -> empty_response(400)
+        Ok(update) -> broadcast_update(sockets, update)
       }
   }
 }
 
-fn read_publish_request(
-  http_request: Request(ewe.Connection),
-) -> Result(PublishRequest, Nil) {
-  use http_request <- result.try(
-    ewe.read_body(http_request, limit: 1_000_000) |> result.replace_error(Nil),
-  )
-  let decoder = {
-    use topic <- decode.field("topic", decode.string)
-    use order_id <- decode.field("order_id", decode.string)
-    use status <- decode.field("status", decode.string)
-    decode.success(PublishRequest(topic:, order_id:, status:))
+fn publish_request_decoder() -> decode.Decoder(PublishRequest) {
+  use topic <- decode.field("topic", decode.string)
+  use order_id <- decode.field("order_id", decode.string)
+  use status <- decode.field("status", decode.string)
+  decode.success(PublishRequest(topic:, order_id:, status:))
+}
+
+fn broadcast_update(
+  sockets: beryl.Sockets,
+  update: PublishRequest,
+) -> Response(ewe.Body) {
+  let payload = json.object([
+    #("order_id", json.string(update.order_id)),
+    #("status", json.string(update.status)),
+  ])
+  case beryl.broadcast(sockets, update.topic, "order_updated", payload) {
+    Ok(Nil) -> empty_response(202)
+    Error(overload.ItemTooLarge(_)) -> empty_response(413)
+    Error(overload.Unavailable)
+    | Error(overload.Closed)
+    | Error(overload.Overloaded(_)) -> empty_response(503)
   }
-  json.parse_bits(http_request.body, decoder) |> result.replace_error(Nil)
 }
 ```
 
@@ -123,25 +127,13 @@ fn authorized_internal(http_request: Request(body)) -> Bool {
 Keep this endpoint on a private network or behind a trusted proxy. Do not let
 browsers access it.
 
-## Response helpers
+## Send an empty response
 
 ```gleam
 import gleam/http/response.{type Response}
 
-fn accepted() -> Response(ewe.Body) {
-  response.new(202) |> response.set_body(ewe.Empty)
-}
-
-fn bad_request() -> Response(ewe.Body) {
-  response.new(400) |> response.set_body(ewe.Empty)
-}
-
-fn forbidden() -> Response(ewe.Body) {
-  response.new(403) |> response.set_body(ewe.Empty)
-}
-
-fn not_found() -> Response(ewe.Body) {
-  response.new(404) |> response.set_body(ewe.Empty)
+fn empty_response(status: Int) -> Response(ewe.Body) {
+  response.new(status) |> response.set_body(ewe.Empty)
 }
 ```
 
