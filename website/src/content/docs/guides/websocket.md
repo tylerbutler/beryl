@@ -360,23 +360,56 @@ runtime restarts. Thus, a reconnect does not provide a new rate allowance.
 
 ### Reverse proxies and `X-Forwarded-For`
 
-Both controls use the **socket peer IP**, which is the TCP address that Mist or
-Ewe accepts. beryl does not trust forwarded headers such as
-`X-Forwarded-For`.
-Clients can forge these headers and bypass the limit.
+Both controls default to the **real TCP peer IP**. Mist and Ewe ignore
+forwarded headers such as `X-Forwarded-For` and `Forwarded`. Clients can forge
+these headers.
 
-This affects beryl when it runs **behind a reverse proxy or
-load balancer** (nginx, HAProxy, a cloud LB, etc.): every connection arrives
-from the proxy's IP, so a per-IP limit sees all clients as one address and
-throttles them together. In that setup:
+Behind a proxy, all clients share its address by default. Enforce per-client
+limits at the proxy, or opt in to your own trusted-proxy extractor through the
+shared transport configuration:
 
-- Enforce per-IP limits at the proxy layer, where the real client IP is known, or
-- Terminate connections directly (no intermediary) if you want beryl's built-in
-  per-IP limit to apply to individual clients.
+```gleam
+let websocket_config =
+  server.default_config("/socket/websocket")
+  |> server.with_client_ip_extractor(my_trusted_proxy_extractor)
+```
 
-beryl does not have a trusted-proxy option that reads a client IP from a
-forwarded header only when the immediate peer is trusted. Treat
-`X-Forwarded-For` as untrusted input.
+`my_trusted_proxy_extractor` has this signature:
+
+```gleam
+fn(Request(body), Result(String, Nil)) -> Result(String, server.ClientIpError)
+```
+
+The second argument is the real TCP peer lookup result. Verify that peer
+against your trusted-proxy policy before reading forwarded headers. The
+extractor owns trusted-hop traversal, duplicate and malformed header handling,
+numeric IP parsing, and canonical formatting. beryl does not provide those
+checks. For an untrusted direct peer, ignore its forwarded headers and return
+the peer address, or reject it according to your policy.
+
+Return `Ok(ip)` with a canonical numeric IP address,
+`Error(server.ClientIpUnavailable)` when no trustworthy address is available,
+or `Error(server.ClientIpExtractionFailed)` when extraction fails. Empty
+strings and the reserved `"unknown"` value are extraction failures. Return a
+Result rather than raising an exception. The callback runs once after
+origin/version checks and before admission and authentication.
+
+With either per-IP control enabled, an address failure rejects with **403**.
+It emits `client_ip_unavailable` or `client_ip_extraction_failed` upgrade
+telemetry when telemetry is enabled. No rate token or connection slot is
+consumed. There is no fallback to the peer after extractor failure.
+
+Without either per-IP control, an unavailable address does not block the
+upgrade. The admission pipeline retains `"unknown"` only as an unused per-IP
+key; a total connection ceiling still applies. Previously, unidentified
+clients shared an `"unknown"` bucket even with per-IP controls enabled.
+Deployments that relied on that behavior must now provide a trustworthy IP
+or disable those controls.
+
+The extracted address keys both concurrent connections and connection-attempt
+rate accounting. Frame, message, join, and channel rates are unchanged.
+See [deployment hardening](/guides/production-hardening/#limits-behind-proxies-and-shared-ip-addresses)
+for trust and deployment guidance.
 
 ## Next steps
 

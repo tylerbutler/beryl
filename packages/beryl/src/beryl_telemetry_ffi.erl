@@ -98,6 +98,8 @@ outcome(version_rejected) -> version_rejected;
 outcome(auth_rejected) -> auth_rejected;
 outcome(capacity_rejected) -> capacity_rejected;
 outcome(handshake_failed) -> handshake_failed;
+outcome(client_ip_unavailable) -> client_ip_unavailable;
+outcome(client_ip_extraction_failed) -> client_ip_extraction_failed;
 outcome(frame_routed) -> routed;
 outcome(frame_oversized) -> oversized;
 outcome(frame_rate_limited) -> rate_limited;

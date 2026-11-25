@@ -152,11 +152,31 @@ pub type UpgradeOutcome {
   VersionRejected
   AuthenticationRejected
   CapacityRejected
+  ClientIpUnavailable
+  ClientIpExtractionFailed
   HandshakeFailed
 }
 ```
 
 Closed terminal outcomes for a matched WebSocket upgrade.
+
+#### Constructors
+
+##### `ClientIpUnavailable`
+
+```gleam
+ClientIpUnavailable
+```
+
+An IP-dependent control was enabled without a trustworthy address.
+
+##### `ClientIpExtractionFailed`
+
+```gleam
+ClientIpExtractionFailed
+```
+
+The configured client-IP extractor failed.
 
 ## Type aliases
 
@@ -185,8 +205,12 @@ pub fn acquire_connection_slot(
 
 Try to acquire a configured connection slot for a transport.
 
- Pass the real socket peer IP. Do not pass a client-supplied address such as
- `X-Forwarded-For`. Return `Error(Nil)` when the configured per-IP or
+ Pass the real socket peer IP or an address validated by the operator's
+ trusted-proxy policy. Do not pass unchecked client-supplied headers.
+ The shared server pipeline resolves this address and rejects unavailable
+ IPs before calling this function when IP-dependent controls are enabled.
+ This low-level function accepts the supplied key without validating it.
+ Return `Error(Nil)` when the configured per-IP or
  per-system limit on this node is already reached, its per-IP rate is
  exhausted, or bounded pending admission fails. The pending queue includes
  reserved cancellation work; configure it with
