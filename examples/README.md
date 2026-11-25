@@ -10,7 +10,8 @@ the tree from release.
 ## Subdirectories and boundaries
 
 - [Chat rooms](./chatrooms/README.md): authenticated chat, lobby invalidations,
-  groups, and capped session presence.
+  groups, and capped session presence. Its separate `/phoenix` page runs the
+  official Phoenix Channels chat tutorial against beryl.
 - [Collaborative documents](./collab_docs/README.md): tenant-signed document
   channels, an actor store, and a nested JavaScript CRDT client.
 - [Cursors](./cursors/README.md): raw per-topic dispatch, cursor movement,

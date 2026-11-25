@@ -9,6 +9,14 @@ protocol as Phoenix Channels (`phx_join`, refs, heartbeats,
 changes. The server programming model is different. This page compares the
 two systems.
 
+To see the client work, run the
+[official Phoenix Channels chat tutorial on beryl](/examples/#official-phoenix-tutorial-on-beryl).
+The existing chatrooms server serves it at `http://localhost:8001/phoenix`.
+Its official Phoenix client joins `room:lobby`, pushes `new_msg` with `{body}`,
+and receives broadcasts without an adapter or serializer override.
+Only the endpoint and browser import setup change. This demonstrates Channels
+over WebSockets, not LiveView or all Phoenix features.
+
 beryl gives you two layers, and Phoenix maps onto both:
 
 - **`beryl/channel`, the channel layer:** This is the closest match and the

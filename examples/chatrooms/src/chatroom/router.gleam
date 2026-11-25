@@ -34,9 +34,35 @@ pub fn handle_request(
 
   case static.match_prefix(http_request, context.base_path) {
     Ok([]) -> index_page(context)
+    Ok(["phoenix"]) if context.base_path == "" -> phoenix_tutorial_page(context)
     Ok(["api", "rooms"]) -> rooms_api(context)
     Error(_) | Ok(_) -> static.not_found()
   }
+}
+
+fn phoenix_tutorial_page(context: Context) -> Response(Body) {
+  static.html_response("<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"UTF-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+  <title>Phoenix Channels tutorial on beryl</title>
+</head>
+<body>
+  <main>
+    <h1>Phoenix Channels tutorial on beryl</h1>
+    <p>Open this page in two tabs. Enter a message and press Enter.</p>
+    <p>The official Phoenix client talks to a beryl server.
+      <a href=\"https://phoenix.hexdocs.pm/channels.html#tying-it-all-together\">Read the original Channels tutorial</a>
+      or <a href=\"" <> context.base_path <> "/static/phoenix_tutorial.js\">view this client</a>.</p>
+    <div id=\"messages\" role=\"log\" aria-live=\"polite\"></div>
+    <label for=\"chat-input\">Message</label>
+    <input id=\"chat-input\" type=\"text\" autocomplete=\"off\">
+    <noscript>This chat needs JavaScript enabled.</noscript>
+  </main>
+  <script type=\"module\" src=\"" <> context.base_path <> "/static/phoenix_tutorial.js\"></script>
+</body>
+</html>")
 }
 
 fn rooms_api(context: Context) -> Response(Body) {

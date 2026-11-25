@@ -3,6 +3,7 @@
 ## Overview
 
 The executable wires the chat handlers, groups, presence, and Ewe transport.
+It also starts an isolated socket system for the Phoenix Channels tutorial.
 
 ## Interface
 
@@ -12,7 +13,9 @@ The executable wires the chat handlers, groups, presence, and Ewe transport.
 
 ## Invariants
 
-- `chatroom.gleam:main` accepts WebSocket connections with the `beryl-demo` token.
+- `chatroom.gleam:main` requires the `beryl-demo` token at `/socket/websocket`.
+- `/phoenix/socket/websocket` serves the public tutorial without changing the
+  authenticated endpoint.
 - The child handlers enforce public-room membership and the 20-user cap.
 
 ## Side effects
