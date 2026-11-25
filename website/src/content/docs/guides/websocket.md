@@ -374,11 +374,8 @@ let websocket_config =
   |> server.with_client_ip_extractor(my_trusted_proxy_extractor)
 ```
 
-`my_trusted_proxy_extractor` has this signature:
-
-```gleam
-fn(Request(body), Result(String, Nil)) -> Result(String, server.ClientIpError)
-```
+`my_trusted_proxy_extractor` has the type
+`fn(Request(body), Result(String, Nil)) -> Result(String, server.ClientIpError)`.
 
 The second argument is the real TCP peer lookup result. Verify that peer
 against your trusted-proxy policy before reading forwarded headers. The
