@@ -1,0 +1,14 @@
+package = "beryl"
+kind = "Performance"
+body = '''
+#### Socket cleanup no longer scans unrelated actors or topics.
+
+beryl looks up exiting socket actors by monitor and removes only their indexed
+topic memberships. Normal disconnects, actor crashes, and abandoned admissions
+no longer require whole-router actor or topic scans. Abnormal-disconnect
+telemetry uses the same per-socket membership set.
+
+Cleanup still handles missing leave updates and rejects delayed signals from
+removed actors. Admission-owner loss retains ordered disconnect, and public
+APIs are unchanged.
+'''
