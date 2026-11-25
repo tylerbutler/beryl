@@ -5,6 +5,7 @@ import beryl/transport/server
 import beryl/wire
 import beryl_ewe
 import chatroom/app as chat_app
+import chatroom/phoenix_tutorial
 import chatroom/router
 import ewe
 import example_helper/broadcast_hub
@@ -39,12 +40,17 @@ pub fn main() -> Nil {
 
   let assert Ok(#(channels, beryl_specification)) =
     channel.child_spec(config, handlers: chat_app.handlers(context))
+  let assert Ok(#(tutorial_channels, tutorial_specification)) =
+    channel.child_spec(beryl.config(wire.phoenix_codec()), handlers: [
+      phoenix_tutorial.room(),
+    ])
   session_presence.configure(presence_tracker, channels)
   broadcast_hub.bind(hub, channels)
   let assert Ok(_root) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(groups_specification)
     |> static_supervisor.add(beryl_specification)
+    |> static_supervisor.add(tutorial_specification)
     |> static_supervisor.start()
   let assert Ok(_) = group.create(groups, "public")
   let assert Ok(_) = group.add(groups, "public", "room:general")
@@ -53,6 +59,7 @@ pub fn main() -> Nil {
 
   io.println("💬 Chat Rooms Demo")
   io.println("   Open http://localhost:8001?token=beryl-demo")
+  io.println("   Phoenix tutorial: http://localhost:8001/phoenix")
   io.println("")
 
   // Start the HTTP server. A pre-upgrade token gate rejects connections
@@ -74,9 +81,15 @@ pub fn main() -> Nil {
         Error(_) | Ok(_) -> Error(server.ConnectRejected)
       }
     })
+  let tutorial_ws_config = server.default_config("/phoenix/socket/websocket")
 
   let assert Ok(_) =
     fn(http_request) {
+      use <- beryl_ewe.upgrade(
+        http_request,
+        tutorial_channels,
+        tutorial_ws_config,
+      )
       use <- beryl_ewe.upgrade(http_request, channels, ws_config)
       router.handle_request(http_request, context_router)
     }
