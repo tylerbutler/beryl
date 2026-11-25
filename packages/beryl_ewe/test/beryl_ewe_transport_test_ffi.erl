@@ -8,7 +8,108 @@
          receive_upgrade_event/1, receive_frame_event/1,
          receive_message_event/1, coalesced_upgrade_frames/0,
          split_upgrade_frames/0, empty_text_control_frames/0,
-         empty_binary_frames/0, connect_tcp/1]).
+         empty_binary_frames/0, connect_tcp/1,
+         with_http2_fixture/1, observe_http2_worker/3,
+         receive_http2_worker/1, http2_writer_waiting/2,
+         lifecycle_watcher/2, monotonic_ms/0]).
+
+%% Run with a private mailbox. Links own the app roots, listener and observed
+%% stream workers, including on assertion failure or the outer watchdog.
+with_http2_fixture(Action) ->
+    {Pid, Ref} = spawn_monitor(fun() ->
+        process_flag(trap_exit, true),
+        try Action()
+        after
+            {links, Links} = process_info(self(), links),
+            lists:foreach(fun cleanup_http2_process/1, Links)
+        end
+    end),
+    receive
+        {'DOWN', Ref, process, Pid, normal} -> nil;
+        {'DOWN', Ref, process, Pid, Reason} ->
+            erlang:error({http2_fixture_failed, Reason})
+    after 30000 ->
+        exit(Pid, kill),
+        receive
+            {'DOWN', Ref, process, Pid, _} -> ok
+        after 1000 -> demonitor(Ref, [flush])
+        end,
+        erlang:error(http2_fixture_timeout)
+    end.
+
+cleanup_http2_process(Pid) ->
+    unlink(Pid),
+    Ref = monitor(process, Pid),
+    exit(Pid, shutdown),
+    receive
+        {'DOWN', Ref, process, Pid, _} -> ok
+    after 500 ->
+        exit(Pid, kill),
+        receive
+            {'DOWN', Ref, process, Pid, _} -> ok
+        after 500 -> demonitor(Ref, [flush])
+        end
+    end.
+
+%% Ewe 9's opaque websocket body is verified in ewe/internal/connection.
+%% Preserve every response field and the original callback/context unchanged.
+observe_http2_worker(
+    {response, Status, Headers,
+     {websocket, {websocket_metadata, Context, Handler}}},
+    Observer, Path
+) ->
+    Wrapped = fun(Connection) ->
+        link(Observer),
+        Observer ! {beryl_ewe_http2_worker, Path, self()},
+        Handler(Connection)
+    end,
+    {response, Status, Headers,
+     {websocket, {websocket_metadata, Context, Wrapped}}};
+observe_http2_worker(Response, _Observer, _Path) ->
+    Response.
+
+receive_http2_worker(Path) ->
+    receive
+        {beryl_ewe_http2_worker, Path, Pid} when is_pid(Pid) -> {ok, Pid}
+    after 1000 -> {error, nil}
+    end.
+
+%% Require both the actual Ewe receive and the requested transport write.
+%% A suspended worker, an idle websocket receive, or a sleeping process fails.
+http2_writer_waiting(Pid, Binary) ->
+    case {process_info(Pid, status),
+          process_info(Pid, current_stacktrace)} of
+        {{status, waiting}, {current_stacktrace, Stack}} ->
+            Write = case Binary of
+                true -> send_binary_frame;
+                false -> send_text_frame
+            end,
+            lists:any(fun
+                ({ewe_ffi, recv_or_exit, 2, _}) -> true;
+                (_) -> false
+            end, Stack) andalso lists:any(fun
+                ({ewe, Function, 2, _}) when Function =:= Write -> true;
+                (_) -> false
+            end, Stack);
+        _ -> false
+    end.
+
+%% No global scan: the lifecycle watcher is the unique process monitoring
+%% both this exact stream owner and its captured runtime.
+lifecycle_watcher(Runtime, Owner) ->
+    case {process_info(Runtime, monitored_by),
+          process_info(Owner, monitored_by)} of
+        {{monitored_by, RuntimeObservers}, {monitored_by, OwnerObservers}} ->
+            case [Pid || Pid <- OwnerObservers,
+                         lists:member(Pid, RuntimeObservers)] of
+                [Watcher] -> {ok, Watcher};
+                _ -> {error, nil}
+            end;
+        _ -> {error, nil}
+    end.
+
+monotonic_ms() ->
+    erlang:monotonic_time(millisecond).
 
 %% The calling Gleam test owns this passive socket and closes it via glisten.
 %% gen_tcp's {ok, Socket}/{error, inet:posix()} matches Glisten's types.

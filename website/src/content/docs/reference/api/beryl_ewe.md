@@ -118,3 +118,9 @@ Upgrade a request to WebSocket if it matches the configured path.
 
  HTTP/2 extended CONNECT uses Ewe's parsed `:authority` for origin checks
  when there is no `Host` header.
+
+ Each HTTP/2 WebSocket monitors its beryl runtime outside the frame
+ handler. If that runtime exits, the stream worker is killed even when
+ a write is blocked by flow control. Ewe resets that stream and discards
+ its unsent buffered output without closing the shared HTTP/2 connection.
+ This is runtime-exit cancellation, not a general write deadline.
