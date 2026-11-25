@@ -11,7 +11,7 @@ Ensure you have the following installed:
 | Erlang/OTP | 27.2.1+ | BEAM runtime |
 | Gleam | 1.16.0+ | Compiler and tooling |
 | just | 1.50.0+ | Task runner |
-| [trellis](https://trellis.tylerbutler.com) | 1.6.1+ | Gleam workspace manager (tasks, versions, publishing) |
+| [trellis](https://trellis.tylerbutler.com) | 1.8.0+ | Gleam workspace manager (tasks, versions, publishing) |
 
 **Recommended:** Use [mise](https://mise.jdx.dev/) with the provided
 `.mise.toml` file. It pins Erlang 28, Gleam, just, trellis, rebar3, and
@@ -24,6 +24,10 @@ holding only the `[tools.trellis]` configuration. `beryl_protocol` and
 `beryl_heirloom` use the `workspace` lifecycle and ship inside beryl through
 `publish.bundle`, without separate
 releases. The three released packages use `git_only`; Hex uploads stay disabled.
+`publish.primary_package = "beryl"` keeps the highest published stable beryl
+release as GitHub's Latest. Secondary releases, prereleases, and older
+maintenance releases do not replace it. Serialize release publishers to avoid
+concurrent Latest updates.
 Write consumer-visible protocol and heirloom changelog fragments for `beryl`.
 `just` recipes fan out across the workspace through `trellis run`.
 Use `just protocol-test` for the shared Erlang/JavaScript suite and

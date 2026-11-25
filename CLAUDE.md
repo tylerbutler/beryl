@@ -169,7 +169,7 @@ Managed via `.mise.toml`:
 
 CI matrix-tests Erlang 27 and 28.
 
-trellis (1.4.0) is pinned in `.mise.toml` for local development and
+trellis (1.8.0) is pinned in `.mise.toml` for local development and
 installed in CI via `.github/actions/mise`.
 
 ## CI/CD
