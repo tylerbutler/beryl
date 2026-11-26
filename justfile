@@ -55,6 +55,15 @@ protocol-test:
     trellis run test --target all beryl_protocol
     node --test scripts/protocol-operation-kinds.test.mjs
 
+# Install the optional Bend proof checker and its matching Lean kernel toolchain
+protocol-pilot-deps:
+    mise trust verification/protocol/.mise.toml
+    mise -C verification/protocol install github:bendlang/bend github:leanprover/lean4
+
+# Check Bend laws and compare the reference model with both Gleam targets
+protocol-pilot:
+    mise -C verification/protocol exec -- node --test check.test.mjs
+
 # Exercise extracted ETS ownership alongside consumer-owned heirloom modules
 namespace-test:
     node scripts/prepare-gleam-deps.mjs heirloom_namespace
