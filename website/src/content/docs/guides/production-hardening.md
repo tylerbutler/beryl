@@ -144,16 +144,37 @@ own global connection/rate controls when you need a cluster-wide cap.
 
 ### Limits behind proxies and shared IP addresses
 
-The connection limit uses the **TCP peer address**. It ignores forwarded
-headers such as `X-Forwarded-For` because clients can forge them. This has two
-effects:
+Both per-IP controls default to the **TCP peer address**. They ignore
+forwarded headers such as `X-Forwarded-For` because clients can forge them.
 
 - Behind a reverse proxy or load balancer, every connection appears to come
   from the proxy's IP, so a per-IP cap would throttle all clients together.
-  Enforce per-client limits at the proxy layer instead.
+  Enforce per-client limits at the proxy layer, or configure
+  `server.with_client_ip_extractor` with your trusted-proxy policy.
 - Users behind carrier-grade NAT or a corporate gateway share one IP. Set
   the cap high enough for your worst legitimate case, or leave it off and
   rely on rate limits.
+
+The extractor receives the HTTP request and the real TCP peer lookup result.
+Verify the immediate peer before trusting a forwarded header. Traverse the
+chain from the nearest hop through known proxies to the first untrusted hop.
+Reject malformed or ambiguous headers, and return a canonical numeric IP
+address. Handle duplicate headers, IPv6 notation, and ports according to your
+proxy's documented format. Never select the first forwarded value without
+checking the trusted hops. beryl does not provide a proxy parser or validate
+arbitrary nonempty address strings.
+
+The same extracted address keys concurrent connections and connection-attempt
+rate buckets. It does not change frame, message, join, or channel rate keys.
+See the [WebSocket guide](/guides/websocket/#reverse-proxies-and-x-forwarded-for)
+for the callback contract.
+
+With either per-IP control enabled, unavailable addresses and extractor
+failures reject the upgrade with **403**, before authentication, capacity
+reservation, or rate-token consumption. There is no fallback to the proxy
+address or shared `"unknown"` bucket. With neither per-IP control enabled,
+address failure does not block upgrades; total connection ceilings still
+apply. This includes non-TCP peers, such as Ewe Unix sockets.
 
 ### Reconnects reset per-connection limits
 

@@ -48,6 +48,8 @@ pub type TransportUpgradeOutcome {
   VersionRejected
   AuthRejected
   CapacityRejected
+  ClientIpUnavailable
+  ClientIpExtractionFailed
   HandshakeFailed
 }
 

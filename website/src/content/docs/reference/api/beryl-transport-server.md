@@ -34,6 +34,7 @@ Server-agnostic WebSocket transport infrastructure.
 <section class="api-symbol-index__group">
   <a class="api-symbol-index__section" href="#types">Types</a>
   <ul>
+<li><a href="#api-type-clientiperror"><code>ClientIpError</code></a></li>
 <li><a href="#api-type-connecterror"><code>ConnectError</code></a></li>
 <li><a href="#api-type-connectionstate"><code>ConnectionState</code></a></li>
 <li><a href="#api-type-forcecloseerror"><code>ForceCloseError</code></a></li>
@@ -59,6 +60,7 @@ Server-agnostic WebSocket transport infrastructure.
 <li><a href="#api-function-upgrade"><code>upgrade</code></a></li>
 <li><a href="#api-function-with_allow_all_origins"><code>with_allow_all_origins</code></a></li>
 <li><a href="#api-function-with_allowed_origins"><code>with_allowed_origins</code></a></li>
+<li><a href="#api-function-with_client_ip_extractor"><code>with_client_ip_extractor</code></a></li>
 <li><a href="#api-function-with_on_connect"><code>with_on_connect</code></a></li>
 <li><a href="#api-function-with_outbound_limits"><code>with_outbound_limits</code></a></li>
   </ul>
@@ -66,6 +68,37 @@ Server-agnostic WebSocket transport infrastructure.
 </nav>
 
 ## Types
+
+<div class="api-entry-anchor" id="api-type-clientiperror" aria-hidden="true"></div>
+
+### `ClientIpError`
+
+```gleam
+pub type ClientIpError {
+  ClientIpUnavailable
+  ClientIpExtractionFailed
+}
+```
+
+Why a trustworthy client address could not be obtained.
+
+#### Constructors
+
+##### `ClientIpUnavailable`
+
+```gleam
+ClientIpUnavailable
+```
+
+No trustworthy address is available.
+
+##### `ClientIpExtractionFailed`
+
+```gleam
+ClientIpExtractionFailed
+```
+
+The configured extractor could not validate or resolve an address.
 
 <div class="api-entry-anchor" id="api-type-connecterror" aria-hidden="true"></div>
 
@@ -477,11 +510,13 @@ Run the shared upgrade admission pipeline for a request.
  When the request path matches `config.path`, the pipeline:
  1. Applies the configured origin policy and the `?vsn` version check,
     rejecting failures with `reject(403)`.
- 2. Acquires a connection slot for `request_ip(request)` (per-IP and
-    per-system ceilings), rejecting with `reject(429)` when at a limit.
- 3. Runs any `on_connect` callback; on `Error(ConnectRejected)` the slot is
+ 2. Resolves the client IP using the configured extractor or TCP peer.
+    With either per-IP control enabled, address failure rejects with 403.
+ 3. Acquires a connection slot for that IP (per-IP and per-system ceilings
+    and connection-attempt rate), rejecting with 429 when at a limit.
+ 4. Runs any `on_connect` callback; on `Error(ConnectRejected)` the slot is
     released and the request is rejected with `reject(403)`.
- 4. Hands admitted requests to `accept` with the callback's connect
+ 5. Hands admitted requests to `accept` with the callback's connect
     metadata (empty when no callback is configured) and the held permit.
 
  Non-matching paths fall through to `next`.
@@ -495,17 +530,20 @@ Run the shared upgrade admission pipeline for a request.
 
  When `beryl.with_max_connections_per_ip` is configured, the limit is
  enforced before completing the handshake, returning `reject(429)` once the
- peer is at its limit. `request_ip` must return the **real socket peer IP**
- from the TCP connection, or `Error(Nil)` when unavailable. Unknown peers
- share one limiter bucket rather than bypassing the limit. Forwarded
- headers such as `X-Forwarded-For` must
- **not** be trusted or parsed, because clients can set them and would
- otherwise spoof their address to bypass the limit. Behind a trusted
- reverse proxy, all connections share the proxy's IP. Resolve the real
- client IP at the proxy layer. See the WebSocket transport guide.
+ client is at its limit. `request_ip` must return the **real socket peer IP**
+ from the TCP connection, or `Error(Nil)` when unavailable. The default
+ ignores forwarded headers. Use `with_client_ip_extractor` only with an
+ explicit operator trust policy to override that address.
+
+ With either per-IP control enabled, unavailable IPs reject with 403 and
+ `ClientIpUnavailable`; extractor errors use their corresponding outcome.
+ Empty or `"unknown"` extractor results use `ClientIpExtractionFailed`.
+ No slot or rate token is consumed on address failure. Without IP-dependent
+ controls, failed lookup uses `"unknown"` only as an unused per-IP key;
+ total connection ceilings still apply.
 
  `beryl.with_connection_rate_per_ip` independently caps connection attempts
- from each peer IP and also returns `reject(429)` when its token bucket is
+ from the same effective client IP and returns `reject(429)` when its bucket is
  exhausted. Its state survives disconnects and app runtime restarts, so
  reconnecting does not refresh the configured burst.
 
@@ -557,6 +595,36 @@ Restrict WebSocket upgrades to requests whose `Origin` header exactly
  Prefer this over `with_allow_all_origins` when you know the exact origins
  that should be allowed (e.g. behind a reverse proxy that rewrites the
  `Host` header, where `SameAuthority` cannot see the public host).
+
+<div class="api-entry-anchor" id="api-function-with_client_ip_extractor" aria-hidden="true"></div>
+
+### `with_client_ip_extractor`
+
+```gleam
+pub fn with_client_ip_extractor(
+  TransportConfig(a),
+  fn(request.Request(a), Result(String, Nil)) -> Result(String, ClientIpError)
+) -> TransportConfig(a)
+```
+
+Override the TCP peer address used for both per-IP connection controls.
+
+ The callback receives the request and the real TCP peer lookup result.
+ Return a canonical numeric IP address, or a `ClientIpError`. Empty strings
+ and the reserved `"unknown"` value are treated as extraction failures.
+ The callback runs once after origin/version checks and before admission
+ and authentication. It must return errors rather than raise exceptions.
+
+ Only trust forwarded headers after verifying the immediate peer against
+ your trusted-proxy policy. The operator owns trusted-hop traversal, header
+ ambiguity checks, numeric IP parsing, and canonical formatting. beryl does
+ not parse these headers or validate arbitrary nonempty address strings.
+
+ With either per-IP concurrency or connection-attempt rate limiting enabled,
+ address failure rejects the upgrade with 403 and a distinct telemetry
+ outcome. It never falls back to the peer or an unidentified-client bucket.
+ Without either control, address failure does not block admission; total
+ connection ceilings still apply. Frame and message rate keys do not change.
 
 <div class="api-entry-anchor" id="api-function-with_on_connect" aria-hidden="true"></div>
 

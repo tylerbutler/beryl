@@ -8,6 +8,8 @@ import beryl/wire
 import beryl/wire/codec
 import gleam/dict
 import gleam/erlang/process
+import gleam/http/request
+import gleam/http/response
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
@@ -17,6 +19,240 @@ import test_helper
 import unitest
 
 const write_failure_message = "Failed to write outbound WebSocket frame"
+
+pub fn client_ip_default_ignores_spoofed_forwarded_headers_test() -> Nil {
+  use sockets <- with_ip_system(
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_connections_per_ip(1),
+  )
+  let assert Ok(permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.1")
+  let request =
+    upgrade_request()
+    |> request.set_header("x-forwarded-for", "198.51.100.1")
+    |> request.set_header("forwarded", "for=198.51.100.1")
+  ip_upgrade(
+    sockets,
+    server.default_config("/socket"),
+    request,
+    Ok("192.0.2.1"),
+  )
+  |> should.equal(429)
+  ip_upgrade(
+    sockets,
+    server.default_config("/socket"),
+    request,
+    Ok("192.0.2.2"),
+  )
+  |> should.equal(101)
+  transport.release_connection_slot(permit)
+}
+
+pub fn client_ip_trusted_extractor_controls_concurrency_test() -> Nil {
+  use sockets <- with_ip_system(
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_max_connections_per_ip(1),
+  )
+  let config =
+    server.default_config("/socket")
+    |> server.with_client_ip_extractor(trusted_test_proxy)
+  let assert Ok(permit) =
+    transport.acquire_connection_slot(sockets, "198.51.100.1")
+  let request =
+    upgrade_request() |> request.set_header("x-forwarded-for", "198.51.100.1")
+  ip_upgrade(sockets, config, request, Ok("192.0.2.1")) |> should.equal(429)
+  ip_upgrade(
+    sockets,
+    config,
+    request.set_header(request, "x-forwarded-for", "198.51.100.2"),
+    Ok("192.0.2.1"),
+  )
+  |> should.equal(101)
+  // An untrusted direct peer cannot choose the occupied forwarded bucket.
+  ip_upgrade(sockets, config, request, Ok("192.0.2.2")) |> should.equal(101)
+  transport.release_connection_slot(permit)
+}
+
+pub fn client_ip_extractor_controls_connection_attempt_rate_test() -> Nil {
+  use sockets <- with_ip_system(
+    beryl.config(wire.phoenix_codec())
+    |> beryl.with_connection_rate_per_ip(per_second: 1, burst: 1),
+  )
+  let config =
+    server.default_config("/socket")
+    |> server.with_client_ip_extractor(trusted_test_proxy)
+  let request =
+    upgrade_request() |> request.set_header("x-forwarded-for", "198.51.100.1")
+  ip_upgrade(sockets, config, request, Ok("192.0.2.1")) |> should.equal(101)
+  ip_upgrade(sockets, config, request, Ok("192.0.2.1")) |> should.equal(429)
+  ip_upgrade(
+    sockets,
+    config,
+    request.set_header(request, "x-forwarded-for", "198.51.100.2"),
+    Ok("192.0.2.1"),
+  )
+  |> should.equal(101)
+}
+
+pub fn client_ip_failures_reject_before_authentication_and_admission_test() -> Nil {
+  list.each(
+    [
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(1),
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_connection_rate_per_ip(per_second: 1, burst: 1),
+    ],
+    fn(config) {
+      use sockets <- with_ip_system(config)
+      let rejecting_auth =
+        server.default_config("/socket")
+        |> server.with_on_connect(fn(_) { panic as "Authentication ran" })
+      list.each([Error(Nil), Ok(""), Ok("unknown")], fn(peer) {
+        ip_upgrade(sockets, rejecting_auth, upgrade_request(), peer)
+        |> should.equal(403)
+      })
+      list.each(
+        [
+          Error(server.ClientIpUnavailable),
+          Error(server.ClientIpExtractionFailed),
+          Ok(""),
+          Ok("unknown"),
+        ],
+        fn(extracted) {
+          let config =
+            rejecting_auth
+            |> server.with_client_ip_extractor(fn(_, _) { extracted })
+          ip_upgrade(sockets, config, upgrade_request(), Ok("192.0.2.1"))
+          |> should.equal(403)
+        },
+      )
+      ip_upgrade(
+        sockets,
+        server.default_config("/socket"),
+        upgrade_request(),
+        Ok("192.0.2.1"),
+      )
+      |> should.equal(101)
+    },
+  )
+}
+
+pub fn client_ip_not_required_without_per_ip_controls_test() -> Nil {
+  use sockets <- with_ip_system(
+    beryl.config(wire.phoenix_codec()) |> beryl.with_max_connections(1),
+  )
+  let config =
+    server.default_config("/socket")
+    |> server.with_client_ip_extractor(fn(_, peer) {
+      peer |> should.equal(Error(Nil))
+      Error(server.ClientIpExtractionFailed)
+    })
+  ip_upgrade(sockets, config, upgrade_request(), Error(Nil))
+  |> should.equal(101)
+  ip_upgrade(
+    sockets,
+    server.default_config("/socket"),
+    upgrade_request(),
+    Error(Nil),
+  )
+  |> should.equal(101)
+  let assert Ok(permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.1")
+  ip_upgrade(sockets, config, upgrade_request(), Error(Nil))
+  |> should.equal(429)
+  transport.release_connection_slot(permit)
+}
+
+pub fn client_ip_extractor_runs_once_after_origin_and_version_checks_test() -> Nil {
+  use sockets <- with_ip_system(beryl.config(wire.phoenix_codec()))
+  let called = process.new_subject()
+  let config =
+    server.default_config("/socket")
+    |> server.with_client_ip_extractor(fn(_, peer) {
+      process.send(called, peer)
+      Ok("198.51.100.1")
+    })
+  ip_upgrade(
+    sockets,
+    config,
+    upgrade_request() |> request.set_header("origin", "https://evil.example"),
+    Ok("192.0.2.1"),
+  )
+  |> should.equal(403)
+  let assert Ok(version_request) =
+    request.to("http://localhost/socket?vsn=9.0.0")
+  ip_upgrade(sockets, config, version_request, Ok("192.0.2.1"))
+  |> should.equal(403)
+  ip_upgrade(
+    sockets,
+    config,
+    upgrade_request() |> request.set_path("/other"),
+    Ok("192.0.2.1"),
+  )
+  |> should.equal(404)
+  process.receive(called, 0) |> should.equal(Error(Nil))
+  ip_upgrade(sockets, config, upgrade_request(), Ok("192.0.2.1"))
+  |> should.equal(101)
+  process.receive(called, 0) |> should.equal(Ok(Ok("192.0.2.1")))
+  process.receive(called, 0) |> should.equal(Error(Nil))
+}
+
+fn upgrade_request() -> request.Request(String) {
+  let assert Ok(request) = request.to("http://localhost/socket")
+  request
+}
+
+fn trusted_test_proxy(
+  request: request.Request(String),
+  peer: Result(String, Nil),
+) -> Result(String, server.ClientIpError) {
+  case peer {
+    Ok("192.0.2.1") ->
+      case request.get_header(request, "x-forwarded-for") {
+        Ok("198.51.100.1") -> Ok("198.51.100.1")
+        Ok("198.51.100.2") -> Ok("198.51.100.2")
+        Ok(_) | Error(Nil) -> Error(server.ClientIpExtractionFailed)
+      }
+    Ok(ip) -> Ok(ip)
+    Error(Nil) -> Error(server.ClientIpUnavailable)
+  }
+}
+
+fn with_ip_system(
+  config: beryl.Config,
+  action: fn(beryl.Sockets) -> Nil,
+) -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      config,
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
+    )
+  action(sockets)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+}
+
+fn ip_upgrade(
+  sockets: beryl.Sockets,
+  config: server.TransportConfig(String),
+  request: request.Request(String),
+  peer: Result(String, Nil),
+) -> Int {
+  server.upgrade(
+    request: request,
+    sockets: sockets,
+    config: config,
+    telemetry: transport.telemetry(sockets, transport.Custom),
+    request_ip: fn(_) { peer },
+    reject: fn(status) { response.new(status) },
+    accept: fn(_, permit) {
+      transport.release_connection_slot(permit)
+      response.new(101)
+    },
+    next: fn() { response.new(404) },
+  ).status
+}
 
 fn tagged_codec() -> codec.Codec {
   codec.new(

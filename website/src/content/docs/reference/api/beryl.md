@@ -696,7 +696,7 @@ Configure a per-IP connection-attempt rate limit.
  Disabled limits ignore `burst`.
 
  Unlike per-connection frame and message buckets, this allowance is keyed by
- the real socket peer IP and lives in beryl's supervised connection limiter.
+ the effective client IP and lives in beryl's supervised connection limiter.
  Disconnecting or restarting the app runtime therefore does not refresh it.
  Idle IP buckets are removed once their allowance has fully refilled.
 
@@ -861,17 +861,17 @@ Configure the maximum number of concurrent connections allowed per client
 
  #### Which IP is used
 
- The limit is enforced on the **real socket peer IP** as reported by the
- transport (for the Mist transport, the address of the TCP connection).
- beryl does **not** trust or parse forwarded headers such as
- `X-Forwarded-For`. A client can set these headers and spoof its address to
- bypass this limit.
+ The shared transport defaults to the **real TCP peer IP**. It ignores
+ forwarded headers such as `X-Forwarded-For`, which clients can forge.
+ Behind a proxy, clients share the proxy's address unless you configure
+ `beryl/transport/server.with_client_ip_extractor` with an explicit
+ trusted-proxy policy. The operator owns trusted-hop parsing and canonical
+ IP formatting. The extracted address also keys connection-attempt rates.
 
- If beryl runs behind a trusted reverse proxy or load balancer, every
- connection shares the proxy's address, so a per-IP limit throttles all
- clients as a single IP. In that topology you must resolve the real client
- IP yourself at the proxy layer, for example by enforcing limits there. See
- the WebSocket transport guide for deployment guidance.
+ When either per-IP control is enabled, the shared transport rejects an
+ upgrade with 403 if no trustworthy address is available or extraction
+ fails. It does not exempt unidentified clients or share an `"unknown"`
+ bucket. Without either control, address availability is not required.
 
 <div class="api-entry-anchor" id="api-function-with_max_event_length" aria-hidden="true"></div>
 

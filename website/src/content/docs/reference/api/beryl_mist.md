@@ -108,5 +108,7 @@ Upgrade a request to WebSocket if it matches the configured path.
  `429 Too Many Requests`), and the `on_connect` callback use the shared
  admission pipeline. See
  `beryl/transport/server.upgrade` for the full contract. Enforcement
- uses the real socket peer IP from the TCP connection; forwarded headers
- such as `X-Forwarded-For` are not trusted.
+ defaults to the real TCP peer IP; forwarded headers are ignored. Use
+ `server.with_client_ip_extractor` only with an explicit trusted-proxy
+ policy. With either per-IP control enabled, address failures reject with
+ 403 before admission. Without either control, an address is not required.

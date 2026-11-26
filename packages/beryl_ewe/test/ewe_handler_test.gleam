@@ -1121,6 +1121,68 @@ pub fn handler_rejects_connections_over_per_ip_limit_test() -> Nil {
   stop_supervisor(server_pid)
 }
 
+pub fn handler_limits_extracted_client_ips_with_real_peer_test() -> Nil {
+  let peers = process.new_subject()
+  let channels =
+    start_app_system(
+      beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_connections_per_ip(max_connections: 1),
+    )
+  let config =
+    server.default_config("/socket")
+    |> server.with_client_ip_extractor(fn(http_request, peer) {
+      process.send(peers, peer)
+      // Query addresses are synthetic test inputs, not a trusted proxy policy.
+      case request.get_query(http_request) {
+        Ok([#("client_ip", client_ip)]) -> Ok(client_ip)
+        Ok(_) | Error(Nil) -> Error(server.ClientIpExtractionFailed)
+      }
+    })
+  let #(port, server_pid) = start_server_with_config(channels, config)
+
+  let assert Ok(first) = connect_websocket(port, "/socket?client_ip=192.0.2.1")
+  process.receive(peers, 1000) |> should.equal(Ok(Ok("127.0.0.1")))
+  let assert Ok(second) = connect_websocket(port, "/socket?client_ip=192.0.2.2")
+  process.receive(peers, 1000) |> should.equal(Ok(Ok("127.0.0.1")))
+  websocket_upgrade_status(port, "/socket?client_ip=192.0.2.1")
+  |> should.equal(Ok(429))
+  process.receive(peers, 1000) |> should.equal(Ok(Ok("127.0.0.1")))
+
+  close(first)
+  close(second)
+  stop_supervisor(server_pid)
+  beryl.stop(channels) |> should.equal(Ok(Nil))
+}
+
+pub fn handler_rejects_client_ip_extraction_failure_with_per_ip_limits_test() -> Nil {
+  [
+    beryl.config(wire.phoenix_codec())
+      |> beryl.with_max_connections_per_ip(max_connections: 1),
+    beryl.config(wire.phoenix_codec())
+      |> beryl.with_connection_rate_per_ip(per_second: 1, burst: 1),
+  ]
+  |> list.each(fn(app_config) {
+    let authenticated = process.new_subject()
+    let channels = start_app_system(app_config)
+    let config =
+      server.default_config("/socket")
+      |> server.with_client_ip_extractor(fn(_request, _peer) {
+        Error(server.ClientIpExtractionFailed)
+      })
+      |> server.with_on_connect(fn(_request) {
+        process.send(authenticated, Nil)
+        Ok([])
+      })
+    let #(port, server_pid) = start_server_with_config(channels, config)
+
+    websocket_upgrade_status(port, "/socket") |> should.equal(Ok(403))
+    process.receive(authenticated, 0) |> should.equal(Error(Nil))
+
+    stop_supervisor(server_pid)
+    beryl.stop(channels) |> should.equal(Ok(Nil))
+  })
+}
+
 pub fn abrupt_tcp_close_after_upgrade_releases_per_ip_slot_test() -> Nil {
   let #(port, server_pid) = start_limited_server()
 

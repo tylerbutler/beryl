@@ -2,6 +2,7 @@
 //// Transport events are synchronous in this owner; runtime events are excluded
 //// by both the event names and the emitting-process filter in the capture.
 
+import app_test_helper
 import beryl
 import beryl/socket
 import beryl/transport
@@ -11,6 +12,7 @@ import gleam/bit_array
 import gleam/erlang/process
 import gleam/http/request
 import gleam/http/response
+import gleam/list
 import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleam/string
@@ -238,6 +240,67 @@ pub fn built_in_public_telemetry_labels_test() -> Nil {
   beryl.stop(sockets) |> should.equal(Ok(Nil))
   no_transport_events(handler) |> should.be_true
   detach(handler)
+}
+
+pub fn shared_client_ip_failure_outcomes_test() -> Nil {
+  use <- unitest.tag("serial")
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_telemetry
+        |> beryl.with_connection_rate_per_ip(per_second: 1, burst: 1),
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
+    )
+  let handler = attach_transport()
+  let assert Ok(upgrade_request) = request.to("http://localhost/socket")
+  list.each(
+    [
+      #(transport.Mist, "mist"),
+      #(transport.Ewe, "ewe"),
+      #(transport.Custom, "custom"),
+    ],
+    fn(kind) {
+      let #(kind, label) = kind
+      list.each(
+        [
+          #(server.default_config("/socket"), "client_ip_unavailable"),
+          #(
+            server.default_config("/socket")
+              |> server.with_client_ip_extractor(fn(_, _) {
+                Error(server.ClientIpExtractionFailed)
+              }),
+            "client_ip_extraction_failed",
+          ),
+          #(
+            server.default_config("/socket")
+              |> server.with_client_ip_extractor(fn(_, _) {
+                Error(server.ClientIpUnavailable)
+              }),
+            "client_ip_unavailable",
+          ),
+        ],
+        fn(config) {
+          let #(config, outcome) = config
+          server.upgrade(
+            request: upgrade_request,
+            sockets: sockets,
+            config: config,
+            telemetry: transport.telemetry(sockets, kind),
+            request_ip: fn(_) { Error(Nil) },
+            reject: fn(status) { response.new(status) },
+            accept: fn(_, _) { panic as "Failed IP was admitted" },
+            next: fn() { response.new(404) },
+          ).status
+          |> should.equal(403)
+          assert_upgrade(handler, label, outcome)
+        },
+      )
+    },
+  )
+  no_transport_events(handler) |> should.be_true
+  detach(handler)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
 fn assert_public_label(

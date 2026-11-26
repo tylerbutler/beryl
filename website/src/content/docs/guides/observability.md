@@ -100,7 +100,7 @@ remain bounded:
 | Key | Values |
 |---|---|
 | `transport` | `mist`, `ewe`, `custom` |
-| upgrade `outcome` | `success`, `origin_rejected`, `version_rejected`, `auth_rejected`, `capacity_rejected`, `handshake_failed` |
+| upgrade `outcome` | `success`, `origin_rejected`, `version_rejected`, `auth_rejected`, `capacity_rejected`, `client_ip_unavailable`, `client_ip_extraction_failed`, `handshake_failed` |
 | frame `outcome` | `routed`, `oversized`, `rate_limited`, `decode_failed` |
 | join `outcome` | `accepted`, `handler_rejected`, `no_handler`, `invalid_topic`, `topic_limit`, `rate_limited`, `callback_error`, `socket_missing` |
 | message `outcome` | `handled`, `unjoined`, `stale`, `invalid`, `rate_limited`, `callback_error`, `socket_missing` |
