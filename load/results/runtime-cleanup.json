@@ -1,0 +1,1075 @@
+{
+  "schema": "beryl.runtime_cleanup_comparison/1",
+  "baseline_revision": "bd786f5fc32ca27a0ac22166ac5704f0c549fedd",
+  "indexed_base_revision": "bd786f5fc32ca27a0ac22166ac5704f0c549fedd",
+  "indexed_runtime_sha256": "85f5d3e64c7aab7841d989c304ee32c72d04fb955a4c6b8428ae0f0b24026fab",
+  "workload_sha256": {
+    "packages/beryl/test/runtime_cleanup_workload.gleam": "62847447ab44ddce34ea6188da5e0773172e222b7f4d68ee5a85c322041de272",
+    "packages/beryl/test/runtime_cleanup_test.gleam": "f37ce4a34bf9acdab73583da51b16692fcc3130d3c65f6ae5eb7be21d3f9798b",
+    "packages/beryl/test/beryl_runtime_cleanup_test_ffi.erl": "554eeeef5ce70958dec723f9bf1f30c829c7c3cc4411e500256c29b02d1a4e0d"
+  },
+  "measurement": "Router reductions, not elapsed time or capacity; shared local target; sequential baseline then indexed runs.",
+  "baseline_exit_code": 1,
+  "indexed_exit_code": 0,
+  "baseline_growth_checks": [
+    {
+      "axis": "unrelated_actors",
+      "mode": "normal_close",
+      "smallest_median": 2949,
+      "largest_median": 2664,
+      "bound": 7898,
+      "passed": true
+    },
+    {
+      "axis": "unrelated_actors",
+      "mode": "killed_actor",
+      "smallest_median": 11950,
+      "largest_median": 33231,
+      "bound": 25900,
+      "passed": false
+    },
+    {
+      "axis": "unrelated_actors",
+      "mode": "owner_exit",
+      "smallest_median": 3324,
+      "largest_median": 25253,
+      "bound": 8648,
+      "passed": false
+    },
+    {
+      "axis": "unrelated_actors",
+      "mode": "telemetry_killed_actor",
+      "smallest_median": 12283,
+      "largest_median": 33701,
+      "bound": 26566,
+      "passed": false
+    },
+    {
+      "axis": "unrelated_topics",
+      "mode": "normal_close",
+      "smallest_median": 2836,
+      "largest_median": 113826,
+      "bound": 7672,
+      "passed": false
+    },
+    {
+      "axis": "unrelated_topics",
+      "mode": "killed_actor",
+      "smallest_median": 11983,
+      "largest_median": 123236,
+      "bound": 25966,
+      "passed": false
+    },
+    {
+      "axis": "unrelated_topics",
+      "mode": "owner_exit",
+      "smallest_median": 3419,
+      "largest_median": 113834,
+      "bound": 8838,
+      "passed": false
+    },
+    {
+      "axis": "unrelated_topics",
+      "mode": "telemetry_killed_actor",
+      "smallest_median": 12373,
+      "largest_median": 187459,
+      "bound": 26746,
+      "passed": false
+    }
+  ],
+  "indexed_growth_checks": [
+    {
+      "axis": "unrelated_actors",
+      "mode": "normal_close",
+      "smallest_median": 2980,
+      "largest_median": 2678,
+      "bound": 7960,
+      "passed": true
+    },
+    {
+      "axis": "unrelated_actors",
+      "mode": "killed_actor",
+      "smallest_median": 11985,
+      "largest_median": 11590,
+      "bound": 25970,
+      "passed": true
+    },
+    {
+      "axis": "unrelated_actors",
+      "mode": "owner_exit",
+      "smallest_median": 3352,
+      "largest_median": 3009,
+      "bound": 8704,
+      "passed": true
+    },
+    {
+      "axis": "unrelated_actors",
+      "mode": "telemetry_killed_actor",
+      "smallest_median": 12227,
+      "largest_median": 11779,
+      "bound": 26454,
+      "passed": true
+    },
+    {
+      "axis": "unrelated_topics",
+      "mode": "normal_close",
+      "smallest_median": 2953,
+      "largest_median": 2812,
+      "bound": 7906,
+      "passed": true
+    },
+    {
+      "axis": "unrelated_topics",
+      "mode": "killed_actor",
+      "smallest_median": 11845,
+      "largest_median": 11711,
+      "bound": 25690,
+      "passed": true
+    },
+    {
+      "axis": "unrelated_topics",
+      "mode": "owner_exit",
+      "smallest_median": 3362,
+      "largest_median": 3075,
+      "bound": 8724,
+      "passed": true
+    },
+    {
+      "axis": "unrelated_topics",
+      "mode": "telemetry_killed_actor",
+      "smallest_median": 12121,
+      "largest_median": 14442,
+      "bound": 26242,
+      "passed": true
+    }
+  ],
+  "baseline": {
+    "fixture": "router_cleanup_reductions_v1",
+    "vm": "Erlang/OTP 28 [erts-16.4.0.5] [source] [64-bit] [smp:4:4] [ds:4:4:10] [async-threads:1] [jit]\n",
+    "otp": "28",
+    "gleam": "gleam 1.19.2",
+    "hardware": "Apple M2 Pro; 34359738368 bytes RAM; macOS; shared local target",
+    "architecture": "aarch64-apple-darwin / darwin",
+    "os_family": "unix",
+    "schedulers": 4,
+    "schedulers_online": 4,
+    "logical_processors_available": 12,
+    "word_bytes": 8,
+    "populations": [
+      0,
+      100,
+      1000
+    ],
+    "departing_batch": 4,
+    "memberships_per_departing_socket": 2,
+    "repeats": 5,
+    "warmups_per_configuration": 1,
+    "router_queue_items": 64,
+    "router_queue_bytes": 1048576,
+    "heartbeat_ms": 3600000,
+    "growth_multiplier": 2,
+    "growth_fixed_allowance_reductions": 2000,
+    "percentile_method": "nearest rank; descriptive, not tail guarantees",
+    "samples": [
+      {
+        "axis": "unrelated_actors",
+        "mode": "normal_close",
+        "population": 0,
+        "raw_router_reductions": [
+          2958,
+          2949,
+          2930,
+          2958,
+          2901
+        ],
+        "median": 2949,
+        "minimum": 2901,
+        "maximum": 2958,
+        "spread": 57,
+        "p95": 2958,
+        "p99": 2958
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "normal_close",
+        "population": 100,
+        "raw_router_reductions": [
+          2679,
+          2712,
+          2721,
+          2721,
+          2723
+        ],
+        "median": 2721,
+        "minimum": 2679,
+        "maximum": 2723,
+        "spread": 44,
+        "p95": 2723,
+        "p99": 2723
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "normal_close",
+        "population": 1000,
+        "raw_router_reductions": [
+          2683,
+          2663,
+          2664,
+          2673,
+          2637
+        ],
+        "median": 2664,
+        "minimum": 2637,
+        "maximum": 2683,
+        "spread": 46,
+        "p95": 2683,
+        "p99": 2683
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "killed_actor",
+        "population": 0,
+        "raw_router_reductions": [
+          11926,
+          11935,
+          11950,
+          11960,
+          12000
+        ],
+        "median": 11950,
+        "minimum": 11926,
+        "maximum": 12000,
+        "spread": 74,
+        "p95": 12000,
+        "p99": 12000
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "killed_actor",
+        "population": 100,
+        "raw_router_reductions": [
+          13969,
+          13957,
+          13981,
+          13950,
+          13997
+        ],
+        "median": 13969,
+        "minimum": 13950,
+        "maximum": 13997,
+        "spread": 47,
+        "p95": 13997,
+        "p99": 13997
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "killed_actor",
+        "population": 1000,
+        "raw_router_reductions": [
+          33231,
+          33220,
+          33242,
+          33242,
+          33231
+        ],
+        "median": 33231,
+        "minimum": 33220,
+        "maximum": 33242,
+        "spread": 22,
+        "p95": 33242,
+        "p99": 33242
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "owner_exit",
+        "population": 0,
+        "raw_router_reductions": [
+          3360,
+          3324,
+          3223,
+          3313,
+          3335
+        ],
+        "median": 3324,
+        "minimum": 3223,
+        "maximum": 3360,
+        "spread": 137,
+        "p95": 3360,
+        "p99": 3360
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "owner_exit",
+        "population": 100,
+        "raw_router_reductions": [
+          5359,
+          5329,
+          5353,
+          5307,
+          5351
+        ],
+        "median": 5351,
+        "minimum": 5307,
+        "maximum": 5359,
+        "spread": 52,
+        "p95": 5359,
+        "p99": 5359
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "owner_exit",
+        "population": 1000,
+        "raw_router_reductions": [
+          25294,
+          25253,
+          25221,
+          25219,
+          25273
+        ],
+        "median": 25253,
+        "minimum": 25219,
+        "maximum": 25294,
+        "spread": 75,
+        "p95": 25294,
+        "p99": 25294
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "telemetry_killed_actor",
+        "population": 0,
+        "raw_router_reductions": [
+          12300,
+          12283,
+          12282,
+          12297,
+          12267
+        ],
+        "median": 12283,
+        "minimum": 12267,
+        "maximum": 12300,
+        "spread": 33,
+        "p95": 12300,
+        "p99": 12300
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "telemetry_killed_actor",
+        "population": 100,
+        "raw_router_reductions": [
+          14322,
+          14396,
+          14330,
+          14398,
+          14457
+        ],
+        "median": 14396,
+        "minimum": 14322,
+        "maximum": 14457,
+        "spread": 135,
+        "p95": 14457,
+        "p99": 14457
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "telemetry_killed_actor",
+        "population": 1000,
+        "raw_router_reductions": [
+          33689,
+          33713,
+          33689,
+          33702,
+          33701
+        ],
+        "median": 33701,
+        "minimum": 33689,
+        "maximum": 33713,
+        "spread": 24,
+        "p95": 33713,
+        "p99": 33713
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "normal_close",
+        "population": 0,
+        "raw_router_reductions": [
+          2834,
+          2837,
+          2836,
+          2648,
+          2902
+        ],
+        "median": 2836,
+        "minimum": 2648,
+        "maximum": 2902,
+        "spread": 254,
+        "p95": 2902,
+        "p99": 2902
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "normal_close",
+        "population": 100,
+        "raw_router_reductions": [
+          13801,
+          13801,
+          13804,
+          13799,
+          14153
+        ],
+        "median": 13801,
+        "minimum": 13799,
+        "maximum": 14153,
+        "spread": 354,
+        "p95": 14153,
+        "p99": 14153
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "normal_close",
+        "population": 1000,
+        "raw_router_reductions": [
+          113826,
+          113244,
+          114232,
+          116413,
+          112804
+        ],
+        "median": 113826,
+        "minimum": 112804,
+        "maximum": 116413,
+        "spread": 3609,
+        "p95": 116413,
+        "p99": 116413
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "killed_actor",
+        "population": 0,
+        "raw_router_reductions": [
+          11990,
+          12086,
+          11983,
+          11978,
+          11982
+        ],
+        "median": 11983,
+        "minimum": 11978,
+        "maximum": 12086,
+        "spread": 108,
+        "p95": 12086,
+        "p99": 12086
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "killed_actor",
+        "population": 100,
+        "raw_router_reductions": [
+          22997,
+          23543,
+          22725,
+          22690,
+          23427
+        ],
+        "median": 22997,
+        "minimum": 22690,
+        "maximum": 23543,
+        "spread": 853,
+        "p95": 23543,
+        "p99": 23543
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "killed_actor",
+        "population": 1000,
+        "raw_router_reductions": [
+          123236,
+          123117,
+          124560,
+          124956,
+          122446
+        ],
+        "median": 123236,
+        "minimum": 122446,
+        "maximum": 124956,
+        "spread": 2510,
+        "p95": 124956,
+        "p99": 124956
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "owner_exit",
+        "population": 0,
+        "raw_router_reductions": [
+          3419,
+          3092,
+          3329,
+          3455,
+          3451
+        ],
+        "median": 3419,
+        "minimum": 3092,
+        "maximum": 3455,
+        "spread": 363,
+        "p95": 3455,
+        "p99": 3455
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "owner_exit",
+        "population": 100,
+        "raw_router_reductions": [
+          14776,
+          14448,
+          14300,
+          14866,
+          14227
+        ],
+        "median": 14448,
+        "minimum": 14227,
+        "maximum": 14866,
+        "spread": 639,
+        "p95": 14866,
+        "p99": 14866
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "owner_exit",
+        "population": 1000,
+        "raw_router_reductions": [
+          113603,
+          113834,
+          118465,
+          114585,
+          113496
+        ],
+        "median": 113834,
+        "minimum": 113496,
+        "maximum": 118465,
+        "spread": 4969,
+        "p95": 118465,
+        "p99": 118465
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "telemetry_killed_actor",
+        "population": 0,
+        "raw_router_reductions": [
+          12429,
+          12441,
+          12373,
+          12328,
+          12327
+        ],
+        "median": 12373,
+        "minimum": 12327,
+        "maximum": 12441,
+        "spread": 114,
+        "p95": 12441,
+        "p99": 12441
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "telemetry_killed_actor",
+        "population": 100,
+        "raw_router_reductions": [
+          29919,
+          29676,
+          30470,
+          29538,
+          29690
+        ],
+        "median": 29690,
+        "minimum": 29538,
+        "maximum": 30470,
+        "spread": 932,
+        "p95": 30470,
+        "p99": 30470
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "telemetry_killed_actor",
+        "population": 1000,
+        "raw_router_reductions": [
+          189151,
+          187044,
+          187695,
+          187459,
+          186899
+        ],
+        "median": 187459,
+        "minimum": 186899,
+        "maximum": 189151,
+        "spread": 2252,
+        "p95": 189151,
+        "p99": 189151
+      }
+    ]
+  },
+  "indexed": {
+    "fixture": "router_cleanup_reductions_v1",
+    "vm": "Erlang/OTP 28 [erts-16.4.0.5] [source] [64-bit] [smp:4:4] [ds:4:4:10] [async-threads:1] [jit]\n",
+    "otp": "28",
+    "gleam": "gleam 1.19.2",
+    "hardware": "Apple M2 Pro; 34359738368 bytes RAM; macOS; shared local target",
+    "architecture": "aarch64-apple-darwin / darwin",
+    "os_family": "unix",
+    "schedulers": 4,
+    "schedulers_online": 4,
+    "logical_processors_available": 12,
+    "word_bytes": 8,
+    "populations": [
+      0,
+      100,
+      1000
+    ],
+    "departing_batch": 4,
+    "memberships_per_departing_socket": 2,
+    "repeats": 5,
+    "warmups_per_configuration": 1,
+    "router_queue_items": 64,
+    "router_queue_bytes": 1048576,
+    "heartbeat_ms": 3600000,
+    "growth_multiplier": 2,
+    "growth_fixed_allowance_reductions": 2000,
+    "percentile_method": "nearest rank; descriptive, not tail guarantees",
+    "samples": [
+      {
+        "axis": "unrelated_actors",
+        "mode": "normal_close",
+        "population": 0,
+        "raw_router_reductions": [
+          2931,
+          2944,
+          2983,
+          2980,
+          3010
+        ],
+        "median": 2980,
+        "minimum": 2931,
+        "maximum": 3010,
+        "spread": 79,
+        "p95": 3010,
+        "p99": 3010
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "normal_close",
+        "population": 100,
+        "raw_router_reductions": [
+          2744,
+          2770,
+          2682,
+          2777,
+          2820
+        ],
+        "median": 2770,
+        "minimum": 2682,
+        "maximum": 2820,
+        "spread": 138,
+        "p95": 2820,
+        "p99": 2820
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "normal_close",
+        "population": 1000,
+        "raw_router_reductions": [
+          2678,
+          2784,
+          2621,
+          2630,
+          4205
+        ],
+        "median": 2678,
+        "minimum": 2621,
+        "maximum": 4205,
+        "spread": 1584,
+        "p95": 4205,
+        "p99": 4205
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "killed_actor",
+        "population": 0,
+        "raw_router_reductions": [
+          11985,
+          11973,
+          12099,
+          11996,
+          11985
+        ],
+        "median": 11985,
+        "minimum": 11973,
+        "maximum": 12099,
+        "spread": 126,
+        "p95": 12099,
+        "p99": 12099
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "killed_actor",
+        "population": 100,
+        "raw_router_reductions": [
+          11700,
+          11793,
+          11780,
+          11660,
+          11748
+        ],
+        "median": 11748,
+        "minimum": 11660,
+        "maximum": 11793,
+        "spread": 133,
+        "p95": 11793,
+        "p99": 11793
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "killed_actor",
+        "population": 1000,
+        "raw_router_reductions": [
+          11701,
+          13064,
+          11590,
+          11566,
+          11590
+        ],
+        "median": 11590,
+        "minimum": 11566,
+        "maximum": 13064,
+        "spread": 1498,
+        "p95": 13064,
+        "p99": 13064
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "owner_exit",
+        "population": 0,
+        "raw_router_reductions": [
+          3389,
+          3352,
+          3328,
+          3381,
+          3310
+        ],
+        "median": 3352,
+        "minimum": 3310,
+        "maximum": 3389,
+        "spread": 79,
+        "p95": 3389,
+        "p99": 3389
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "owner_exit",
+        "population": 100,
+        "raw_router_reductions": [
+          3165,
+          3270,
+          3214,
+          3191,
+          3161
+        ],
+        "median": 3191,
+        "minimum": 3161,
+        "maximum": 3270,
+        "spread": 109,
+        "p95": 3270,
+        "p99": 3270
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "owner_exit",
+        "population": 1000,
+        "raw_router_reductions": [
+          3009,
+          3053,
+          3433,
+          3006,
+          3009
+        ],
+        "median": 3009,
+        "minimum": 3006,
+        "maximum": 3433,
+        "spread": 427,
+        "p95": 3433,
+        "p99": 3433
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "telemetry_killed_actor",
+        "population": 0,
+        "raw_router_reductions": [
+          12227,
+          12360,
+          12210,
+          12222,
+          12271
+        ],
+        "median": 12227,
+        "minimum": 12210,
+        "maximum": 12360,
+        "spread": 150,
+        "p95": 12360,
+        "p99": 12360
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "telemetry_killed_actor",
+        "population": 100,
+        "raw_router_reductions": [
+          11960,
+          11890,
+          12042,
+          11900,
+          11951
+        ],
+        "median": 11951,
+        "minimum": 11890,
+        "maximum": 12042,
+        "spread": 152,
+        "p95": 12042,
+        "p99": 12042
+      },
+      {
+        "axis": "unrelated_actors",
+        "mode": "telemetry_killed_actor",
+        "population": 1000,
+        "raw_router_reductions": [
+          11767,
+          11927,
+          11779,
+          11787,
+          11778
+        ],
+        "median": 11779,
+        "minimum": 11767,
+        "maximum": 11927,
+        "spread": 160,
+        "p95": 11927,
+        "p99": 11927
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "normal_close",
+        "population": 0,
+        "raw_router_reductions": [
+          2953,
+          3025,
+          2944,
+          2949,
+          2969
+        ],
+        "median": 2953,
+        "minimum": 2944,
+        "maximum": 3025,
+        "spread": 81,
+        "p95": 3025,
+        "p99": 3025
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "normal_close",
+        "population": 100,
+        "raw_router_reductions": [
+          2760,
+          2763,
+          2646,
+          2805,
+          2780
+        ],
+        "median": 2763,
+        "minimum": 2646,
+        "maximum": 2805,
+        "spread": 159,
+        "p95": 2805,
+        "p99": 2805
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "normal_close",
+        "population": 1000,
+        "raw_router_reductions": [
+          5315,
+          2752,
+          2774,
+          2812,
+          2831
+        ],
+        "median": 2812,
+        "minimum": 2752,
+        "maximum": 5315,
+        "spread": 2563,
+        "p95": 5315,
+        "p99": 5315
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "killed_actor",
+        "population": 0,
+        "raw_router_reductions": [
+          11845,
+          11844,
+          11844,
+          11856,
+          11868
+        ],
+        "median": 11845,
+        "minimum": 11844,
+        "maximum": 11868,
+        "spread": 24,
+        "p95": 11868,
+        "p99": 11868
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "killed_actor",
+        "population": 100,
+        "raw_router_reductions": [
+          11676,
+          11765,
+          11684,
+          11663,
+          11779
+        ],
+        "median": 11684,
+        "minimum": 11663,
+        "maximum": 11779,
+        "spread": 116,
+        "p95": 11779,
+        "p99": 11779
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "killed_actor",
+        "population": 1000,
+        "raw_router_reductions": [
+          11711,
+          11703,
+          11626,
+          11731,
+          11788
+        ],
+        "median": 11711,
+        "minimum": 11626,
+        "maximum": 11788,
+        "spread": 162,
+        "p95": 11788,
+        "p99": 11788
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "owner_exit",
+        "population": 0,
+        "raw_router_reductions": [
+          3362,
+          3336,
+          3400,
+          3283,
+          3392
+        ],
+        "median": 3362,
+        "minimum": 3283,
+        "maximum": 3400,
+        "spread": 117,
+        "p95": 3400,
+        "p99": 3400
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "owner_exit",
+        "population": 100,
+        "raw_router_reductions": [
+          3132,
+          3096,
+          3167,
+          3174,
+          3251
+        ],
+        "median": 3167,
+        "minimum": 3096,
+        "maximum": 3251,
+        "spread": 155,
+        "p95": 3251,
+        "p99": 3251
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "owner_exit",
+        "population": 1000,
+        "raw_router_reductions": [
+          3154,
+          3075,
+          3009,
+          3129,
+          3051
+        ],
+        "median": 3075,
+        "minimum": 3009,
+        "maximum": 3154,
+        "spread": 145,
+        "p95": 3154,
+        "p99": 3154
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "telemetry_killed_actor",
+        "population": 0,
+        "raw_router_reductions": [
+          12121,
+          12121,
+          12133,
+          12151,
+          12121
+        ],
+        "median": 12121,
+        "minimum": 12121,
+        "maximum": 12151,
+        "spread": 30,
+        "p95": 12151,
+        "p99": 12151
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "telemetry_killed_actor",
+        "population": 100,
+        "raw_router_reductions": [
+          12019,
+          12014,
+          12003,
+          12004,
+          11979
+        ],
+        "median": 12004,
+        "minimum": 11979,
+        "maximum": 12019,
+        "spread": 40,
+        "p95": 12019,
+        "p99": 12019
+      },
+      {
+        "axis": "unrelated_topics",
+        "mode": "telemetry_killed_actor",
+        "population": 1000,
+        "raw_router_reductions": [
+          14458,
+          11959,
+          14442,
+          14463,
+          11873
+        ],
+        "median": 14442,
+        "minimum": 11873,
+        "maximum": 14463,
+        "spread": 2590,
+        "p95": 14463,
+        "p99": 14463
+      }
+    ]
+  },
+  "monitor_index_mutation_checks": {
+    "omitted_actor_deletion": "1 passed, 5 failures; socket_monitor_index_mismatch",
+    "omitted_admission_deletion": "1 passed, 5 failures; socket_monitor_index_mismatch",
+    "restored_runtime": "6 passed, no failures"
+  }
+}

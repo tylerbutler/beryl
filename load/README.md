@@ -92,6 +92,48 @@ erl -noshell -pa build/dev/erlang/*/ebin \
   > ../../load/results/admission-bounds.json
 ```
 
+### Router socket-cleanup fixture
+
+The core fixture isolates router cleanup from network and socket-actor work.
+It holds four departing sockets at two memberships each, then varies unrelated
+actors and unrelated topics separately through 0, 100, and 1000. Each
+configuration has one warm-up and five fresh-app repeats. It covers normal
+disconnect, actor kill, admission-owner exit, and telemetry-enabled actor kill.
+
+From the repository root:
+
+```sh
+cd packages/beryl
+BERYL_CLEANUP_GLEAM_VERSION="$(gleam --version)" \
+BERYL_CLEANUP_HARDWARE="CPU model, RAM bytes, OS notes" \
+ERL_FLAGS='+S 4:4' gleam run -m runtime_cleanup_workload
+```
+
+Replace the hardware note with the target's actual configuration. The command
+prints one JSON line with `fixture` set to `router_cleanup_reductions_v1`;
+application logs can surround that line. Retain the JSON and the tested source
+revision when comparing implementations.
+
+Each sample counts router reductions between acknowledged OTP suspensions.
+The final suspension follows terminal removal, not just deletion of the queue
+target. Setup, global stats reads, healthy-peer checks, and shutdown are outside
+the interval. Queue wake/recovery turns and OTP suspension work are included.
+Every sample also checks exact topic/socket counts, healthy delivery, closer
+notifications, and monitor cleanup.
+
+The preselected growth bound is: the largest-population median must not exceed
+twice the zero-population median plus 2000 reductions, for each axis/mode.
+The command prints raw samples, medians, ranges, spread, and nearest-rank p95
+and p99 before failing if a bound is exceeded. With five repeats, p95 and p99
+are both the maximum; they are not statistical tail guarantees. This fixture
+makes no elapsed-time, throughput, or connection-capacity claim.
+
+[`results/runtime-cleanup.json`](./results/runtime-cleanup.json) records the
+same fixture on starting main `bd786f5f` and the indexed implementation. It
+includes source hashes, raw samples, and the unchanged growth checks. The
+baseline exceeds seven of eight bounds; the indexed implementation passes all
+eight. This is local reduction evidence, not a general performance envelope.
+
 ### k6 setup
 
 Install Erlang 27+, Gleam 1.16+, `rebar3`, `just`, `trellis`, `pnpm`,

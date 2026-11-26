@@ -176,6 +176,15 @@ internal module remains an implementation detail.
   reservations remain charged after dequeue until release. Closing admission
   preserves already-reserved work for draining (`socket.gleam:notify`,
   `channel.gleam:notify`, `work_queue.gleam:publish`, `work_queue.gleam:close`).
+- The router indexes both socket-actor and admission-owner monitors by socket
+  ID. Each admitted actor also owns a reverse set of indexed topics. The
+  router updates that set and the forward subscriber index in the same turn.
+  Removal sweeps only the actor's remaining topics, including missing leaves;
+  delayed joins from a removed actor fail the socket-ID/PID ownership check.
+  Unrelated actors and topics are not scanned during monitor lookup, removal,
+  or abnormal-disconnect membership counting (`runtime.gleam:SocketActorRef`,
+  `runtime.gleam:handle_router_socket_actor_down`,
+  `runtime.gleam:update_indexed_topics`, `runtime.gleam:remove_socket_actor`).
 - Presence handles are node-affine. `lattice_presence` owns the CRDT; beryl owns
   actor integration and per-topic ETS snapshots. `on_diff` runs before snapshot
   publication and cannot veto the mutation (`presence.gleam:Presence`,

@@ -316,6 +316,8 @@ type SocketActorRef(message) {
     admission: atomic_token.Token,
     close: fn() -> Nil,
     queue: work_queue.Queue(Message(message)),
+    /// Updated with the router's forward index in the same turn.
+    topics: Set(String),
     /// A pending terminal event; cleared after the router emits it.
     connected_at: Option(Int),
   )
@@ -324,6 +326,7 @@ type SocketActorRef(message) {
 type RuntimeRole(message) {
   RouterRole(
     socket_actors: Dict(String, SocketActorRef(message)),
+    socket_monitors: Dict(process.Monitor, String),
     stop_reply: Option(Subject(app_supervisor.StopCompletion)),
     /// None means terminal stop requests have already been sent.
     stop_finalized: Option(Set(Pid)),
@@ -727,6 +730,7 @@ pub fn start_named(
         stopping: False,
         role: RouterRole(
           socket_actors: dict.new(),
+          socket_monitors: dict.new(),
           stop_reply: None,
           stop_finalized: Some(set.new()),
         ),
@@ -1283,7 +1287,7 @@ fn handle_message(
     }
     StopPhaseDone(pid) ->
       case state.role {
-        RouterRole(socket_actors:, stop_reply:, stop_finalized: Some(finalized)) -> {
+        RouterRole(socket_actors:, stop_finalized: Some(finalized), ..) as role -> {
           let owned =
             dict.values(socket_actors) |> list.any(fn(ref) { ref.pid == pid })
           use <- bool.guard(
@@ -1294,8 +1298,7 @@ fn handle_message(
             State(
               ..state,
               role: RouterRole(
-                socket_actors: socket_actors,
-                stop_reply: stop_reply,
+                ..role,
                 stop_finalized: Some(set.insert(finalized, pid)),
               ),
             )
@@ -1332,17 +1335,11 @@ fn handle_message(
           |> log.warn("Runtime stop: killing unresponsive socket actors", [
             #("socket_count", int.to_string(dict.size(socket_actors))),
           ])
-          dict.to_list(socket_actors)
-          |> list.each(fn(entry) {
-            let #(socket_id, ref) = entry
+          dict.values(socket_actors)
+          |> list.each(fn(ref) {
             process.kill(ref.pid)
             let _closer = process.spawn_unlinked(ref.close)
-            emit_abnormal_disconnect(
-              state,
-              socket_id,
-              ref,
-              telemetry.ShutdownDisconnect,
-            )
+            emit_abnormal_disconnect(state, ref, telemetry.ShutdownDisconnect)
           })
           process.send(reply, app_supervisor.StopIncomplete)
           actor.stop()
@@ -1369,7 +1366,7 @@ fn handle_message(
     SocketConnected(socket_id, pid, connected_at) ->
       case state.role {
         SocketActorRole(..) -> actor.continue(state)
-        RouterRole(socket_actors:, stop_reply:, stop_finalized:) ->
+        RouterRole(socket_actors:, ..) as role ->
           case dict.get(socket_actors, socket_id) {
             Ok(ref) if ref.pid == pid && ref.connected_at == None -> {
               telemetry.emit(state.config.telemetry, telemetry.SocketConnected)
@@ -1377,13 +1374,12 @@ fn handle_message(
                 State(
                   ..state,
                   role: RouterRole(
+                    ..role,
                     socket_actors: dict.insert(
                       socket_actors,
                       socket_id,
                       SocketActorRef(..ref, connected_at: Some(connected_at)),
                     ),
-                    stop_reply: stop_reply,
-                    stop_finalized: stop_finalized,
                   ),
                 ),
               )
@@ -1394,7 +1390,7 @@ fn handle_message(
     SocketTerminated(socket_id, pid, duration, joined_channels, reason) ->
       case state.role {
         SocketActorRole(..) -> actor.continue(state)
-        RouterRole(socket_actors:, stop_reply:, stop_finalized:) ->
+        RouterRole(socket_actors:, ..) as role ->
           case dict.get(socket_actors, socket_id) {
             Ok(ref) if ref.pid == pid && ref.connected_at != None -> {
               telemetry.emit(
@@ -1405,13 +1401,12 @@ fn handle_message(
                 State(
                   ..state,
                   role: RouterRole(
+                    ..role,
                     socket_actors: dict.insert(
                       socket_actors,
                       socket_id,
                       SocketActorRef(..ref, connected_at: None),
                     ),
-                    stop_reply: stop_reply,
-                    stop_finalized: stop_finalized,
                   ),
                 ),
               )
@@ -1429,8 +1424,13 @@ fn handle_message(
     SocketActorDown(down) ->
       case state.role {
         SocketActorRole(..) -> actor.continue(state)
-        RouterRole(socket_actors:, ..) ->
-          handle_router_socket_actor_down(state, down, socket_actors)
+        RouterRole(socket_actors:, socket_monitors:, ..) ->
+          handle_router_socket_actor_down(
+            state,
+            down,
+            socket_actors,
+            socket_monitors,
+          )
       }
     RouterDown -> {
       sweep_runtime_presence(state.config.presence, process.self())
@@ -1469,15 +1469,16 @@ fn handle_router_socket_actor_down(
   state: State(model, message),
   down: process.Down,
   socket_actors: Dict(String, SocketActorRef(message)),
+  socket_monitors: Dict(process.Monitor, String),
 ) -> actor.Next(State(model, message), Message(message)) {
   case down {
     process.ProcessDown(monitor: monitor, ..) ->
       case
-        dict.to_list(socket_actors)
-        |> list.find(fn(entry) {
-          let #(_, ref) = entry
-          ref.monitor == monitor || ref.admission_monitor == monitor
-        })
+        {
+          use socket_id <- result.try(dict.get(socket_monitors, monitor))
+          use ref <- result.map(dict.get(socket_actors, socket_id))
+          #(socket_id, ref)
+        }
       {
         Ok(#(socket_id, ref)) if ref.admission_monitor == monitor -> {
           case atomic_token.cancel(ref.admission) {
@@ -1495,12 +1496,7 @@ fn handle_router_socket_actor_down(
           ])
           let _closer = process.spawn_unlinked(ref.close)
           sweep_runtime_presence(state.config.presence, ref.pid)
-          emit_abnormal_disconnect(
-            state,
-            socket_id,
-            ref,
-            telemetry.SocketProcessDown,
-          )
+          emit_abnormal_disconnect(state, ref, telemetry.SocketProcessDown)
           remove_socket_actor(state, socket_id)
         }
         // Already removed via `SocketClosed`, or never admitted.
@@ -1512,7 +1508,6 @@ fn handle_router_socket_actor_down(
 
 fn emit_abnormal_disconnect(
   state: State(model, message),
-  socket_id: String,
   ref: SocketActorRef(message),
   reason: telemetry.DisconnectReason,
 ) -> Nil {
@@ -1526,12 +1521,7 @@ fn emit_abnormal_disconnect(
         True,
         telemetry.SocketDisconnected(
           duration: telemetry.duration_since(connected_at),
-          joined_channels: dict.fold(state.topics, 0, fn(count, _, subscribers) {
-            case set.contains(subscribers, socket_id) {
-              True -> count + 1
-              False -> count
-            }
-          }),
+          joined_channels: set.size(ref.topics),
           reason: reason,
         ),
       )
@@ -1548,33 +1538,39 @@ fn remove_socket_actor(
 ) -> actor.Next(State(model, message), Message(message)) {
   case state.role {
     SocketActorRole(..) -> actor.continue(state)
-    RouterRole(socket_actors:, stop_reply:, stop_finalized:) -> {
+    RouterRole(socket_actors:, socket_monitors:, stop_reply:, ..) as role -> {
       work_queue.remove_target(state.inbox, socket_id)
-      case dict.get(socket_actors, socket_id) {
+      let #(topics, socket_monitors) = case dict.get(socket_actors, socket_id) {
         // Demonitoring flushes a `Down` already in the mailbox, so a normal
         // close can never be swept a second time as a crash.
         Ok(ref) -> {
           process.demonitor_process(ref.monitor)
           process.demonitor_process(ref.admission_monitor)
           sweep_runtime_presence(state.config.presence, ref.pid)
+          #(
+            ref.topics,
+            socket_monitors
+              |> dict.delete(ref.monitor)
+              |> dict.delete(ref.admission_monitor),
+          )
         }
-        Error(Nil) -> Nil
+        Error(Nil) -> #(set.new(), socket_monitors)
       }
-      // A teardown emits `IndexLeave` per joined topic, but sweeping is
-      // cheap and makes a dropped one impossible to leak.
+      // Missing leaves remain here; late joins cannot pass owns_socket
+      // after removal. Both indexes change together in each router turn.
       let state =
-        dict.keys(state.topics)
-        |> list.fold(state, fn(st, topic_name) {
-          remove_topic_subscriber(st, socket_id, topic_name)
+        set.to_list(topics)
+        |> list.fold(state, fn(state, topic_name) {
+          remove_topic_subscriber(state, socket_id, topic_name)
         })
       let socket_actors = dict.delete(socket_actors, socket_id)
       let state =
         State(
           ..state,
           role: RouterRole(
+            ..role,
             socket_actors: socket_actors,
-            stop_reply: stop_reply,
-            stop_finalized: stop_finalized,
+            socket_monitors: socket_monitors,
           ),
         )
       case stop_reply, dict.is_empty(socket_actors) {
@@ -1600,17 +1596,14 @@ fn begin_stop_phase_two_if_ready(
 ) -> State(model, message) {
   case state.role {
     SocketActorRole(..) | RouterRole(stop_finalized: None, ..) -> state
-    RouterRole(socket_actors:, stop_reply:, stop_finalized: Some(finalized)) -> {
+    RouterRole(socket_actors:, stop_finalized: Some(finalized), ..) as role -> {
       let refs = dict.values(socket_actors)
       use <- bool.guard(
         when: !list.all(refs, fn(ref) { set.contains(finalized, ref.pid) }),
         return: state,
       )
       list.each(refs, fn(ref) { process.send(ref.subject, StopSocketActor) })
-      State(
-        ..state,
-        role: RouterRole(socket_actors:, stop_reply:, stop_finalized: None),
-      )
+      State(..state, role: RouterRole(..role, stop_finalized: None))
     }
   }
 }
@@ -2052,7 +2045,7 @@ fn handle_admit_socket(
     // waits on the socket actor — the actor answers the transport itself,
     // so a slow or crashing `init` cannot block admission of other
     // sockets (and the router must never block on a socket actor).
-    RouterRole(socket_actors:, stop_reply:, stop_finalized:) -> {
+    RouterRole(socket_actors:, socket_monitors:, ..) as role -> {
       use <- bool.lazy_guard(
         when: state.stopping
           || process.self() != owner
@@ -2105,6 +2098,7 @@ fn handle_admit_socket(
             State(
               ..state,
               role: RouterRole(
+                ..role,
                 socket_actors: dict.insert(
                   socket_actors,
                   socket_id,
@@ -2116,11 +2110,13 @@ fn handle_admit_socket(
                     admission,
                     close,
                     actor_queue,
+                    set.new(),
                     None,
                   ),
                 ),
-                stop_reply: stop_reply,
-                stop_finalized: stop_finalized,
+                socket_monitors: socket_monitors
+                  |> dict.insert(monitor, socket_id)
+                  |> dict.insert(admission_monitor, socket_id),
               ),
             ),
           )
@@ -2643,7 +2639,7 @@ fn begin_router_stop(
 ) -> actor.Next(State(model, message), Message(message)) {
   case state.role {
     SocketActorRole(..) -> handle_stop(state, Some(reply))
-    RouterRole(socket_actors:, stop_finalized:, ..) -> {
+    RouterRole(socket_actors:, ..) as role -> {
       state.logger
       |> log.info("Runtime stopping", [
         #("socket_count", int.to_string(dict.size(socket_actors))),
@@ -2664,11 +2660,7 @@ fn begin_router_stop(
         State(
           ..state,
           stopping: True,
-          role: RouterRole(
-            socket_actors: socket_actors,
-            stop_reply: Some(reply),
-            stop_finalized: stop_finalized,
-          ),
+          role: RouterRole(..role, stop_reply: Some(reply)),
         ),
       )
     }
@@ -4915,6 +4907,7 @@ fn remove_topic_subscriber(
   socket_id: String,
   topic_name: String,
 ) -> State(model, message) {
+  let state = update_indexed_topics(state, socket_id, topic_name, set.delete)
   let subscribers =
     dict.get(state.topics, topic_name)
     |> result.unwrap(set.new())
@@ -4983,6 +4976,34 @@ fn add_topic_subscriber(
       set.insert(existing, socket_id),
     ),
   )
+  |> update_indexed_topics(socket_id, topic_name, set.insert)
+}
+
+fn update_indexed_topics(
+  state: State(model, message),
+  socket_id: String,
+  topic_name: String,
+  update: fn(Set(String), String) -> Set(String),
+) -> State(model, message) {
+  case state.role {
+    SocketActorRole(..) -> state
+    RouterRole(socket_actors:, ..) as role ->
+      case dict.get(socket_actors, socket_id) {
+        Error(Nil) -> state
+        Ok(ref) ->
+          State(
+            ..state,
+            role: RouterRole(
+              ..role,
+              socket_actors: dict.insert(
+                socket_actors,
+                socket_id,
+                SocketActorRef(..ref, topics: update(ref.topics, topic_name)),
+              ),
+            ),
+          )
+      }
+  }
 }
 
 fn log_membership_admission(
