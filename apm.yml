@@ -21,7 +21,7 @@ devDependencies:
   apm:
     - tylerbutler/apm-base
     - tylerbutler/agent-marketplace/plugins/gleam
-    - google/elephant-goldfish-model
+
   mcp: []
 # Discover first-party primitives, including .apm/skills/changelog-authoring/.
 includes: auto

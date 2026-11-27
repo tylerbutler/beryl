@@ -1,0 +1,16 @@
+{
+  "name": "gleam",
+  "description": "Gleam development skills and agents: conventions review, generated reference docs, Erlang implementation, and BEAM VM/OTP review",
+  "version": "0.1.0",
+  "author": {
+    "name": "Tyler Butler"
+  },
+  "keywords": [
+    "gleam",
+    "review",
+    "docs",
+    "conventions",
+    "beam",
+    "erlang"
+  ]
+}

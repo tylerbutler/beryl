@@ -1,0 +1,12 @@
+{
+  "name": "apm-p-7fbbdd9e",
+  "owner": {
+    "name": "APM"
+  },
+  "plugins": [
+    {
+      "name": "gleam",
+      "source": "./gleam"
+    }
+  ]
+}

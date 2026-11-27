@@ -1,0 +1,59 @@
+{
+  "skill_name": "changelog-authoring",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Write a changelog fragment for a connection-slot cleanup fix in our released Gleam package named harbor. We use Trellis with a Fixed kind mapped to patch and change_format = \"{{ body | trim }}\\n\\n\" under H3 kind sections. Check our pinned tool version, existing recipes, and preview. Do not prepare a release.",
+      "expected_output": "A valid Trellis fragment for harbor with a complete sentence H4 heading, explanatory paragraphs, and a native rendered preview, without a code sample or release operations.",
+      "files": [],
+      "expectations": [
+        "Inspects the installed Trellis version, configuration, existing fragments, and native recipe quoting before using commands",
+        "Uses the configured fragment directory and keeps the native generated filename",
+        "Uses required package, kind, and nonempty body string fields, omitting unconfigured category and unsupported fields",
+        "Writes an unindented complete sentence H4 heading, a blank line, and explanatory paragraphs for the confirmed non-bullet renderer",
+        "Uses the actual repository comparison base and checks native rendered output and version effects",
+        "Adds no code sample for the routine fix and performs no release, apply, tag, or publish operations"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Our Trellis renderer prefixes fragment bodies with '- ' and an existing fragment starts with '####'. Make the entry render as a complete sentence heading plus paragraphs. The old changelog has bullet entries. Do not change configuration without approval or reformat released changelogs.",
+      "expected_output": "The agent identifies that the current renderer cannot produce the required standalone H4 shape, reports the preview mismatch, and requests approval before changing configuration.",
+      "files": [],
+      "expectations": [
+        "Distinguishes source Markdown from actual rendered output and does not assume historical entries prove compatibility",
+        "Does not claim '- ####' is a standalone H4 heading",
+        "Does not prescribe plain bullets or indented H4 bodies as a workaround",
+        "Reports incompatible output and seeks approval before changing renderer configuration",
+        "Preserves historical changelogs"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "The changelog coverage check warns after a PR changing only /// and //// comments, package documentation, tests, CI, and development tooling. Add whatever is required to address it. Separately, our other Gleam repo uses .changie.yaml, not Trellis; can this skill create its entries?",
+      "expected_output": "No fragment for documentation or development-only changes; an explanation of the advisory warning and the skill's Trellis-only boundary.",
+      "files": [],
+      "expectations": [
+        "Inspects check strictness and distinguishes advisory path-based warnings from invalid fragment failures",
+        "Creates no fragments for source doc comments, package docs, tests, CI, or tooling-only changes",
+        "Explains the Trellis prerequisite and stops for the Changie repository without creating Trellis TOML",
+        "Does not install tooling, change configuration, or add wrappers to silence a warning"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "In our Gleam monorepo, transport_core ships bundled inside harbor and is not independently released; harbor_http releases separately and examples are excluded. This PR renames a public constructor in transport_core, fixes behavior in harbor_http, and updates docs and examples. Our configured Changed and Fixed kinds map to minor and patch; no Breaking kind exists. Author the required fragments and verify migration guidance and version effects without applying a release.",
+      "expected_output": "Entries cover harbor and harbor_http only, with a complete sentence heading and paragraphs, verified API migration guidance, and explicit consideration of the breaking-change bump.",
+      "files": [],
+      "expectations": [
+        "Discovers actual bundle ownership, independent release packages, kinds, and bump mappings rather than using Beryl package names",
+        "Attributes the bundled package change to harbor and creates a separate entry for harbor_http",
+        "Excludes documentation and example portions and avoids duplicate entries already covering the changes",
+        "Explains the constructor replacement and includes a short code sample only if it clarifies migration, verifying identifiers against the API",
+        "Does not invent a Breaking kind or assume Changed implies major",
+        "Verifies the intended bump with a supported native read-only version plan and explains that a preview does not persist overrides",
+        "Preserves TOML escaping and shell quoting for Markdown without interpolating untrusted entry text"
+      ]
+    }
+  ]
+}
