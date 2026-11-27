@@ -510,7 +510,7 @@ Build the app-side dispatch supervision child specification.
  shutdown, sends return admission errors and connection admission fails.
 
  A successful call permanently allocates three Erlang registered-name
- atoms, or four when the connection limiter is enabled, before the
+ atoms, or five when the connection limiter is enabled, before the
  supervisor starts. Dropping the specification does not reclaim them.
  Construct it once per long-lived system and reuse it across supervised
  restarts; restarting from the same specification allocates no new names.

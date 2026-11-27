@@ -13,8 +13,9 @@ converts the handler table to a core `init` and `update` pair.
 
 A successful `beryl.child_spec` or `channel.child_spec` call allocates three
 Erlang atoms for registered names before the supervisor starts. Enabling the
-connection limiter adds a fourth name. These atoms remain for the lifetime
-of the BEAM node, even if you discard the specification without starting it.
+connection limiter adds two names: one for the limiter and one for its
+checkpoint manager. These atoms remain for the lifetime of the BEAM node,
+even if you discard the specification without starting it.
 
 Construct a specification once per long-lived system and give it to the
 application supervisor. Reuse that specification for supervised restarts.
@@ -36,7 +37,9 @@ beryl internal supervisor (one-for-one, 3 restarts / 5 seconds)
 |     `- topic worker supervisor (channel layer only, linked to the socket actor)
 |        `- topic worker (one per accepted socket/topic join, Temporary)
 |- router actor (Transient, significant)
-`- connection limiter (optional)
+`- limiter supervisor (optional, Permanent, rest-for-one, 3 restarts / 5 seconds)
+   |- checkpoint manager (Permanent)
+   `- connection limiter (Permanent)
 
 transport connection process (outside the beryl subtree)
 `- owns the WebSocket and performs frame writes
@@ -62,6 +65,14 @@ transport connection process (outside the beryl subtree)
   does not restart. The replacement factory accepts new connections.
 - The router is the significant `Transient` child: a graceful `beryl.stop`
   shuts down the subtree and is not restarted.
+- The limiter owns a private ETS checkpoint. Its manager inherits the table
+  after a limiter failure and transfers it to the replacement. Counts, held
+  reservations, and per-IP rate buckets survive limiter-worker restarts.
+- The manager starts before the limiter under `RestForOne`. A manager failure
+  restarts both with empty admission state, without restarting the router or
+  factory. Existing connections are no longer counted. The limiter subtree
+  allows 3 restarts in 5 seconds; exhaustion restarts that subtree under its
+  parent. Enclosing shutdown releases the checkpoint.
 
 After **3 restarts in 5 seconds** the internal supervisor gives up and the
 failure propagates through your application's supervision tree.

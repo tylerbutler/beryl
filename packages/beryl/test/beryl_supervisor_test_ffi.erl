@@ -4,8 +4,8 @@
          gate_new/0, gate_wait/1, gate_release/1,
          with_suspended_subtree/2,
          connection_limit_checkpoint_table/1,
-         connection_limit_with_faulted_checkpoint/5,
-         connection_limit_checkpoint_heir/1]).
+         connection_limit_checkpoint_heir/1,
+         checkpoint_manager_sync/1]).
 
 %% Extract the process that will receive messages for a subject.
 %% For named subjects, the name is registered with the process.
@@ -54,74 +54,46 @@ only_active_child(Pid) ->
         _ -> {error, nil}
     end.
 
-%% Resolve the native ETS identity in this limiter's supervisor generation.
+%% Resolve the native ETS identity owned by this limiter with a live heir.
 %% Neither the table's label nor its contents participate in discovery.
 connection_limit_checkpoint_table(Limiter) ->
-    case process_info(Limiter, [registered_name, dictionary]) of
-        [{registered_name, Name}, {dictionary, Dictionary}] when is_atom(Name) ->
-            case proplists:get_value('$ancestors', Dictionary) of
-                [Supervisor | _] when is_pid(Supervisor) ->
-                    Key = beryl_ffi:connection_limit_checkpoint_registry_key(
-                        Supervisor, Name),
-                    case beryl_ffi:connection_limit_checkpoint_registry_get(Key) of
-                        {some, Table} ->
-                            case ets:info(Table, owner) of
-                                Limiter -> {ok, Table};
-                                _ -> {error, nil}
-                            end;
-                        none -> {error, nil}
-                    end;
-                _ -> {error, nil}
-            end;
+    case [Table || Table <- ets:all(),
+                   checkpoint_table_matches(Table, Limiter)] of
+        [Table] -> {ok, Table};
         _ -> {error, nil}
+    end.
+
+checkpoint_table_matches(Table, Limiter) ->
+    try ets:info(Table) of
+        undefined -> false;
+        Metadata ->
+            case {proplists:get_value(owner, Metadata),
+                  proplists:get_value(heir, Metadata)} of
+                {Limiter, Heir} when is_pid(Heir) ->
+                    erlang:is_process_alive(Heir);
+                _ -> false
+            end
+    catch
+        error:badarg -> false
     end.
 
 connection_limit_checkpoint_heir(Limiter) ->
     case connection_limit_checkpoint_table(Limiter) of
         {ok, Table} ->
-            case ets:info(Table, heir) of
+            try ets:info(Table, heir) of
                 Heir when is_pid(Heir) -> {ok, Heir};
                 _ -> {error, nil}
+            catch
+                error:badarg -> {error, nil}
             end;
         {error, nil} -> {error, nil}
     end.
 
-%% The worker is dead and replacement starts remain gated. Leave the original
-%% with its real heir; the caller owns this unnamed clone throughout Action.
-%% Copy the exact native row without exposing the private state type to Gleam.
-connection_limit_with_faulted_checkpoint(Supervisor, Name, Original, Fault, Action) ->
-    Key = beryl_ffi:connection_limit_checkpoint_registry_key(Supervisor, Name),
-    {some, Original} = beryl_ffi:connection_limit_checkpoint_registry_get(Key),
-    Clone = ets:new(connection_limit_checkpoint_fixture, [set, public]),
-    try
-        [{<<"state">>, _} = Row] = ets:lookup(Original, <<"state">>),
-        true = ets:insert(Clone, Row),
-        {some, Original} = beryl_ffi:connection_limit_checkpoint_registry_get(Key),
-        nil = beryl_ffi:connection_limit_checkpoint_registry_put(Key, Clone),
-        case Fault of
-            deleted_checkpoint -> true = ets:delete(Clone);
-            missing_checkpoint_state -> true = ets:delete(Clone, <<"state">>);
-            unreadable_checkpoint -> true = ets:setopts(Clone, {protection, private})
-        end,
-        Action()
-    after
-        %% Also clean up if copying or fault setup failed before Action.
-        try
-            case beryl_ffi:connection_limit_checkpoint_registry_get(Key) of
-                {some, Clone} ->
-                    nil = beryl_ffi:connection_limit_checkpoint_registry_put(
-                        Key, Original);
-                {some, Original} -> ok;
-                Unexpected ->
-                    erlang:error({checkpoint_registry_changed, Unexpected})
-            end
-        after
-            case ets:info(Clone) of
-                undefined -> ok;
-                _ -> true = ets:delete(Clone)
-            end
-        end
-    end.
+%% Process earlier messages from this caller before returning. Keep the
+%% manager state private, and let OTP call failures fail the test.
+checkpoint_manager_sync(Manager) ->
+    _ = sys:get_state(Manager),
+    nil.
 
 gate_new() ->
     Gate = atomics:new(1, [{signed, false}]),

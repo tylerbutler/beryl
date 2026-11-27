@@ -10,7 +10,6 @@
 import app_heartbeat_test
 import app_test_helper
 import beryl
-import beryl/connection_limit
 import beryl/internal
 import beryl/snapshot
 import beryl/socket.{AcceptJoin, Broadcast, Join, Next}
@@ -48,6 +47,14 @@ fn active_child_count(supervisor: process.Pid) -> Int
 fn connection_limit_checkpoint_heir(
   limiter: process.Pid,
 ) -> Result(process.Pid, Nil)
+
+type CheckpointValue
+
+type CheckpointTable =
+  heirloom.Table(String, CheckpointValue)
+
+@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_checkpoint_table")
+fn checkpoint_table(limiter: process.Pid) -> Result(CheckpointTable, Nil)
 
 @external(erlang, "beryl_supervisor_test_ffi", "with_suspended_subtree")
 fn with_suspended_subtree(
@@ -148,12 +155,16 @@ pub fn stop_waits_for_subtree_teardown_test() -> Nil {
 
   let limiter = limiter_pid(sockets)
   let runtime = app_test_helper.runtime_pid(sockets)
+  let assert Ok(manager) = connection_limit_checkpoint_heir(limiter)
+  let assert Ok(table) = checkpoint_table(limiter)
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 
   // stop returned only once both subtree workers were down.
   process.is_alive(runtime) |> should.be_false
   process.is_alive(limiter) |> should.be_false
+  process.is_alive(manager) |> should.be_false
+  heirloom.exists(table) |> should.be_false
 }
 
 pub fn stop_waits_for_socket_factory_and_lifecycle_owner_test() -> Nil {
@@ -354,20 +365,44 @@ pub fn limiter_restart_preserves_connection_state_test() -> Nil {
 
   let count_ip = "192.0.2.21"
   let assert Ok(counted) = transport.acquire_connection_slot(sockets, count_ip)
-  let assert Ok(Nil) = transport.bind_connection_slot(counted)
+  let bound = process.new_subject()
+  let caller = process.self()
+  let holder =
+    process.spawn(fn() {
+      let caller_monitor = process.monitor(caller)
+      let finish = process.new_subject()
+      transport.bind_connection_slot(counted) |> should.equal(Ok(Nil))
+      process.send(bound, finish)
+      process.new_selector()
+      |> process.select(finish)
+      |> process.select_specific_monitor(caller_monitor, fn(_) { Nil })
+      |> process.selector_receive(10_000)
+      |> should.equal(Ok(Nil))
+      process.demonitor_process(caller_monitor)
+    })
+  let holder_monitor = process.monitor(holder)
+  let assert Ok(finish) = process.receive(bound, 1000)
 
   let old_limiter = limiter_pid(sockets)
+  let assert Ok(table) = checkpoint_table(old_limiter)
+  let assert Ok(manager) = connection_limit_checkpoint_heir(old_limiter)
+  heirloom.lookup(table, "state") |> should.equal(Error(heirloom.AccessDenied))
   process.kill(old_limiter)
   test_helper.wait_until(
     fn() {
       case beryl.app_limiter_pid(sockets) {
-        Ok(pid) -> pid != old_limiter
+        Ok(pid) -> pid != old_limiter && checkpoint_table(pid) == Ok(table)
         Error(Nil) -> False
       }
     },
     2000,
     10,
   )
+  checkpoint_table(limiter_pid(sockets)) |> should.equal(Ok(table))
+  heirloom.owner(table) |> should.equal(Ok(limiter_pid(sockets)))
+  connection_limit_checkpoint_heir(limiter_pid(sockets))
+  |> should.equal(Ok(manager))
+  heirloom.lookup(table, "state") |> should.equal(Error(heirloom.AccessDenied))
 
   // The exhausted bucket and bound live count both survive worker replacement.
   transport.acquire_connection_slot(sockets, rate_ip) |> should.be_error
@@ -376,10 +411,29 @@ pub fn limiter_restart_preserves_connection_state_test() -> Nil {
     transport.acquire_connection_slot(sockets, "192.0.2.23")
   transport.acquire_connection_slot(sockets, "192.0.2.24") |> should.be_error
 
-  // The replacement remonitors holders and still handles explicit release.
+  // Explicit release and remonitoring both work after replacement.
   transport.release_connection_slot(other)
-  transport.release_connection_slot(counted)
-  transport.acquire_connection_slot(sockets, count_ip) |> should.be_ok
+  process.send(finish, Nil)
+  process.new_selector()
+  |> process.select_specific_monitor(holder_monitor, fn(_) { Nil })
+  |> process.selector_receive(1000)
+  |> should.equal(Ok(Nil))
+  let reclaimed = process.new_subject()
+  test_helper.wait_until(
+    fn() {
+      case transport.acquire_connection_slot(sockets, count_ip) {
+        Ok(permit) -> {
+          process.send(reclaimed, permit)
+          True
+        }
+        Error(Nil) -> False
+      }
+    },
+    1000,
+    1,
+  )
+  let assert Ok(reclaimed_permit) = process.receive(reclaimed, 0)
+  transport.release_connection_slot(reclaimed_permit)
 
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
@@ -408,8 +462,7 @@ pub fn replacement_subtree_owns_a_fresh_checkpoint_test() -> Nil {
   let assert Ok(_old_permit) =
     transport.acquire_connection_slot(sockets, "192.0.2.22")
   let assert Ok(old_heir) = connection_limit_checkpoint_heir(old_limiter)
-  // Gate old cleanup until its replacement has opened and written a checkpoint.
-  test_helper.suspend_process(old_heir)
+  let assert Ok(old_table) = checkpoint_table(old_limiter)
 
   let runtime1 = app_test_helper.runtime_pid(sockets)
   process.kill(runtime1)
@@ -422,7 +475,7 @@ pub fn replacement_subtree_owns_a_fresh_checkpoint_test() -> Nil {
   test_helper.wait_until(
     fn() {
       case beryl.app_limiter_pid(sockets) {
-        Ok(pid) -> pid != old_limiter
+        Ok(pid) -> pid != old_limiter && result.is_ok(checkpoint_table(pid))
         Error(Nil) -> False
       }
     },
@@ -431,74 +484,115 @@ pub fn replacement_subtree_owns_a_fresh_checkpoint_test() -> Nil {
   )
 
   let replacement_limiter = limiter_pid(sockets)
+  let assert Ok(replacement_table) = checkpoint_table(replacement_limiter)
+  replacement_table |> should.not_equal(old_table)
+  heirloom.exists(old_table) |> should.be_false
+  process.is_alive(old_heir) |> should.be_false
   // The replacement generation does not inherit the old live connection.
   let assert Ok(replacement_permit) =
     transport.acquire_connection_slot(sockets, "192.0.2.22")
   transport.release_connection_slot(replacement_permit)
 
-  test_helper.resume_process(old_heir)
-  test_helper.wait_until(fn() { !process.is_alive(old_heir) }, 2000, 10)
-
-  // Old cleanup cannot remove the replacement's checkpoint or crash its worker.
   let assert Ok(next) = transport.acquire_connection_slot(sockets, "192.0.2.22")
   limiter_pid(sockets) |> should.equal(replacement_limiter)
   transport.release_connection_slot(next)
   beryl.stop(sockets) |> should.equal(Ok(Nil))
 }
 
-pub fn checkpoint_heir_stops_before_table_creation_test() -> Nil {
-  let supervisor = process.spawn_unlinked(fn() { process.sleep(30_000) })
-  let store_key = process.new_name("checkpoint_before_table")
-  let assert Ok(heir) =
-    connection_limit.start_checkpoint_heir_for_test(supervisor, store_key)
-  let heir_pid = connection_limit.checkpoint_heir_pid(heir)
-  let monitor = process.monitor(heir_pid)
-
-  process.kill(supervisor)
-  let assert Ok(_) =
-    process.new_selector()
-    |> process.select_specific_monitor(monitor, fn(down) { down })
-    |> process.selector_receive(1000)
-  process.is_alive(heir_pid) |> should.be_false
+pub fn checkpoint_manager_crash_restarts_limiter_with_empty_state_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(1)
+        |> beryl.with_max_connections(1)
+        |> beryl.with_connection_rate_per_ip(per_second: 1, burst: 1),
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
+    )
+  let runtime = app_test_helper.runtime_pid(sockets)
+  let factory = socket_factory_pid(sockets)
+  let limiter = limiter_pid(sockets)
+  let assert Ok(manager) = connection_limit_checkpoint_heir(limiter)
+  let assert Ok(table) = checkpoint_table(limiter)
+  let assert Ok(old_permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.30")
+  process.kill(manager)
+  test_helper.wait_until(
+    fn() {
+      case beryl.app_limiter_pid(sockets) {
+        Ok(replacement) ->
+          replacement != limiter && checkpoint_table(replacement) != Error(Nil)
+        Error(Nil) -> False
+      }
+    },
+    2000,
+    1,
+  )
+  let replacement = limiter_pid(sockets)
+  let assert Ok(new_manager) = connection_limit_checkpoint_heir(replacement)
+  let assert Ok(new_table) = checkpoint_table(replacement)
+  new_manager |> should.not_equal(manager)
+  new_table |> should.not_equal(table)
+  heirloom.exists(table) |> should.be_false
+  process.is_alive(limiter) |> should.be_false
+  beryl.app_runtime_pid(sockets) |> should.equal(Ok(runtime))
+  socket_factory_pid(sockets) |> should.equal(factory)
+  let assert Ok(new_permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.30")
+  transport.release_connection_slot(old_permit)
+  transport.acquire_connection_slot(sockets, "192.0.2.31")
+  |> should.equal(Error(Nil))
+  transport.release_connection_slot(new_permit)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  process.is_alive(new_manager) |> should.be_false
+  heirloom.exists(new_table) |> should.be_false
 }
 
-pub fn checkpoint_heir_stops_before_table_announcement_test() -> Nil {
-  let supervisor = process.spawn_unlinked(fn() { process.sleep(30_000) })
-  let store_key = process.new_name("checkpoint_before_announcement")
-  let assert Ok(heir) =
-    connection_limit.start_checkpoint_heir_for_test(supervisor, store_key)
-  let heir_pid = connection_limit.checkpoint_heir_pid(heir)
-  let table_ready = process.new_subject()
-  let owner =
-    process.spawn_unlinked(fn() {
-      let specification =
-        heirloom.spec("checkpoint_before_announcement", heirloom.Set)
-        |> heirloom.with_access(heirloom.Public)
-        |> heirloom.with_heir(heir_pid, "test")
-      let assert Ok(table): Result(heirloom.Table(String, String), _) =
-        heirloom.create(specification)
-      let assert Ok(Nil) = heirloom.insert(table, "state", "test")
-      connection_limit.checkpoint_registry_put_for_test(heir, table)
-      process.send(table_ready, table)
-      process.sleep(30_000)
+pub fn checkpoint_subtree_restart_exhaustion_restores_admission_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(10_000)
+  let assert Ok(sockets) =
+    app_test_helper.start_app(
+      beryl.config(wire.phoenix_codec())
+        |> beryl.with_max_connections_per_ip(1),
+      init: app_test_helper.accepting_init,
+      update: app_test_helper.accepting_update,
+    )
+  let runtime = app_test_helper.runtime_pid(sockets)
+  let factory = socket_factory_pid(sockets)
+  let limiter = limiter_pid(sockets)
+  let assert Ok(manager) = connection_limit_checkpoint_heir(limiter)
+  let assert Ok(table) = checkpoint_table(limiter)
+  let assert Ok(old_permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.40")
+  let replacement =
+    list.fold(list.repeat(Nil, 4), limiter, fn(previous, _) {
+      process.kill(previous)
+      test_helper.wait_until(
+        fn() {
+          case beryl.app_limiter_pid(sockets) {
+            Ok(pid) -> pid != previous && result.is_ok(checkpoint_table(pid))
+            Error(Nil) -> False
+          }
+        },
+        2000,
+        1,
+      )
+      limiter_pid(sockets)
     })
-  let assert Ok(table) = process.receive(table_ready, 1000)
-  let heir_monitor = process.monitor(heir_pid)
-  let owner_monitor = process.monitor(owner)
-
-  process.kill(supervisor)
-  let assert Ok(_) =
-    process.new_selector()
-    |> process.select_specific_monitor(heir_monitor, fn(down) { down })
-    |> process.selector_receive(1000)
-  connection_limit.checkpoint_registry_exists_for_test(heir)
-  |> should.be_false
-  process.kill(owner)
-  let assert Ok(_) =
-    process.new_selector()
-    |> process.select_specific_monitor(owner_monitor, fn(down) { down })
-    |> process.selector_receive(1000)
+  process.is_alive(manager) |> should.be_false
   heirloom.exists(table) |> should.be_false
+  beryl.app_runtime_pid(sockets) |> should.equal(Ok(runtime))
+  socket_factory_pid(sockets) |> should.equal(factory)
+  let assert Ok(permit) =
+    transport.acquire_connection_slot(sockets, "192.0.2.40")
+  transport.release_connection_slot(old_permit)
+  transport.acquire_connection_slot(sockets, "192.0.2.40") |> should.be_error
+  transport.release_connection_slot(permit)
+  beryl.stop(sockets) |> should.equal(Ok(Nil))
+  process.is_alive(replacement) |> should.be_false
 }
 
 // ── a runtime crash while stopping does not poison later lifecycle events ──
@@ -1004,6 +1098,8 @@ pub fn application_root_shutdown_tears_down_beryl_subtree_test() -> Nil {
   )
   let runtime = app_test_helper.runtime_pid(sockets)
   let limiter = limiter_pid(sockets)
+  let assert Ok(manager) = connection_limit_checkpoint_heir(limiter)
+  let assert Ok(table) = checkpoint_table(limiter)
 
   // The application root goes down; the embedded beryl subtree, linked under
   // it, is torn down with it (unlink first so the test process survives).
@@ -1013,12 +1109,15 @@ pub fn application_root_shutdown_tears_down_beryl_subtree_test() -> Nil {
   test_helper.wait_until(fn() { !process.is_alive(runtime) }, 2000, 10)
   process.is_alive(runtime) |> should.be_false
   process.is_alive(limiter) |> should.be_false
+  test_helper.wait_until(fn() { !process.is_alive(manager) }, 2000, 1)
+  heirloom.exists(table) |> should.be_false
   beryl.app_runtime_pid(sockets) |> should.be_error
 }
 
 // ── a partial startup failure leaks no beryl processes ──────────────────────
 
 pub fn partial_startup_failure_tears_down_beryl_subtree_test() -> Nil {
+  use <- test_helper.with_isolated_caller(5000)
   let assert Ok(#(sockets, beryl_spec)) =
     beryl.child_spec(
       beryl.config(wire.phoenix_codec())
@@ -1030,14 +1129,18 @@ pub fn partial_startup_failure_tears_down_beryl_subtree_test() -> Nil {
   // A sibling that always fails to start. The supervisor tears down the
   // already-started beryl subtree and exits, so the doomed startup is run in
   // an unlinked child process to keep its failure signal off the test.
+  let checkpoint = process.new_subject()
   let failing =
     supervision.worker(fn() -> Result(
       actor.Started(process.Subject(Nil)),
       actor.StartError,
     ) {
+      let limiter = limiter_pid(sockets)
+      let assert Ok(manager) = connection_limit_checkpoint_heir(limiter)
+      let assert Ok(table) = checkpoint_table(limiter)
+      process.send(checkpoint, #(manager, table))
       Error(actor.InitFailed("intentional"))
     })
-
   process.spawn_unlinked(fn() {
     let _ =
       static_supervisor.new(static_supervisor.OneForOne)
@@ -1046,6 +1149,7 @@ pub fn partial_startup_failure_tears_down_beryl_subtree_test() -> Nil {
       |> static_supervisor.start()
     Nil
   })
+  let assert Ok(#(manager, table)) = process.receive(checkpoint, 2000)
 
   // Whether or not the doomed supervisor reported an error, no beryl runtime
   // or limiter is left running.
@@ -1056,6 +1160,8 @@ pub fn partial_startup_failure_tears_down_beryl_subtree_test() -> Nil {
   )
   beryl.app_runtime_pid(sockets) |> should.be_error
   beryl.app_limiter_pid(sockets) |> should.be_error
+  test_helper.wait_until(fn() { !process.is_alive(manager) }, 2000, 1)
+  heirloom.exists(table) |> should.be_false
 }
 
 // ── stop waits for the runtime even with no limiter ─────────────────────────

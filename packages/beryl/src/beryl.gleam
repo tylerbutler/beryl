@@ -1021,7 +1021,7 @@ fn await_down(monitor: process.Monitor) -> Result(Nil, Nil) {
 /// shutdown, sends return admission errors and connection admission fails.
 ///
 /// A successful call permanently allocates three Erlang registered-name
-/// atoms, or four when the connection limiter is enabled, before the
+/// atoms, or five when the connection limiter is enabled, before the
 /// supervisor starts. Dropping the specification does not reclaim them.
 /// Construct it once per long-lived system and reuse it across supervised
 /// restarts; restarting from the same specification allocates no new names.
@@ -1149,6 +1149,17 @@ fn build_app_subtree(
     True -> Some(process.new_name("beryl_connection_limiter"))
     False -> None
   }
+  let limiter_child =
+    option.map(limiter_name, fn(name) {
+      connection_limit.child_spec(
+        config.max_connections_per_ip,
+        config.max_connections,
+        config.connection_rate_per_ip,
+        config.connection_burst_per_ip,
+        config.connection_queue_limits,
+        name,
+      )
+    })
 
   let handle =
     Sockets(
@@ -1178,7 +1189,7 @@ fn build_app_subtree(
           config,
           runtime_name,
           factory_name,
-          limiter_name,
+          limiter_child,
           init,
           update,
           open_worker,
@@ -1189,7 +1200,7 @@ fn build_app_subtree(
 }
 
 /// Start the nested beryl subtree: a one-for-one supervisor owning the socket
-/// factory and the runtime, with the optional connection limiter as a sibling.
+/// factory and the runtime, with the optional limiter supervisor as a sibling.
 ///
 /// The socket factory is added first, so the runtime is asked to shut down
 /// before it (children terminate in reverse start order). A graceful
@@ -1199,7 +1210,9 @@ fn child_spec_supervisor(
   config: Config,
   runtime_name: process.Name(runtime.Message(message)),
   factory_name: process.Name(runtime.SocketFactoryMessage(message)),
-  limiter_name: Option(process.Name(connection_limit.Message)),
+  limiter_child: Option(
+    supervision.ChildSpecification(static_supervisor.Supervisor),
+  ),
   init: fn(socket.ConnectInfo(message)) -> #(model, List(socket.Effect)),
   update: fn(model, socket.Input(message)) -> socket.Next(model),
   open_worker: Option(runtime.WorkerOpener),
@@ -1245,21 +1258,8 @@ fn child_spec_supervisor(
     |> static_supervisor.add(factory_child)
     |> static_supervisor.add(runtime_child)
 
-  let builder = case limiter_name {
-    Some(name) ->
-      builder
-      |> static_supervisor.add(
-        supervision.worker(fn() {
-          connection_limit.start_named(
-            config.max_connections_per_ip,
-            config.max_connections,
-            config.connection_rate_per_ip,
-            config.connection_burst_per_ip,
-            config.connection_queue_limits,
-            name,
-          )
-        }),
-      )
+  let builder = case limiter_child {
+    Some(child) -> static_supervisor.add(builder, child)
     None -> builder
   }
 

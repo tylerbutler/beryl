@@ -19,11 +19,11 @@
 //// capacity without resetting the IP's rate bucket. Idle rate buckets expire
 //// once their allowance has fully refilled.
 ////
-//// The heir stops with the enclosing beryl supervisor. This state survives
-//// router and limiter-worker restarts, but not shutdown or replacement of
-//// that supervisor, or a node restart.
-//// A remembered checkpoint without readable state fails worker initialisation;
-//// only a supervisor generation without checkpoint history starts empty.
+//// A supervised manager creates the private table and gives ownership to the
+//// limiter. It inherits the table when the limiter exits and gives it to the
+//// replacement. A manager failure restarts the limiter with empty state.
+//// State also ends with the enclosing beryl supervisor or node.
+//// An established checkpoint without state fails worker initialisation.
 
 import beryl/log
 import beryl/overload
@@ -39,11 +39,15 @@ import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
 import gleam/result
 import rasa/atomic
 import rasa/monotonic
 
 const registry_call_timeout_ms = 100
+
+const checkpoint_handoff_timeout_ms = 900
 
 const bucket_sweep_interval_ms = 60_000
 
@@ -101,43 +105,49 @@ type Reservation {
 type CheckpointTable =
   heirloom.Table(String, State)
 
-type CheckpointRegistryKey
+type CheckpointOrigin {
+  FreshCheckpoint
+  EstablishedCheckpoint
+}
 
 type CheckpointError {
   MissingCheckpointState
   CheckpointLookupFailed(heirloom.TableError)
-}
-
-type CheckpointMessage {
-  CheckpointAnnounced(CheckpointTable)
-  CheckpointTransferred(
-    Result(
-      heirloom.Transfer(String, State, decode.Dynamic),
-      heirloom.TransferDecodeError,
-    ),
-  )
-  CheckpointSupervisorDown(process.Down)
-}
-
-type CheckpointState {
-  CheckpointState(key: CheckpointRegistryKey, table: Option(CheckpointTable))
+  CheckpointWriteFailed(heirloom.TableError)
+  CheckpointHeirFailed(heirloom.OwnershipError)
+  CheckpointTransferFailed(heirloom.TransferDecodeError)
+  CheckpointManagerUnavailable
+  CheckpointHandoffTimedOut
+  UnexpectedCheckpointTransfer
 }
 
 @internal
-pub opaque type CheckpointHeir {
-  CheckpointHeir(
-    pid: Pid,
-    subject: Subject(CheckpointMessage),
-    key: CheckpointRegistryKey,
+pub opaque type CheckpointMessage {
+  ClaimCheckpoint(Pid)
+  CheckpointTransferred(
+    Result(heirloom.Transfer(String, State, Bool), heirloom.TransferDecodeError),
   )
+  CheckpointClaimantDown(process.Down)
+}
+
+type CheckpointState {
+  CheckpointAvailable(table: CheckpointTable, origin: CheckpointOrigin)
+  CheckpointHeld(
+    table: CheckpointTable,
+    holder: Pid,
+    pending: Option(PendingClaim),
+  )
+}
+
+type PendingClaim {
+  PendingClaim(pid: Pid, monitor: Monitor)
 }
 
 type State {
   State(
-    store_key: process.Name(Message),
     inbox: work_queue.Queue(Message),
     draining: Bool,
-    checkpoint: Option(CheckpointTable),
+    checkpoint: CheckpointTable,
     /// Per-IP ceiling; 0 disables the per-IP check.
     max_per_ip: Int,
     /// Per-system ceiling across all IPs; 0 disables the total check.
@@ -182,94 +192,147 @@ pub opaque type Message {
   Stop(reply: Subject(Nil))
 }
 
-@external(erlang, "beryl_ffi", "connection_limit_checkpoint_supervisor")
-fn checkpoint_supervisor() -> Pid
+fn persist(state: State) -> Result(State, CheckpointError) {
+  heirloom.insert(state.checkpoint, "state", state)
+  |> result.map(fn(_) { state })
+  |> result.map_error(CheckpointWriteFailed)
+}
 
-@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_key")
-fn checkpoint_registry_key(
-  supervisor: Pid,
-  store_key: process.Name(message),
-) -> CheckpointRegistryKey
-
-@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_get")
-fn checkpoint_registry_get(
-  key: CheckpointRegistryKey,
-) -> Option(heirloom.Table(table_key, value))
-
-@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_put")
-fn checkpoint_registry_put(
-  key: CheckpointRegistryKey,
-  table: heirloom.Table(table_key, value),
-) -> Nil
-
-@external(erlang, "beryl_ffi", "connection_limit_checkpoint_registry_compare_erase")
-fn checkpoint_registry_compare_erase(
-  key: CheckpointRegistryKey,
-  table: heirloom.Table(table_key, value),
-) -> Nil
-
-fn persist(state: State) -> State {
-  let assert Some(table) = state.checkpoint
-  let assert Ok(Nil) = heirloom.insert(table, "state", state)
-  state
+fn continue_persisted(state: State) -> actor.Next(State, Message) {
+  case persist(state) {
+    Ok(state) -> actor.continue(state)
+    Error(error) -> actor.stop_abnormal(checkpoint_error_message(error))
+  }
 }
 
 fn open_state(
-  store_key: process.Name(Message),
   initial: State,
+  origin: CheckpointOrigin,
 ) -> Result(State, CheckpointError) {
-  let supervisor = checkpoint_supervisor()
-  let key = checkpoint_registry_key(supervisor, store_key)
-  case checkpoint_registry_get(key) {
-    Some(table) ->
-      case heirloom.lookup(table, "state") {
-        Ok(Some(state)) -> Ok(State(..state, checkpoint: Some(table)))
-        Ok(None) -> Error(MissingCheckpointState)
-        Error(error) -> Error(CheckpointLookupFailed(error))
-      }
-    None -> Ok(new_state_checkpoint(supervisor, key, initial))
+  case heirloom.lookup(initial.checkpoint, "state"), origin {
+    Ok(Some(state)), _ -> Ok(State(..state, checkpoint: initial.checkpoint))
+    Ok(None), FreshCheckpoint -> Ok(initial)
+    Ok(None), EstablishedCheckpoint -> Error(MissingCheckpointState)
+    Error(error), _ -> Error(CheckpointLookupFailed(error))
   }
 }
 
 fn checkpoint_error_message(error: CheckpointError) -> String {
   case error {
     MissingCheckpointState -> "Connection limiter checkpoint state is missing"
-    CheckpointLookupFailed(heirloom.TableDoesNotExist) ->
+    CheckpointLookupFailed(heirloom.TableDoesNotExist)
+    | CheckpointWriteFailed(heirloom.TableDoesNotExist) ->
       "Connection limiter checkpoint table does not exist"
-    CheckpointLookupFailed(heirloom.AccessDenied) ->
+    CheckpointLookupFailed(heirloom.AccessDenied)
+    | CheckpointWriteFailed(heirloom.AccessDenied) ->
       "Connection limiter checkpoint access denied"
+    CheckpointHeirFailed(error) -> ownership_error_message(error)
+    CheckpointTransferFailed(_) ->
+      "Invalid connection limiter checkpoint transfer"
+    CheckpointManagerUnavailable ->
+      "Connection limiter checkpoint manager is unavailable"
+    CheckpointHandoffTimedOut ->
+      "Connection limiter checkpoint transfer timed out"
+    UnexpectedCheckpointTransfer ->
+      "Unexpected connection limiter checkpoint transfer"
   }
 }
 
-fn new_state_checkpoint(
-  supervisor: Pid,
-  key: CheckpointRegistryKey,
-  initial: State,
-) -> State {
-  let assert Ok(checkpoint_heir) = start_checkpoint_heir(supervisor, key)
-  let specification =
-    heirloom.spec("beryl_connection_limit_state", heirloom.Set)
-    |> heirloom.with_access(heirloom.Public)
-    |> heirloom.with_heir(checkpoint_heir.pid, initial.store_key)
-  let assert Ok(table): Result(CheckpointTable, _) =
-    heirloom.create(specification)
-  let state = State(..initial, checkpoint: Some(table))
-  let assert Ok(Nil) = heirloom.insert(table, "state", state)
-  checkpoint_registry_put(key, table)
-  process.send(checkpoint_heir.subject, CheckpointAnnounced(table))
-  state
+fn ownership_error_message(error: heirloom.OwnershipError) -> String {
+  case error {
+    heirloom.OwnershipTableDoesNotExist ->
+      "Connection limiter checkpoint table does not exist"
+    heirloom.NotOwner ->
+      "Connection limiter checkpoint is not owned by the caller"
+    heirloom.InvalidOwnershipHeir ->
+      "Connection limiter checkpoint heir is unavailable"
+    heirloom.RecipientNotAlive ->
+      "Connection limiter checkpoint claimant has exited"
+    heirloom.RecipientNotLocal ->
+      "Connection limiter checkpoint claimant is not local"
+    heirloom.RecipientIsOwner ->
+      "Connection limiter checkpoint claimant already owns the table"
+  }
+}
+
+fn checkpoint_origin(established: Bool) -> CheckpointOrigin {
+  use <- bool.guard(established, EstablishedCheckpoint)
+  FreshCheckpoint
+}
+
+fn give_checkpoint(
+  table: CheckpointTable,
+  origin: CheckpointOrigin,
+  claimant: Pid,
+) -> actor.Next(CheckpointState, CheckpointMessage) {
+  case heirloom.give_away(table, claimant, origin == EstablishedCheckpoint) {
+    Ok(Nil) -> actor.continue(CheckpointHeld(table, claimant, None))
+    Error(heirloom.RecipientNotAlive) ->
+      actor.continue(CheckpointAvailable(table, origin))
+    Error(error) -> actor.stop_abnormal(ownership_error_message(error))
+  }
+}
+
+fn retain_checkpoint_claim(
+  table: CheckpointTable,
+  holder: Pid,
+  pending: Option(PendingClaim),
+  claimant: Pid,
+) -> actor.Next(CheckpointState, CheckpointMessage) {
+  case pending {
+    Some(PendingClaim(pid, _)) if pid == claimant ->
+      actor.continue(CheckpointHeld(table, holder, pending))
+    Some(PendingClaim(pid, monitor)) ->
+      case process.is_alive(pid) {
+        True -> {
+          log.warn(
+            log.new("beryl.connection_limit"),
+            "Duplicate checkpoint claim ignored",
+            [],
+          )
+          actor.continue(CheckpointHeld(table, holder, pending))
+        }
+        False -> {
+          process.demonitor_process(monitor)
+          retain_checkpoint_claim(table, holder, None, claimant)
+        }
+      }
+    None ->
+      case process.is_alive(claimant) {
+        True ->
+          actor.continue(CheckpointHeld(
+            table,
+            holder,
+            Some(PendingClaim(claimant, process.monitor(claimant))),
+          ))
+        False -> actor.continue(CheckpointHeld(table, holder, None))
+      }
+  }
 }
 
 fn handle_checkpoint_message(
   state: CheckpointState,
   message: CheckpointMessage,
 ) -> actor.Next(CheckpointState, CheckpointMessage) {
-  case message {
-    CheckpointAnnounced(table) ->
-      actor.continue(CheckpointState(..state, table: Some(table)))
-    CheckpointTransferred(Ok(heirloom.Transfer(table:, ..))) ->
-      actor.continue(CheckpointState(..state, table: Some(table)))
-    CheckpointTransferred(Error(_error)) -> {
+  case message, state {
+    ClaimCheckpoint(claimant), CheckpointAvailable(table, origin) ->
+      give_checkpoint(table, origin, claimant)
+    ClaimCheckpoint(claimant), CheckpointHeld(table, holder, pending) ->
+      retain_checkpoint_claim(table, holder, pending, claimant)
+    CheckpointTransferred(Ok(heirloom.Transfer(table, previous_owner, data))),
+      CheckpointHeld(expected, holder, pending)
+      if table == expected && previous_owner == holder
+    ->
+      case heirloom.owner(table) == Ok(process.self()), pending {
+        True, Some(PendingClaim(pid, monitor)) -> {
+          process.demonitor_process(monitor)
+          give_checkpoint(table, checkpoint_origin(data), pid)
+        }
+        True, None ->
+          actor.continue(CheckpointAvailable(table, checkpoint_origin(data)))
+        False, _ -> actor.continue(state)
+      }
+    CheckpointTransferred(_), _ -> {
       log.warn(
         log.new("beryl.connection_limit"),
         "Invalid ETS transfer ignored",
@@ -277,85 +340,137 @@ fn handle_checkpoint_message(
       )
       actor.continue(state)
     }
-    CheckpointSupervisorDown(_) -> {
-      cleanup_checkpoint(state)
-      actor.stop()
-    }
+    CheckpointClaimantDown(process.ProcessDown(monitor, _, _)),
+      CheckpointHeld(table, holder, Some(PendingClaim(_, expected)))
+      if monitor == expected
+    -> actor.continue(CheckpointHeld(table, holder, None))
+    CheckpointClaimantDown(_), _ -> actor.continue(state)
   }
 }
 
-fn cleanup_checkpoint(state: CheckpointState) -> Nil {
-  let self = process.self()
-  case state.table {
-    Some(table) -> checkpoint_registry_compare_erase(state.key, table)
-    None ->
-      case checkpoint_registry_get(state.key) {
-        Some(table) ->
-          case heirloom.heir(table) {
-            Ok(Some(pid)) if pid == self ->
-              checkpoint_registry_compare_erase(state.key, table)
-            Ok(Some(_)) | Ok(None) -> Nil
-            Error(heirloom.TableDoesNotExist) -> Nil
-            Error(heirloom.AccessDenied) -> Nil
-          }
-        None -> Nil
-      }
-  }
-}
-
-fn start_checkpoint_heir(
-  supervisor: Pid,
-  key: CheckpointRegistryKey,
-) -> Result(CheckpointHeir, actor.StartError) {
+/// Start the supervised owner that retains the checkpoint between workers.
+@internal
+pub fn start_checkpoint_manager(
+  name: process.Name(CheckpointMessage),
+) -> Result(actor.Started(Subject(CheckpointMessage)), actor.StartError) {
   actor.new_with_initialiser(1000, fn(subject) {
-    let monitor = process.monitor(supervisor)
+    let specification =
+      heirloom.spec("beryl_connection_limit_state", heirloom.Set)
+      |> heirloom.with_access(heirloom.Private)
+      |> heirloom.with_heir(process.self(), False)
+    use table <- result.try(
+      heirloom.create(specification)
+      |> result.map_error(fn(error) {
+        case error {
+          heirloom.TableAlreadyExists ->
+            "Connection limiter checkpoint already exists"
+          heirloom.InvalidName -> "Invalid connection limiter checkpoint name"
+          heirloom.InvalidHeir -> "Invalid connection limiter checkpoint heir"
+          heirloom.InvalidOptions ->
+            "Invalid connection limiter checkpoint options"
+        }
+      }),
+    )
     let selector =
       process.new_selector()
       |> process.select(subject)
-      |> process.select_specific_monitor(monitor, CheckpointSupervisorDown)
-      |> heirloom.select_transfers(decode.dynamic, CheckpointTransferred)
-    actor.initialised(CheckpointState(key: key, table: None))
+      |> process.select_monitors(CheckpointClaimantDown)
+      |> heirloom.select_transfers(decode.bool, CheckpointTransferred)
+    actor.initialised(CheckpointAvailable(table, FreshCheckpoint))
     |> actor.selecting(selector)
     |> actor.returning(subject)
     |> Ok
   })
   |> actor.on_message(handle_checkpoint_message)
+  |> actor.named(name)
   |> actor.start
-  |> result.map(fn(started) {
-    process.unlink(started.pid)
-    CheckpointHeir(pid: started.pid, subject: started.data, key: key)
-  })
 }
 
+/// Claim ownership for one worker incarnation.
 @internal
-pub fn start_checkpoint_heir_for_test(
-  supervisor: Pid,
-  store_key: process.Name(message),
-) -> Result(CheckpointHeir, actor.StartError) {
-  start_checkpoint_heir(
-    supervisor,
-    checkpoint_registry_key(supervisor, store_key),
-  )
-}
-
-@internal
-pub fn checkpoint_heir_pid(heir: CheckpointHeir) -> Pid {
-  heir.pid
-}
-
-@internal
-pub fn checkpoint_registry_put_for_test(
-  heir: CheckpointHeir,
-  table: heirloom.Table(key, value),
+pub fn claim_checkpoint(
+  manager: Subject(CheckpointMessage),
+  claimant: Pid,
 ) -> Nil {
-  checkpoint_registry_put(heir.key, table)
+  process.send(manager, ClaimCheckpoint(claimant))
 }
 
+fn receive_checkpoint(
+  manager: Subject(CheckpointMessage),
+) -> Result(#(CheckpointTable, CheckpointOrigin, Pid), CheckpointError) {
+  use #(manager, owner) <- result.try(
+    pin_subject(manager) |> result.replace_error(CheckpointManagerUnavailable),
+  )
+  let monitor = process.monitor(owner)
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(_) {
+      Error(CheckpointManagerUnavailable)
+    })
+    |> heirloom.select_transfers(decode.bool, fn(transfer) {
+      result.map_error(transfer, CheckpointTransferFailed)
+    })
+  claim_checkpoint(manager, process.self())
+  let received =
+    process.selector_receive(selector, checkpoint_handoff_timeout_ms)
+  process.demonitor_process(monitor)
+  use received <- result.try(result.replace_error(
+    received,
+    CheckpointHandoffTimedOut,
+  ))
+  use transfer <- result.try(received)
+  case transfer {
+    heirloom.Transfer(table, previous_owner, data) if previous_owner == owner ->
+      case heirloom.owner(table) == Ok(process.self()) {
+        True -> Ok(#(table, checkpoint_origin(data), owner))
+        False -> Error(UnexpectedCheckpointTransfer)
+      }
+    heirloom.Transfer(..) -> Error(UnexpectedCheckpointTransfer)
+  }
+}
+
+/// Construct the manager and limiter's shared restart boundary.
 @internal
-pub fn checkpoint_registry_exists_for_test(heir: CheckpointHeir) -> Bool {
-  case checkpoint_registry_get(heir.key) {
-    Some(_) -> True
-    None -> False
+pub fn child_spec(
+  max_per_ip: Int,
+  max_total: Int,
+  connection_rate: Int,
+  connection_burst: Int,
+  queue_limits: overload.Limits,
+  name: process.Name(Message),
+) -> supervision.ChildSpecification(static_supervisor.Supervisor) {
+  let manager_name = process.new_name("beryl_connection_checkpoint")
+  static_supervisor.new(static_supervisor.RestForOne)
+  |> static_supervisor.restart_tolerance(intensity: 3, period: 5)
+  |> static_supervisor.add(
+    supervision.worker(fn() { start_checkpoint_manager(manager_name) }),
+  )
+  |> static_supervisor.add(
+    supervision.worker(fn() {
+      start_named(
+        max_per_ip,
+        max_total,
+        connection_rate,
+        connection_burst,
+        queue_limits,
+        name,
+        process.named_subject(manager_name),
+      )
+    }),
+  )
+  |> static_supervisor.supervised
+}
+
+fn reply_to_acquire(
+  inbox: work_queue.Queue(Message),
+  reservation: reference.Reference,
+  outcome: Result(Permit, Nil),
+  reply: fn(Result(Permit, Nil)) -> Nil,
+) -> Nil {
+  reply(outcome)
+  case outcome {
+    Ok(_) -> Nil
+    Error(Nil) -> complete_request(inbox, reservation)
   }
 }
 
@@ -366,10 +481,13 @@ fn handle_message(
   case message {
     RecoverQueue(subject) -> {
       schedule_queue_recovery(subject)
-      let state = reclaim_cancelled_holders(state)
-      case state.draining {
-        True -> actor.continue(state)
-        False -> handle_message(state, Drain(subject))
+      case persist_cancelled_holders(state) {
+        Ok(state) ->
+          case state.draining {
+            True -> actor.continue(state)
+            False -> handle_message(state, Drain(subject))
+          }
+        Error(error) -> actor.stop_abnormal(checkpoint_error_message(error))
       }
     }
     Drain(subject) ->
@@ -390,34 +508,37 @@ fn handle_message(
     Acquire(reservation, ip, limiter, owner, token, reply) -> {
       let #(state, outcome) =
         acquire_slot(state, reservation, ip, limiter, owner, token)
-      let state = persist(state)
-      reply(outcome)
-      case outcome {
-        Ok(_) -> Nil
-        Error(Nil) -> complete_request(state.inbox, reservation)
+      case persist(state) {
+        Ok(state) -> {
+          reply_to_acquire(state.inbox, reservation, outcome, reply)
+          actor.continue(state)
+        }
+        Error(error) -> actor.stop_abnormal(checkpoint_error_message(error))
       }
-      actor.continue(state)
     }
     Bind(reservation, owner, reply) -> {
       let #(state, outcome) = bind_holder(state, reservation, owner)
-      let state = persist(state)
-      reply(outcome)
-      actor.continue(state)
+      case persist(state) {
+        Ok(state) -> {
+          reply(outcome)
+          actor.continue(state)
+        }
+        Error(error) -> actor.stop_abnormal(checkpoint_error_message(error))
+      }
     }
     Complete(reservation, token) ->
       case reservation_token_active(token) {
         True -> actor.continue(state)
-        False ->
-          actor.continue(release_reservation(state, reservation) |> persist)
+        False -> continue_persisted(release_reservation(state, reservation))
       }
     Release(reservation) ->
-      actor.continue(release_reservation(state, reservation) |> persist)
+      continue_persisted(release_reservation(state, reservation))
     HolderDown(down) ->
       case down {
         process.ProcessDown(monitor, _pid, _reason) ->
           case dict.get(state.monitors, monitor) {
             Ok(reservation) ->
-              actor.continue(release_reservation(state, reservation) |> persist)
+              continue_persisted(release_reservation(state, reservation))
             // Already explicitly released (or an unrelated monitor).
             Error(Nil) -> actor.continue(state)
           }
@@ -425,7 +546,7 @@ fn handle_message(
       }
     Sweep(subject) -> {
       schedule_sweep(subject, state.connection_rate)
-      actor.continue(sweep_idle_buckets(state) |> persist)
+      continue_persisted(sweep_idle_buckets(state))
     }
     Stop(reply) -> {
       process.send(reply, Nil)
@@ -600,9 +721,17 @@ fn reclaim_cancelled_holders(state: State) -> State {
   dict.fold(state.reservations, state, fn(state, reservation, holder) {
     case reservation_token_active(holder.token) {
       True -> state
-      False -> release_reservation(state, reservation) |> persist
+      False -> release_reservation(state, reservation)
     }
   })
+}
+
+fn persist_cancelled_holders(state: State) -> Result(State, CheckpointError) {
+  let recovered = reclaim_cancelled_holders(state)
+  case recovered.total == state.total {
+    True -> Ok(recovered)
+    False -> persist(recovered)
+  }
 }
 
 /// Reclaim a slot in both dimensions: decrement the per-system total and the
@@ -720,6 +849,7 @@ fn build(
   connection_burst: Int,
   queue_limits: overload.Limits,
   name: process.Name(Message),
+  manager: Subject(CheckpointMessage),
 ) -> actor.Builder(State, Message, Subject(Message)) {
   let rate_config = case connection_rate > 0 {
     True ->
@@ -739,12 +869,14 @@ fn build(
         process.send(subject, Drain(subject))
       })
     work_queue.name(inbox, name)
+    use #(table, origin, manager_owner) <- result.try(
+      receive_checkpoint(manager) |> result.map_error(checkpoint_error_message),
+    )
     let state =
       State(
-        store_key: name,
         inbox: inbox,
         draining: False,
-        checkpoint: None,
+        checkpoint: table,
         max_per_ip: max_per_ip,
         max_total: max_total,
         connection_rate: rate_config,
@@ -758,15 +890,23 @@ fn build(
         reservations: dict.new(),
         monitors: dict.new(),
       )
-    schedule_sweep(subject, rate_config)
-    schedule_queue_recovery(subject)
     use state <- result.try(
-      open_state(name, state) |> result.map_error(checkpoint_error_message),
+      open_state(state, origin) |> result.map_error(checkpoint_error_message),
     )
-    let state =
+    use state <- result.try(
       State(..state, inbox: inbox, draining: False)
       |> recover_holders
       |> persist
+      |> result.map_error(checkpoint_error_message),
+    )
+    use _ <- result.try(
+      heirloom.set_heir(table, manager_owner, True)
+      |> result.map_error(fn(error) {
+        checkpoint_error_message(CheckpointHeirFailed(error))
+      }),
+    )
+    schedule_sweep(subject, rate_config)
+    schedule_queue_recovery(subject)
     let selector =
       process.new_selector()
       |> process.select(subject)
@@ -787,6 +927,7 @@ pub fn start_named(
   connection_burst: Int,
   queue_limits: overload.Limits,
   name: process.Name(Message),
+  manager: Subject(CheckpointMessage),
 ) -> Result(actor.Started(Subject(Message)), actor.StartError) {
   build(
     max_per_ip,
@@ -795,6 +936,7 @@ pub fn start_named(
     connection_burst,
     queue_limits,
     name,
+    manager,
   )
   |> actor.named(name)
   |> actor.start
