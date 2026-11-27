@@ -8,7 +8,7 @@
 
 packages = [
   { name = "alpacki", version = "3.0.1", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "alpacki", source = "hex", outer_checksum = "5BCB617A9606E56018790D4F24AB1E06B6D05BC17ACD6686B99E8D4D18B1F5FD" },
-  { name = "beryl", version = "0.6.2", build_tools = ["gleam"], requirements = ["beryl_heirloom", "beryl_protocol", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "rasa", "telemetry"], source = "local", path = "../../packages/beryl" },
+  { name = "beryl", version = "0.6.3", build_tools = ["gleam"], requirements = ["beryl_heirloom", "beryl_protocol", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "lattice_presence", "palabres", "rasa", "telemetry"], source = "local", path = "../../packages/beryl" },
   { name = "beryl_heirloom", version = "0.1.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_stdlib"], source = "local", path = "../../packages/beryl_heirloom" },
   { name = "beryl_protocol", version = "0.1.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib"], source = "local", path = "../../packages/beryl_protocol" },
   { name = "envoy", version = "1.2.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "envoy", source = "hex", outer_checksum = "9C6FBB6BFA02A52798BEEC5977A738CAD6E4A057F4B67FD0C8061AD2502C191A" },

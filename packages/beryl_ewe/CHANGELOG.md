@@ -1,5 +1,24 @@
 # beryl_ewe changelog
 
+## v0.3.3 - 2026-11-27
+
+### Fixed
+
+#### Runtime exit cancels stalled HTTP/2 WebSocket writes.
+
+HTTP/2 WebSockets now end when their owning beryl runtime exits, even when
+flow control blocks an outbound write. The affected stream releases its
+connection slot and Ewe discards its unsent buffered output. The shared
+HTTP/2 connection stays open for streams owned by other runtimes. HTTP/1
+behavior is unchanged.
+
+
+### Dependencies
+
+#### The beryl dependency updates.
+
+Updated beryl to 0.6.3.
+
 ## v0.3.2 - 2026-11-23
 
 ### Dependencies

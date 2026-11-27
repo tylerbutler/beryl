@@ -1,5 +1,54 @@
 # beryl changelog
 
+## v0.6.3 - 2026-11-27
+
+### Added
+
+#### Trusted client-IP extraction is available for both transports.
+
+Use `beryl/transport/server.with_client_ip_extractor` to supply an
+operator-validated client address for per-IP concurrency and connection-attempt
+rate limits. TCP peer addressing remains the default; forwarded headers remain
+untrusted without an explicit proxy policy.
+
+When either per-IP control is enabled, unavailable addresses and extractor
+failures now reject upgrades with HTTP 403 and distinct telemetry outcomes
+instead of sharing an `"unknown"` bucket. Without either control, address
+availability is not required and total connection ceilings still apply.
+
+
+### Fixed
+
+#### Connection limiter checkpoints use supervised ownership.
+
+A private checkpoint table now passes through a supervised manager when the
+limiter restarts, without a persistent-term registry. Counts, held reservations,
+and rate buckets still survive limiter-worker failures. Shutdown releases the
+table. A manager failure restarts the limiter with empty admission state,
+including counts for connections that remain open.
+
+#### Admitted sockets close when their transport owner exits.
+
+When a transport owner exits without its normal close callback, beryl now
+removes its socket and topic memberships before heartbeat eviction. Accepted
+work drains before the application receives one normal `Closed` event per
+joined topic. Connection capacity remains reusable, and healthy peers stay
+connected.
+
+
+### Performance
+
+#### Socket cleanup no longer scans unrelated actors or topics.
+
+beryl looks up exiting socket actors by monitor and removes only their indexed
+topic memberships. Normal disconnects, actor crashes, and abandoned admissions
+no longer require whole-router actor or topic scans. Abnormal-disconnect
+telemetry uses the same per-socket membership set.
+
+Cleanup still handles missing leave updates and rejects delayed signals from
+removed actors. Admission-owner loss retains ordered disconnect, and public
+APIs are unchanged.
+
 ## v0.6.2 - 2026-11-23
 
 ### Fixed
