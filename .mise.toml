@@ -1,9 +1,9 @@
 [tools]
-erlang = "28"
+erlang = "29"
 gleam = "1.19.2"
-just = "1.50.0"
+just = "1.59.0"
 "github:tylerbutler/trellis" = "1.8.0"
-"github:erlang/rebar3" = "3.24.0"
+"github:erlang/rebar3" = "3.28.0"
 "github:tylerbutler/licence_audit" = "v1.0.0-rc.3"
 
 [env]
