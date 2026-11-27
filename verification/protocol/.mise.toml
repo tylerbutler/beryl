@@ -1,0 +1,6 @@
+[tools]
+"github:bendlang/bend" = "2.0.40"
+"github:leanprover/lean4" = { version = "4.34.0", matching = ".tar.zst", strip_components = 1, bin_path = "bin" }
+
+[env]
+BEND_NO_TELEMETRY = "1"
