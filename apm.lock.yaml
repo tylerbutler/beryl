@@ -1,297 +1,35 @@
-lockfile_version: '1'
-generated_at: '2026-11-20T20:09:15.028718+00:00'
-apm_version: 0.35.1
+lockfile_version: '4'
+generated_at: '2026-11-27T16:18:06.939883+00:00'
+apm_version: 0.39.1
+manifest_targets:
+- claude
+- copilot
 dependencies:
-- repo_url: google/elephant-goldfish-model
-  name: egm
-  host: github.com
-  resolved_commit: 49d3f80280437be03d315ff68e69941ee55b5d8b
-  version: 0.1.1
-  package_type: marketplace_plugin
-  deployed_files:
-  - .agents/skills/egm-bootstrap
-  - .agents/skills/egm-bootstrap/SKILL.md
-  - .agents/skills/egm-bootstrap/TEST.md
-  - .agents/skills/egm-bootstrap/agents/openai.yaml
-  - .agents/skills/egm-bootstrap/assets/icon.svg
-  - .agents/skills/egm-bootstrap/references/templates.md
-  - .agents/skills/egm-bootstrap/references/worker-return.schema.json
-  - .agents/skills/egm-bootstrap/test_scenarios.yaml
-  - .agents/skills/egm-brainstorm
-  - .agents/skills/egm-brainstorm/SKILL.md
-  - .agents/skills/egm-brainstorm/TEST.md
-  - .agents/skills/egm-brainstorm/agents/openai.yaml
-  - .agents/skills/egm-brainstorm/assets/icon.svg
-  - .agents/skills/egm-brainstorm/test_scenarios.yaml
-  - .agents/skills/egm-draft
-  - .agents/skills/egm-draft/SKILL.md
-  - .agents/skills/egm-draft/TEST.md
-  - .agents/skills/egm-draft/agents/openai.yaml
-  - .agents/skills/egm-draft/assets/icon.svg
-  - .agents/skills/egm-draft/references/design_doc.md
-  - .agents/skills/egm-draft/test_scenarios.yaml
-  - .agents/skills/egm-drift-report
-  - .agents/skills/egm-drift-report/SKILL.md
-  - .agents/skills/egm-drift-report/TEST.md
-  - .agents/skills/egm-drift-report/agents/openai.yaml
-  - .agents/skills/egm-drift-report/assets/icon.svg
-  - .agents/skills/egm-drift-report/test_scenarios.yaml
-  - .agents/skills/egm-lite
-  - .agents/skills/egm-lite/SKILL.md
-  - .agents/skills/egm-lite/TEST.md
-  - .agents/skills/egm-lite/agents/openai.yaml
-  - .agents/skills/egm-lite/assets/icon.svg
-  - .agents/skills/egm-lite/test_scenarios.yaml
-  - .agents/skills/egm-resolve
-  - .agents/skills/egm-resolve/SKILL.md
-  - .agents/skills/egm-resolve/TEST.md
-  - .agents/skills/egm-resolve/agents/openai.yaml
-  - .agents/skills/egm-resolve/assets/icon.svg
-  - .agents/skills/egm-resolve/test_scenarios.yaml
-  - .agents/skills/egm-review
-  - .agents/skills/egm-review-loop
-  - .agents/skills/egm-review-loop/SKILL.md
-  - .agents/skills/egm-review-loop/TEST.md
-  - .agents/skills/egm-review-loop/agents/openai.yaml
-  - .agents/skills/egm-review-loop/assets/icon.svg
-  - .agents/skills/egm-review-loop/test_scenarios.yaml
-  - .agents/skills/egm-review/SKILL.md
-  - .agents/skills/egm-review/TEST.md
-  - .agents/skills/egm-review/agents/openai.yaml
-  - .agents/skills/egm-review/assets/icon.svg
-  - .agents/skills/egm-review/test_scenarios.yaml
-  - .claude/agents/bootstrap_orchestrator.md
-  - .claude/agents/codebase_details.md
-  - .claude/agents/comprehension.md
-  - .claude/agents/design_critic.md
-  - .claude/agents/implementation_readiness.md
-  - .claude/agents/inventive_catalyst.md
-  - .claude/agents/structural.md
-  - .claude/agents/style.md
-  - .claude/agents/synthesizer.md
-  - .claude/agents/zoom_out.md
-  - .claude/skills/egm-bootstrap
-  - .claude/skills/egm-bootstrap/SKILL.md
-  - .claude/skills/egm-bootstrap/TEST.md
-  - .claude/skills/egm-bootstrap/agents/openai.yaml
-  - .claude/skills/egm-bootstrap/assets/icon.svg
-  - .claude/skills/egm-bootstrap/references/templates.md
-  - .claude/skills/egm-bootstrap/references/worker-return.schema.json
-  - .claude/skills/egm-bootstrap/test_scenarios.yaml
-  - .claude/skills/egm-brainstorm
-  - .claude/skills/egm-brainstorm/SKILL.md
-  - .claude/skills/egm-brainstorm/TEST.md
-  - .claude/skills/egm-brainstorm/agents/openai.yaml
-  - .claude/skills/egm-brainstorm/assets/icon.svg
-  - .claude/skills/egm-brainstorm/test_scenarios.yaml
-  - .claude/skills/egm-draft
-  - .claude/skills/egm-draft/SKILL.md
-  - .claude/skills/egm-draft/TEST.md
-  - .claude/skills/egm-draft/agents/openai.yaml
-  - .claude/skills/egm-draft/assets/icon.svg
-  - .claude/skills/egm-draft/references/design_doc.md
-  - .claude/skills/egm-draft/test_scenarios.yaml
-  - .claude/skills/egm-drift-report
-  - .claude/skills/egm-drift-report/SKILL.md
-  - .claude/skills/egm-drift-report/TEST.md
-  - .claude/skills/egm-drift-report/agents/openai.yaml
-  - .claude/skills/egm-drift-report/assets/icon.svg
-  - .claude/skills/egm-drift-report/test_scenarios.yaml
-  - .claude/skills/egm-lite
-  - .claude/skills/egm-lite/SKILL.md
-  - .claude/skills/egm-lite/TEST.md
-  - .claude/skills/egm-lite/agents/openai.yaml
-  - .claude/skills/egm-lite/assets/icon.svg
-  - .claude/skills/egm-lite/test_scenarios.yaml
-  - .claude/skills/egm-resolve
-  - .claude/skills/egm-resolve/SKILL.md
-  - .claude/skills/egm-resolve/TEST.md
-  - .claude/skills/egm-resolve/agents/openai.yaml
-  - .claude/skills/egm-resolve/assets/icon.svg
-  - .claude/skills/egm-resolve/test_scenarios.yaml
-  - .claude/skills/egm-review
-  - .claude/skills/egm-review-loop
-  - .claude/skills/egm-review-loop/SKILL.md
-  - .claude/skills/egm-review-loop/TEST.md
-  - .claude/skills/egm-review-loop/agents/openai.yaml
-  - .claude/skills/egm-review-loop/assets/icon.svg
-  - .claude/skills/egm-review-loop/test_scenarios.yaml
-  - .claude/skills/egm-review/SKILL.md
-  - .claude/skills/egm-review/TEST.md
-  - .claude/skills/egm-review/agents/openai.yaml
-  - .claude/skills/egm-review/assets/icon.svg
-  - .claude/skills/egm-review/test_scenarios.yaml
-  - .github/agents/bootstrap_orchestrator.agent.md
-  - .github/agents/codebase_details.agent.md
-  - .github/agents/comprehension.agent.md
-  - .github/agents/design_critic.agent.md
-  - .github/agents/implementation_readiness.agent.md
-  - .github/agents/inventive_catalyst.agent.md
-  - .github/agents/structural.agent.md
-  - .github/agents/style.agent.md
-  - .github/agents/synthesizer.agent.md
-  - .github/agents/zoom_out.agent.md
-  deployed_file_hashes:
-    .agents/skills/egm-bootstrap/SKILL.md: sha256:712f1b58a21784a49671931a8dc9904d5b1e84ec5234b010eba6dca8b96d98fd
-    .agents/skills/egm-bootstrap/TEST.md: sha256:35b8e616d7b9fbd57da40f37ec80f24f36027450f02f6ca47f82130a48f3755c
-    .agents/skills/egm-bootstrap/agents/openai.yaml: sha256:e5f83ece63fce8c73329efedd990f912ab395e1e8339f89f83f9e6efef00fb27
-    .agents/skills/egm-bootstrap/assets/icon.svg: sha256:e1f021c3074bc22d982301bff8374cf1c2ff7c032d1834b66fed91a9ab57d370
-    .agents/skills/egm-bootstrap/references/templates.md: sha256:f49793727cccbd72afdc4a0569a1d8e8138e943d2fc9b0df772b09deaca80437
-    .agents/skills/egm-bootstrap/references/worker-return.schema.json: sha256:f18a3822f60a0f117e1582cccac78a90cf14154afca811d4e81ea3fe562e52a5
-    .agents/skills/egm-bootstrap/test_scenarios.yaml: sha256:9ea91ed9fc8763b1e95a2ecf9f529be2a2c1b9b7190816b97963ec932c1bdc17
-    .agents/skills/egm-brainstorm/SKILL.md: sha256:0491fc9fd614e7ca73b5c7036f74e6f218bf6f93e4e8970955ec570bf84f21cc
-    .agents/skills/egm-brainstorm/TEST.md: sha256:d8b0d62ec82fea523cf62b2aa6a3762738b861ef68a1f47c7e0584c7747c4f53
-    .agents/skills/egm-brainstorm/agents/openai.yaml: sha256:2b858c20f9d3b54cc1e02410a4fd6f7989b36d6d5d152cc87cd0d1082ce3bfc9
-    .agents/skills/egm-brainstorm/assets/icon.svg: sha256:89d894e7e9c10c2ad955ef1964049e508b718e96e8a177f547b240c774498b49
-    .agents/skills/egm-brainstorm/test_scenarios.yaml: sha256:db99fcf40a4fbc505ac95e231b21805b583c9c1675aee43eb8ec23ab0dc76769
-    .agents/skills/egm-draft/SKILL.md: sha256:ed92aef19a14a0831450265bd84d1d6ac8b3200815c0e584d439a11cd97eeee3
-    .agents/skills/egm-draft/TEST.md: sha256:19872448e7e2f2af41feea9f9de3c78942462c52a76901510ffa52ecaa7a2f4c
-    .agents/skills/egm-draft/agents/openai.yaml: sha256:eafc643897b5a4ea7a849bd4211acaf8f3bc31a079f199ef5d04d08b410705b7
-    .agents/skills/egm-draft/assets/icon.svg: sha256:0cca32ed85b4198fdf3566198f92a17c943ee3d9a72d38c2898132b67130aebd
-    .agents/skills/egm-draft/references/design_doc.md: sha256:309246562d1ffd801b3a2cd81f5cbc767d36f7530046f6ac681b6db40c6c7965
-    .agents/skills/egm-draft/test_scenarios.yaml: sha256:6558ddf2c4567bb26ea233bcff8eb1ec704d511a9497410d4041383d28ed57b3
-    .agents/skills/egm-drift-report/SKILL.md: sha256:53a95f790f9276dff08c67373eb4b53bf0444217f5a0fbf796d5718cb5ada49e
-    .agents/skills/egm-drift-report/TEST.md: sha256:596632190ef932059f49871d12abdcce9b581565f74a32f0f37f488473c68bb2
-    .agents/skills/egm-drift-report/agents/openai.yaml: sha256:b54c32c1badc9a73e507f097377324dc31f2839cfef9c426d4dba1c622d5673c
-    .agents/skills/egm-drift-report/assets/icon.svg: sha256:47bc4ecbe493f4454f9b7642f42de9fe41f8a93cbb86aa3ffbb5d58532ea0e2d
-    .agents/skills/egm-drift-report/test_scenarios.yaml: sha256:e688d8129d32bc90ad23a86da017175036695fa0872a04dbce591a890ea70788
-    .agents/skills/egm-lite/SKILL.md: sha256:76e658d85f2ec4ce1785b6a5624fc4ebb66b27807a3c47221361b4862ef1948c
-    .agents/skills/egm-lite/TEST.md: sha256:26ec87def46d05ac8edecc0fd54cf72a142c4a5d6c0bcc10f3f491eda47e3893
-    .agents/skills/egm-lite/agents/openai.yaml: sha256:f01b6d29d142a293ba3c4966e6894f892e29b47ff96e694bd37f3bc26ef9ac09
-    .agents/skills/egm-lite/assets/icon.svg: sha256:ca4569a1b5a8bd9eef3ab4f48acc26ce88c154eb2c420cd2ced70b5026d64d90
-    .agents/skills/egm-lite/test_scenarios.yaml: sha256:556dda1450cff6db766d417949ec3f52f6ee41fef553cd10684a93bad9b9179c
-    .agents/skills/egm-resolve/SKILL.md: sha256:2fe7d9573d39c9dc612049efff1c178332b75b97257602b93c46fd69558883ad
-    .agents/skills/egm-resolve/TEST.md: sha256:ee61f28caf337c2b25b0c589e32a980dfcb80e4d0ef80b9abf35e72c67ae1308
-    .agents/skills/egm-resolve/agents/openai.yaml: sha256:7ad63dc69777e6e8b2e3d33cf4105149043038ffb489e750b3f483be7836cf30
-    .agents/skills/egm-resolve/assets/icon.svg: sha256:14ac0ad863fc6ab83ba5fd5f7bd46fd11b609d65f9e482b3fcddd7a139834733
-    .agents/skills/egm-resolve/test_scenarios.yaml: sha256:6d667608097ff4c80fb861da2c7580cf7b7f5d01290895ea74422890254a0570
-    .agents/skills/egm-review-loop/SKILL.md: sha256:005eeb32c6557bf918fa0df15f3e4dce932aeffdf5bbb1e6dbeaa3a9610c3462
-    .agents/skills/egm-review-loop/TEST.md: sha256:3259832b6b86c00fd2e8d03f04bac8817d8bb7b9b172b0b3a9489bc896836c7c
-    .agents/skills/egm-review-loop/agents/openai.yaml: sha256:2073f27ed2c084c8db710f72dac367d26cb8cbc16aa2195546feb732b47a23ce
-    .agents/skills/egm-review-loop/assets/icon.svg: sha256:d6d5537843253fe634d248b6eadd5a5bcd2ef7742e016896eb11c583174eb530
-    .agents/skills/egm-review-loop/test_scenarios.yaml: sha256:6dfa8d74a74f1a65d195cca0787b801e78e061f6517d1400c80bf9ab989ec0b8
-    .agents/skills/egm-review/SKILL.md: sha256:9a7a78a3f124b2c4c6280fdedeba639cd9c875294e49b50a61f0d6b1feda77fa
-    .agents/skills/egm-review/TEST.md: sha256:408c529ae5372ce95def1022fb35c9d1cac35dd061c9cd84f4beb1746d0d8341
-    .agents/skills/egm-review/agents/openai.yaml: sha256:780d8877443f704ee27d504c13d08f304f0bca4c4418f5703f61ae40416fca74
-    .agents/skills/egm-review/assets/icon.svg: sha256:02154028864bd8547a45d7c9f55c59f95cb4ce3f57ecb3426f67034ab97d022f
-    .agents/skills/egm-review/test_scenarios.yaml: sha256:7cda387f656b560bbd906f7ce534e59fb3018b4a821a60fa9883ef423fcdbd76
-    .claude/agents/bootstrap_orchestrator.md: sha256:5c2fa484754f8d582669500d16d5728fe95daff8bd964f8e7f09142c6a666bfc
-    .claude/agents/codebase_details.md: sha256:d80db07e449b57b3b3776d1401cca72a54b6b65a0ab218b86f9064ee4b8167bc
-    .claude/agents/comprehension.md: sha256:974f4972f717dc7b102a9b1407b3a625749149f2ae905727241e919f43cc3fa5
-    .claude/agents/design_critic.md: sha256:cee6294735ce2bd4fea19245852b6eb07cbe8ede7e72a4bfc829f586e4a39d0f
-    .claude/agents/implementation_readiness.md: sha256:1f6aa61cfe7cb86dc94943ab3b3fd339e5baba533937198fd10edb06dfa64e8f
-    .claude/agents/inventive_catalyst.md: sha256:e766638298dfa42859172df62d1c0a4faa9ade143bcfc92837b5843a684e1da4
-    .claude/agents/structural.md: sha256:f0d4fe6faee4e388366b7d653fe353a9b09f45ca1bf5dae29280e351cda7da87
-    .claude/agents/style.md: sha256:9330780622baaef8dc683ea78efb3ff8e4583e3dde7ab6092b84df50e8c9ea58
-    .claude/agents/synthesizer.md: sha256:44d1288c03ec829acafd8af0226ce1d0603f4cf04e9f8438b5b36a451be8f8b6
-    .claude/agents/zoom_out.md: sha256:adc9d7b7db4c304866e61d5e5e446502231abe188ce64656939305e07ae7995f
-    .claude/skills/egm-bootstrap/SKILL.md: sha256:712f1b58a21784a49671931a8dc9904d5b1e84ec5234b010eba6dca8b96d98fd
-    .claude/skills/egm-bootstrap/TEST.md: sha256:35b8e616d7b9fbd57da40f37ec80f24f36027450f02f6ca47f82130a48f3755c
-    .claude/skills/egm-bootstrap/agents/openai.yaml: sha256:e5f83ece63fce8c73329efedd990f912ab395e1e8339f89f83f9e6efef00fb27
-    .claude/skills/egm-bootstrap/assets/icon.svg: sha256:e1f021c3074bc22d982301bff8374cf1c2ff7c032d1834b66fed91a9ab57d370
-    .claude/skills/egm-bootstrap/references/templates.md: sha256:f49793727cccbd72afdc4a0569a1d8e8138e943d2fc9b0df772b09deaca80437
-    .claude/skills/egm-bootstrap/references/worker-return.schema.json: sha256:f18a3822f60a0f117e1582cccac78a90cf14154afca811d4e81ea3fe562e52a5
-    .claude/skills/egm-bootstrap/test_scenarios.yaml: sha256:9ea91ed9fc8763b1e95a2ecf9f529be2a2c1b9b7190816b97963ec932c1bdc17
-    .claude/skills/egm-brainstorm/SKILL.md: sha256:0491fc9fd614e7ca73b5c7036f74e6f218bf6f93e4e8970955ec570bf84f21cc
-    .claude/skills/egm-brainstorm/TEST.md: sha256:d8b0d62ec82fea523cf62b2aa6a3762738b861ef68a1f47c7e0584c7747c4f53
-    .claude/skills/egm-brainstorm/agents/openai.yaml: sha256:2b858c20f9d3b54cc1e02410a4fd6f7989b36d6d5d152cc87cd0d1082ce3bfc9
-    .claude/skills/egm-brainstorm/assets/icon.svg: sha256:89d894e7e9c10c2ad955ef1964049e508b718e96e8a177f547b240c774498b49
-    .claude/skills/egm-brainstorm/test_scenarios.yaml: sha256:db99fcf40a4fbc505ac95e231b21805b583c9c1675aee43eb8ec23ab0dc76769
-    .claude/skills/egm-draft/SKILL.md: sha256:ed92aef19a14a0831450265bd84d1d6ac8b3200815c0e584d439a11cd97eeee3
-    .claude/skills/egm-draft/TEST.md: sha256:19872448e7e2f2af41feea9f9de3c78942462c52a76901510ffa52ecaa7a2f4c
-    .claude/skills/egm-draft/agents/openai.yaml: sha256:eafc643897b5a4ea7a849bd4211acaf8f3bc31a079f199ef5d04d08b410705b7
-    .claude/skills/egm-draft/assets/icon.svg: sha256:0cca32ed85b4198fdf3566198f92a17c943ee3d9a72d38c2898132b67130aebd
-    .claude/skills/egm-draft/references/design_doc.md: sha256:309246562d1ffd801b3a2cd81f5cbc767d36f7530046f6ac681b6db40c6c7965
-    .claude/skills/egm-draft/test_scenarios.yaml: sha256:6558ddf2c4567bb26ea233bcff8eb1ec704d511a9497410d4041383d28ed57b3
-    .claude/skills/egm-drift-report/SKILL.md: sha256:53a95f790f9276dff08c67373eb4b53bf0444217f5a0fbf796d5718cb5ada49e
-    .claude/skills/egm-drift-report/TEST.md: sha256:596632190ef932059f49871d12abdcce9b581565f74a32f0f37f488473c68bb2
-    .claude/skills/egm-drift-report/agents/openai.yaml: sha256:b54c32c1badc9a73e507f097377324dc31f2839cfef9c426d4dba1c622d5673c
-    .claude/skills/egm-drift-report/assets/icon.svg: sha256:47bc4ecbe493f4454f9b7642f42de9fe41f8a93cbb86aa3ffbb5d58532ea0e2d
-    .claude/skills/egm-drift-report/test_scenarios.yaml: sha256:e688d8129d32bc90ad23a86da017175036695fa0872a04dbce591a890ea70788
-    .claude/skills/egm-lite/SKILL.md: sha256:76e658d85f2ec4ce1785b6a5624fc4ebb66b27807a3c47221361b4862ef1948c
-    .claude/skills/egm-lite/TEST.md: sha256:26ec87def46d05ac8edecc0fd54cf72a142c4a5d6c0bcc10f3f491eda47e3893
-    .claude/skills/egm-lite/agents/openai.yaml: sha256:f01b6d29d142a293ba3c4966e6894f892e29b47ff96e694bd37f3bc26ef9ac09
-    .claude/skills/egm-lite/assets/icon.svg: sha256:ca4569a1b5a8bd9eef3ab4f48acc26ce88c154eb2c420cd2ced70b5026d64d90
-    .claude/skills/egm-lite/test_scenarios.yaml: sha256:556dda1450cff6db766d417949ec3f52f6ee41fef553cd10684a93bad9b9179c
-    .claude/skills/egm-resolve/SKILL.md: sha256:2fe7d9573d39c9dc612049efff1c178332b75b97257602b93c46fd69558883ad
-    .claude/skills/egm-resolve/TEST.md: sha256:ee61f28caf337c2b25b0c589e32a980dfcb80e4d0ef80b9abf35e72c67ae1308
-    .claude/skills/egm-resolve/agents/openai.yaml: sha256:7ad63dc69777e6e8b2e3d33cf4105149043038ffb489e750b3f483be7836cf30
-    .claude/skills/egm-resolve/assets/icon.svg: sha256:14ac0ad863fc6ab83ba5fd5f7bd46fd11b609d65f9e482b3fcddd7a139834733
-    .claude/skills/egm-resolve/test_scenarios.yaml: sha256:6d667608097ff4c80fb861da2c7580cf7b7f5d01290895ea74422890254a0570
-    .claude/skills/egm-review-loop/SKILL.md: sha256:005eeb32c6557bf918fa0df15f3e4dce932aeffdf5bbb1e6dbeaa3a9610c3462
-    .claude/skills/egm-review-loop/TEST.md: sha256:3259832b6b86c00fd2e8d03f04bac8817d8bb7b9b172b0b3a9489bc896836c7c
-    .claude/skills/egm-review-loop/agents/openai.yaml: sha256:2073f27ed2c084c8db710f72dac367d26cb8cbc16aa2195546feb732b47a23ce
-    .claude/skills/egm-review-loop/assets/icon.svg: sha256:d6d5537843253fe634d248b6eadd5a5bcd2ef7742e016896eb11c583174eb530
-    .claude/skills/egm-review-loop/test_scenarios.yaml: sha256:6dfa8d74a74f1a65d195cca0787b801e78e061f6517d1400c80bf9ab989ec0b8
-    .claude/skills/egm-review/SKILL.md: sha256:9a7a78a3f124b2c4c6280fdedeba639cd9c875294e49b50a61f0d6b1feda77fa
-    .claude/skills/egm-review/TEST.md: sha256:408c529ae5372ce95def1022fb35c9d1cac35dd061c9cd84f4beb1746d0d8341
-    .claude/skills/egm-review/agents/openai.yaml: sha256:780d8877443f704ee27d504c13d08f304f0bca4c4418f5703f61ae40416fca74
-    .claude/skills/egm-review/assets/icon.svg: sha256:02154028864bd8547a45d7c9f55c59f95cb4ce3f57ecb3426f67034ab97d022f
-    .claude/skills/egm-review/test_scenarios.yaml: sha256:7cda387f656b560bbd906f7ce534e59fb3018b4a821a60fa9883ef423fcdbd76
-    .github/agents/bootstrap_orchestrator.agent.md: sha256:5c2fa484754f8d582669500d16d5728fe95daff8bd964f8e7f09142c6a666bfc
-    .github/agents/codebase_details.agent.md: sha256:d80db07e449b57b3b3776d1401cca72a54b6b65a0ab218b86f9064ee4b8167bc
-    .github/agents/comprehension.agent.md: sha256:974f4972f717dc7b102a9b1407b3a625749149f2ae905727241e919f43cc3fa5
-    .github/agents/design_critic.agent.md: sha256:cee6294735ce2bd4fea19245852b6eb07cbe8ede7e72a4bfc829f586e4a39d0f
-    .github/agents/implementation_readiness.agent.md: sha256:1f6aa61cfe7cb86dc94943ab3b3fd339e5baba533937198fd10edb06dfa64e8f
-    .github/agents/inventive_catalyst.agent.md: sha256:e766638298dfa42859172df62d1c0a4faa9ade143bcfc92837b5843a684e1da4
-    .github/agents/structural.agent.md: sha256:f0d4fe6faee4e388366b7d653fe353a9b09f45ca1bf5dae29280e351cda7da87
-    .github/agents/style.agent.md: sha256:9330780622baaef8dc683ea78efb3ff8e4583e3dde7ab6092b84df50e8c9ea58
-    .github/agents/synthesizer.agent.md: sha256:44d1288c03ec829acafd8af0226ce1d0603f4cf04e9f8438b5b36a451be8f8b6
-    .github/agents/zoom_out.agent.md: sha256:adc9d7b7db4c304866e61d5e5e446502231abe188ce64656939305e07ae7995f
-  content_hash: sha256:772a3f8e88e218cd9aeb8f8ce64534524d187d39b9c16c899eae35e381296860
-  is_dev: true
-  discovered_via: egm
-  marketplace_plugin_name: egm
-  declared_license: Apache-2.0
 - repo_url: tylerbutler/agent-marketplace
   name: gleam
   host: github.com
-  resolved_commit: a88af94c38d2247b18e59d9f237676e62edfed2a
+  resolved_commit: b79ccb72e09ff38a142527568751342ac6233e15
   version: 0.1.0
   virtual_path: plugins/gleam
   is_virtual: true
   package_type: marketplace_plugin
-  deployed_files:
-  - .agents/skills/gleam-reference-docs
-  - .agents/skills/gleam-reference-docs/SKILL.md
-  - .agents/skills/gleam-reference-docs/assets/generate-reference.mjs
-  - .agents/skills/gleam-reference-docs/evals/evals.json
-  - .agents/skills/gleam-review
-  - .agents/skills/gleam-review/SKILL.md
-  - .agents/skills/gleam-review/references/conventions.md
-  - .claude/agents/beam-vm-reviewer.md
-  - .claude/agents/erlang-specialist.md
-  - .claude/skills/gleam-reference-docs
-  - .claude/skills/gleam-reference-docs/SKILL.md
-  - .claude/skills/gleam-reference-docs/assets/generate-reference.mjs
-  - .claude/skills/gleam-reference-docs/evals/evals.json
-  - .claude/skills/gleam-review
-  - .claude/skills/gleam-review/SKILL.md
-  - .claude/skills/gleam-review/references/conventions.md
-  - .github/agents/beam-vm-reviewer.agent.md
-  - .github/agents/erlang-specialist.agent.md
-  deployed_file_hashes:
-    .agents/skills/gleam-reference-docs/SKILL.md: sha256:7d3dd41722242d3cd627aae529ffd919391c8ff8a6be950c9ef61cd0b193c531
-    .agents/skills/gleam-reference-docs/assets/generate-reference.mjs: sha256:a2581e009f9fe189a02681ad29d410a9e55a7c0a399de498bf5710ef539e6f43
-    .agents/skills/gleam-reference-docs/evals/evals.json: sha256:9da907b7e7c07b3529d20d3ee2cf80b6d7f4bc8794ad151b550896268f1f29db
-    .agents/skills/gleam-review/SKILL.md: sha256:1d510df9a726b675f5a7de84508eb668828e5f14b36ca96139867b29db502d17
-    .agents/skills/gleam-review/references/conventions.md: sha256:cd0b6dee401eff48c7afcb83db73ee5971e2563989f266dfd58bd93b997fe6ed
-    .claude/agents/beam-vm-reviewer.md: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
-    .claude/agents/erlang-specialist.md: sha256:4bb6bf9b41f0f62cd0d779e0020b276c05ec68ebb4b913135774d0a12acdf851
-    .claude/skills/gleam-reference-docs/SKILL.md: sha256:7d3dd41722242d3cd627aae529ffd919391c8ff8a6be950c9ef61cd0b193c531
-    .claude/skills/gleam-reference-docs/assets/generate-reference.mjs: sha256:a2581e009f9fe189a02681ad29d410a9e55a7c0a399de498bf5710ef539e6f43
-    .claude/skills/gleam-reference-docs/evals/evals.json: sha256:9da907b7e7c07b3529d20d3ee2cf80b6d7f4bc8794ad151b550896268f1f29db
-    .claude/skills/gleam-review/SKILL.md: sha256:1d510df9a726b675f5a7de84508eb668828e5f14b36ca96139867b29db502d17
-    .claude/skills/gleam-review/references/conventions.md: sha256:cd0b6dee401eff48c7afcb83db73ee5971e2563989f266dfd58bd93b997fe6ed
-    .github/agents/beam-vm-reviewer.agent.md: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
-    .github/agents/erlang-specialist.agent.md: sha256:4bb6bf9b41f0f62cd0d779e0020b276c05ec68ebb4b913135774d0a12acdf851
-  content_hash: sha256:aa48826aed0d947f3b3fcede8721d57256a3f109af2a0a8445623ee80d3a98e1
+  content_hash: sha256:6accb162bc40376886f38a9d483cf2951831187a4347844bdb07d10562fdc81e
   is_dev: true
+  native_plugin:
+    name: gleam
+    root: .agents/plugins/gleam
+    fingerprint: sha256:9be6f9ff722a44268fb65c6cac1e6706b22154a6a175c2b0299850b7b281db75
+    marketplace:
+      name: apm-p-7fbbdd9e
+      path: ./.agents/plugins
+  native_declared:
+  - claude
+  - copilot
 - repo_url: tylerbutler/apm-base
   name: apm-base
   host: github.com
-  resolved_commit: f378e96515f8e105f3178a7fd414cfa896ef7d6e
-  version: 0.2.5
+  resolved_commit: 0be951067859c6fbcb677014d4c9bbcf3764b471
+  version: 0.2.6
   package_type: apm_package
   deployed_files:
   - .agents/skills/humanizer
@@ -301,16 +39,6 @@ dependencies:
   - .agents/skills/prose-banlist/SKILL.md
   - .agents/skills/storytelling
   - .agents/skills/storytelling/SKILL.md
-  - .claude/commands/create-pr.md
-  - .claude/commands/merge-upstream.md
-  - .claude/rules/use-ste.md
-  - .claude/skills/humanizer
-  - .claude/skills/humanizer/LICENSE
-  - .claude/skills/humanizer/SKILL.md
-  - .claude/skills/prose-banlist
-  - .claude/skills/prose-banlist/SKILL.md
-  - .claude/skills/storytelling
-  - .claude/skills/storytelling/SKILL.md
   - .github/instructions/use-ste.instructions.md
   - .github/prompts/create-pr.prompt.md
   - .github/prompts/merge-upstream.prompt.md
@@ -319,22 +47,119 @@ dependencies:
     .agents/skills/humanizer/SKILL.md: sha256:14fc8a965b6e0a8dc100ba4dffeab55cb94bbac112abbde7e014d5c15a35c202
     .agents/skills/prose-banlist/SKILL.md: sha256:77d434e3b207f74a0b5e1e9d62e210d484714ff331351de0b272df1fe242886e
     .agents/skills/storytelling/SKILL.md: sha256:68a7dfe08ba69c59af66b28d2d9f3344eb97dc7f4eb096cae41f98abcc4ea23e
-    .claude/commands/create-pr.md: sha256:f60319bef36ed8d7159543f774f196f2ab90df55d3538c1723da6b81295d02ff
-    .claude/commands/merge-upstream.md: sha256:f8c97a3085cc2b603cd34428aa28d17c55b5411ba526871ae599cede372d3f89
-    .claude/rules/use-ste.md: sha256:29c78e0076d736e43b8d9b414465de9c236128975b95118dcb2047f4e49018b2
-    .claude/skills/humanizer/LICENSE: sha256:4ac4810254ab36d45419141aeb8e69bf50652cfafe5b2dab947d06d44e5cbf96
-    .claude/skills/humanizer/SKILL.md: sha256:14fc8a965b6e0a8dc100ba4dffeab55cb94bbac112abbde7e014d5c15a35c202
-    .claude/skills/prose-banlist/SKILL.md: sha256:77d434e3b207f74a0b5e1e9d62e210d484714ff331351de0b272df1fe242886e
-    .claude/skills/storytelling/SKILL.md: sha256:68a7dfe08ba69c59af66b28d2d9f3344eb97dc7f4eb096cae41f98abcc4ea23e
     .github/instructions/use-ste.instructions.md: sha256:686d7f6f6172dd5c238371076383b2f67c0f4937465e6e53633936d294c9adbc
     .github/prompts/create-pr.prompt.md: sha256:5fcb1b64247130aec3a0ebd114ae6d127de44f7e824087033c468d8debb593a2
     .github/prompts/merge-upstream.prompt.md: sha256:bf990755d11f1e73610d9cde3b656aa175c7f63cdd8d069158302c6496a5b77e
-  content_hash: sha256:a2f47f1b38a9c2d2e058eb8ac8ccd2496c56421b2b3b4d937b14a6477a614dc4
+  content_hash: sha256:4fe28801490f61ebfa1fc1d58b8b198daf0d30f848b3696e9a742e6a61519007
   is_dev: true
+  package_targets:
+  - copilot
+- repo_url: cloudflare/security-audit-skill
+  name: security-audit-skill
+  host: github.com
+  resolved_commit: c1c8a8c1471069fb0e188eeaff69b8e8db6564a8
+  version: unknown
+  depth: 2
+  resolved_by: tylerbutler/apm-base
+  package_type: skill_bundle
+  deployed_files:
+  - .agents/skills/security-audit
+  - .agents/skills/security-audit/AI-AND-LLM.md
+  - .agents/skills/security-audit/ATTACK-CLASSES.md
+  - .agents/skills/security-audit/CLIENT-SIDE.md
+  - .agents/skills/security-audit/CLOUD-AND-DEPLOYMENT.md
+  - .agents/skills/security-audit/DATA-ISOLATION-AND-LIFECYCLE.md
+  - .agents/skills/security-audit/DESKTOP-MOBILE-AND-LOCAL-IPC.md
+  - .agents/skills/security-audit/HUNTING.md
+  - .agents/skills/security-audit/LICENSE
+  - .agents/skills/security-audit/MEMORY-SAFETY-AND-BINARY.md
+  - .agents/skills/security-audit/PROTOCOLS-RPC-AND-MESSAGING.md
+  - .agents/skills/security-audit/RECONNAISSANCE.md
+  - .agents/skills/security-audit/RESOURCE-EXHAUSTION-AND-AVAILABILITY.md
+  - .agents/skills/security-audit/SKILL.md
+  - .agents/skills/security-audit/SUPPLY-CHAIN-AND-RELEASE.md
+  - .agents/skills/security-audit/VALIDATION-AND-REPORTING.md
+  - .agents/skills/security-audit/WEB-PROTOCOL-AND-AUTH.md
+  - .agents/skills/security-audit/report-schema.json
+  - .agents/skills/security-audit/validate-coverage-ledger.cjs
+  - .agents/skills/security-audit/validate-coverage-ledger.test.cjs
+  - .agents/skills/security-audit/validate-findings.cjs
+  - .agents/skills/security-audit/validate-findings.test.cjs
+  - .claude/skills/security-audit
+  - .claude/skills/security-audit/AI-AND-LLM.md
+  - .claude/skills/security-audit/ATTACK-CLASSES.md
+  - .claude/skills/security-audit/CLIENT-SIDE.md
+  - .claude/skills/security-audit/CLOUD-AND-DEPLOYMENT.md
+  - .claude/skills/security-audit/DATA-ISOLATION-AND-LIFECYCLE.md
+  - .claude/skills/security-audit/DESKTOP-MOBILE-AND-LOCAL-IPC.md
+  - .claude/skills/security-audit/HUNTING.md
+  - .claude/skills/security-audit/LICENSE
+  - .claude/skills/security-audit/MEMORY-SAFETY-AND-BINARY.md
+  - .claude/skills/security-audit/PROTOCOLS-RPC-AND-MESSAGING.md
+  - .claude/skills/security-audit/RECONNAISSANCE.md
+  - .claude/skills/security-audit/RESOURCE-EXHAUSTION-AND-AVAILABILITY.md
+  - .claude/skills/security-audit/SKILL.md
+  - .claude/skills/security-audit/SUPPLY-CHAIN-AND-RELEASE.md
+  - .claude/skills/security-audit/VALIDATION-AND-REPORTING.md
+  - .claude/skills/security-audit/WEB-PROTOCOL-AND-AUTH.md
+  - .claude/skills/security-audit/report-schema.json
+  - .claude/skills/security-audit/validate-coverage-ledger.cjs
+  - .claude/skills/security-audit/validate-coverage-ledger.test.cjs
+  - .claude/skills/security-audit/validate-findings.cjs
+  - .claude/skills/security-audit/validate-findings.test.cjs
+  deployed_file_hashes:
+    .agents/skills/security-audit/AI-AND-LLM.md: sha256:7335a95c43554eadefcf03ece639291bb0e038c398a179299e3887ffe06bd2ef
+    .agents/skills/security-audit/ATTACK-CLASSES.md: sha256:3ee4f00c6e8c9dcf6dd02dd5ac2a4ceb322e2085f3e9fbe79cf0c6330bc7ef83
+    .agents/skills/security-audit/CLIENT-SIDE.md: sha256:613f6b98f86083e045525c5b60154ffdab122bac35f1e05eb17488e6e453370c
+    .agents/skills/security-audit/CLOUD-AND-DEPLOYMENT.md: sha256:3c80f3088be22345e07b057c056d6ed99fe2b0304f794398964f7ccd5a496ca3
+    .agents/skills/security-audit/DATA-ISOLATION-AND-LIFECYCLE.md: sha256:307dcb3e24d292715c4a041190e7bb135646a37eb6187619ae01d000a634a4ad
+    .agents/skills/security-audit/DESKTOP-MOBILE-AND-LOCAL-IPC.md: sha256:58eae8ee0ca6a46611c501ec5a3ab47fdff88dd7db0d8d74789bbf8bb19d8cb2
+    .agents/skills/security-audit/HUNTING.md: sha256:71c121decea1322c47c718f6e110f1a892980bb4266bd7ac55ef043a213ade09
+    .agents/skills/security-audit/LICENSE: sha256:e598e694aa506650c7192d5ea3be0e50aca0d356ea00551c53429f0b01eb6391
+    .agents/skills/security-audit/MEMORY-SAFETY-AND-BINARY.md: sha256:7c8b0dccfb35315cca2455509674d49632b2fe37e1f3aac16c1a496a7e9924a7
+    .agents/skills/security-audit/PROTOCOLS-RPC-AND-MESSAGING.md: sha256:8b73816fa5b3697c9c40977f0c836b40f01d6e81929ff2720fe83ce089e9a619
+    .agents/skills/security-audit/RECONNAISSANCE.md: sha256:02ca887aca84de8ae137f1891bd2f0a54f28d3fa6da92a27f54734382b3381a2
+    .agents/skills/security-audit/RESOURCE-EXHAUSTION-AND-AVAILABILITY.md: sha256:4326fab5c92a0b4c420a70196254040105cd794026562130b59bf1a6db3e4baa
+    .agents/skills/security-audit/SKILL.md: sha256:5e3e96a1e438d8f35fef0a1e38f02d4f00e2bdf910401b7dfe00e6779c6dac85
+    .agents/skills/security-audit/SUPPLY-CHAIN-AND-RELEASE.md: sha256:f372e919940e335468ba1ae09f99026c3986a345f7fe26f8068f132e199f52a5
+    .agents/skills/security-audit/VALIDATION-AND-REPORTING.md: sha256:b892470cb89bb31f33403e050d4bdfbe2cdaef940ade1496fa65e32b2e129449
+    .agents/skills/security-audit/WEB-PROTOCOL-AND-AUTH.md: sha256:4f3066dffa23c5635859187be9b96c32f2aff29a688186b91ff0c63e47d62b5c
+    .agents/skills/security-audit/report-schema.json: sha256:6575c9de4a62255699ea052ebf9a49ebfb373a32891bcd89af6f55cc84b35519
+    .agents/skills/security-audit/validate-coverage-ledger.cjs: sha256:2eb280bd2e33c002916f86db9b29f9edfedb6454e5db973c766290465b868ac8
+    .agents/skills/security-audit/validate-coverage-ledger.test.cjs: sha256:cfb9df26b03469a4279a70e7664a2a5434dd6f8c2c204e91f9b0aeb9dd71e648
+    .agents/skills/security-audit/validate-findings.cjs: sha256:e85f232e36bfac0f866f244da50376692d6b45c690beadcb00608b0e6c8b5283
+    .agents/skills/security-audit/validate-findings.test.cjs: sha256:b92001117a92c4161d43777a0ba2fa182a8a4d97f2304cc8c0cee5331497b73b
+    .claude/skills/security-audit/AI-AND-LLM.md: sha256:7335a95c43554eadefcf03ece639291bb0e038c398a179299e3887ffe06bd2ef
+    .claude/skills/security-audit/ATTACK-CLASSES.md: sha256:3ee4f00c6e8c9dcf6dd02dd5ac2a4ceb322e2085f3e9fbe79cf0c6330bc7ef83
+    .claude/skills/security-audit/CLIENT-SIDE.md: sha256:613f6b98f86083e045525c5b60154ffdab122bac35f1e05eb17488e6e453370c
+    .claude/skills/security-audit/CLOUD-AND-DEPLOYMENT.md: sha256:3c80f3088be22345e07b057c056d6ed99fe2b0304f794398964f7ccd5a496ca3
+    .claude/skills/security-audit/DATA-ISOLATION-AND-LIFECYCLE.md: sha256:307dcb3e24d292715c4a041190e7bb135646a37eb6187619ae01d000a634a4ad
+    .claude/skills/security-audit/DESKTOP-MOBILE-AND-LOCAL-IPC.md: sha256:58eae8ee0ca6a46611c501ec5a3ab47fdff88dd7db0d8d74789bbf8bb19d8cb2
+    .claude/skills/security-audit/HUNTING.md: sha256:71c121decea1322c47c718f6e110f1a892980bb4266bd7ac55ef043a213ade09
+    .claude/skills/security-audit/LICENSE: sha256:e598e694aa506650c7192d5ea3be0e50aca0d356ea00551c53429f0b01eb6391
+    .claude/skills/security-audit/MEMORY-SAFETY-AND-BINARY.md: sha256:7c8b0dccfb35315cca2455509674d49632b2fe37e1f3aac16c1a496a7e9924a7
+    .claude/skills/security-audit/PROTOCOLS-RPC-AND-MESSAGING.md: sha256:8b73816fa5b3697c9c40977f0c836b40f01d6e81929ff2720fe83ce089e9a619
+    .claude/skills/security-audit/RECONNAISSANCE.md: sha256:02ca887aca84de8ae137f1891bd2f0a54f28d3fa6da92a27f54734382b3381a2
+    .claude/skills/security-audit/RESOURCE-EXHAUSTION-AND-AVAILABILITY.md: sha256:4326fab5c92a0b4c420a70196254040105cd794026562130b59bf1a6db3e4baa
+    .claude/skills/security-audit/SKILL.md: sha256:5e3e96a1e438d8f35fef0a1e38f02d4f00e2bdf910401b7dfe00e6779c6dac85
+    .claude/skills/security-audit/SUPPLY-CHAIN-AND-RELEASE.md: sha256:f372e919940e335468ba1ae09f99026c3986a345f7fe26f8068f132e199f52a5
+    .claude/skills/security-audit/VALIDATION-AND-REPORTING.md: sha256:b892470cb89bb31f33403e050d4bdfbe2cdaef940ade1496fa65e32b2e129449
+    .claude/skills/security-audit/WEB-PROTOCOL-AND-AUTH.md: sha256:4f3066dffa23c5635859187be9b96c32f2aff29a688186b91ff0c63e47d62b5c
+    .claude/skills/security-audit/report-schema.json: sha256:6575c9de4a62255699ea052ebf9a49ebfb373a32891bcd89af6f55cc84b35519
+    .claude/skills/security-audit/validate-coverage-ledger.cjs: sha256:2eb280bd2e33c002916f86db9b29f9edfedb6454e5db973c766290465b868ac8
+    .claude/skills/security-audit/validate-coverage-ledger.test.cjs: sha256:cfb9df26b03469a4279a70e7664a2a5434dd6f8c2c204e91f9b0aeb9dd71e648
+    .claude/skills/security-audit/validate-findings.cjs: sha256:e85f232e36bfac0f866f244da50376692d6b45c690beadcb00608b0e6c8b5283
+    .claude/skills/security-audit/validate-findings.test.cjs: sha256:b92001117a92c4161d43777a0ba2fa182a8a4d97f2304cc8c0cee5331497b73b
+  content_hash: sha256:92cffdd6bdb66c66bf62b372d287aa5fbe010da055ae723ed980f8bd33ae9877
+  is_dev: true
+  carried_licenses:
+  - path: skills/security-audit/LICENSE
+    source: LICENSE
+    hash: sha256:e598e694aa506650c7192d5ea3be0e50aca0d356ea00551c53429f0b01eb6391
 - repo_url: cursor/plugins
   name: unslop
   host: github.com
-  resolved_commit: aaeb0ea3a0584995aa8f55ce44c6c5259414b896
+  resolved_commit: b7b93c36be9bcc36a74db438e0fd385d660bc559
   version: unknown
   virtual_path: pstack/skills/unslop
   is_virtual: true
@@ -343,65 +168,137 @@ dependencies:
   package_type: claude_skill
   deployed_files:
   - .agents/skills/unslop
+  - .agents/skills/unslop/LICENSE
   - .agents/skills/unslop/SKILL.md
   - .claude/skills/unslop
+  - .claude/skills/unslop/LICENSE
   - .claude/skills/unslop/SKILL.md
   deployed_file_hashes:
+    .agents/skills/unslop/LICENSE: sha256:bc957ca6bee02792566a1a028d105e02e247c6e77cf057061674273da77b200e
     .agents/skills/unslop/SKILL.md: sha256:2b823fd069e031c1420180be8e0d4f5e2fd25bf2c428049e5c835c59a489b5e0
+    .claude/skills/unslop/LICENSE: sha256:bc957ca6bee02792566a1a028d105e02e247c6e77cf057061674273da77b200e
     .claude/skills/unslop/SKILL.md: sha256:2b823fd069e031c1420180be8e0d4f5e2fd25bf2c428049e5c835c59a489b5e0
-  content_hash: sha256:9bace43ba8cc2c76bfd18ce3f508381f490013cac2116d747553cfcd5cb44c88
+  content_hash: sha256:196f4cd36109c35ca1ab51b38bd177d7980865e945aa0f5f00dfd3ac46e0a080
   is_dev: true
+  carried_licenses:
+  - path: LICENSE
+    source: pstack/LICENSE
+    hash: sha256:bc957ca6bee02792566a1a028d105e02e247c6e77cf057061674273da77b200e
 - repo_url: dietrichgebert/ponytail
   materialization_repo_url: DietrichGebert/ponytail
   name: ponytail
   host: github.com
-  resolved_commit: 96608e078b2d5ea607c5c3b8b5a54d1c1fba6846
-  version: 96608e0
+  resolved_commit: ebd8654c2c627f721eb8f9c0d1bd4090a29f9e10
+  version: ebd8654
+  virtual_path: skills
+  is_virtual: true
   depth: 2
   resolved_by: tylerbutler/apm-base
   package_type: marketplace_plugin
   deployed_files:
   - .agents/skills/ponytail
   - .agents/skills/ponytail-audit
+  - .agents/skills/ponytail-audit/LICENSE
   - .agents/skills/ponytail-audit/SKILL.md
   - .agents/skills/ponytail-debt
+  - .agents/skills/ponytail-debt/LICENSE
   - .agents/skills/ponytail-debt/SKILL.md
   - .agents/skills/ponytail-gain
+  - .agents/skills/ponytail-gain/LICENSE
   - .agents/skills/ponytail-gain/SKILL.md
   - .agents/skills/ponytail-help
+  - .agents/skills/ponytail-help/LICENSE
   - .agents/skills/ponytail-help/SKILL.md
   - .agents/skills/ponytail-review
+  - .agents/skills/ponytail-review/LICENSE
   - .agents/skills/ponytail-review/SKILL.md
+  - .agents/skills/ponytail/LICENSE
   - .agents/skills/ponytail/SKILL.md
   - .claude/skills/ponytail
   - .claude/skills/ponytail-audit
+  - .claude/skills/ponytail-audit/LICENSE
   - .claude/skills/ponytail-audit/SKILL.md
   - .claude/skills/ponytail-debt
+  - .claude/skills/ponytail-debt/LICENSE
   - .claude/skills/ponytail-debt/SKILL.md
   - .claude/skills/ponytail-gain
+  - .claude/skills/ponytail-gain/LICENSE
   - .claude/skills/ponytail-gain/SKILL.md
   - .claude/skills/ponytail-help
+  - .claude/skills/ponytail-help/LICENSE
   - .claude/skills/ponytail-help/SKILL.md
   - .claude/skills/ponytail-review
+  - .claude/skills/ponytail-review/LICENSE
   - .claude/skills/ponytail-review/SKILL.md
+  - .claude/skills/ponytail/LICENSE
   - .claude/skills/ponytail/SKILL.md
-  - .github/hooks/ponytail-copilot-hooks.json
   deployed_file_hashes:
+    .agents/skills/ponytail-audit/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .agents/skills/ponytail-audit/SKILL.md: sha256:2b3223a02c386d1263e1b08343cb8eb3a53e444cdafb1d79e26c8ec2a8fcad28
+    .agents/skills/ponytail-debt/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .agents/skills/ponytail-debt/SKILL.md: sha256:b5ec2762f6ba8c4af9ea7173aa6c9f91b88655a25e43f9de0264f6ce8722b25f
+    .agents/skills/ponytail-gain/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .agents/skills/ponytail-gain/SKILL.md: sha256:231034a896d6762e4b5c8468287083422c56b499119976ec9f76821f7d083090
+    .agents/skills/ponytail-help/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .agents/skills/ponytail-help/SKILL.md: sha256:86ab0ce0af70cbeeeef499d5c884873b393f87f86401dcc45553662ce2c1eff9
+    .agents/skills/ponytail-review/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .agents/skills/ponytail-review/SKILL.md: sha256:33fe4ebe22a460924e5d4a261e223df22e409cc94ab76182bee9fb91a3ef022e
+    .agents/skills/ponytail/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .agents/skills/ponytail/SKILL.md: sha256:9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509
+    .claude/skills/ponytail-audit/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .claude/skills/ponytail-audit/SKILL.md: sha256:2b3223a02c386d1263e1b08343cb8eb3a53e444cdafb1d79e26c8ec2a8fcad28
+    .claude/skills/ponytail-debt/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .claude/skills/ponytail-debt/SKILL.md: sha256:b5ec2762f6ba8c4af9ea7173aa6c9f91b88655a25e43f9de0264f6ce8722b25f
+    .claude/skills/ponytail-gain/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .claude/skills/ponytail-gain/SKILL.md: sha256:231034a896d6762e4b5c8468287083422c56b499119976ec9f76821f7d083090
+    .claude/skills/ponytail-help/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .claude/skills/ponytail-help/SKILL.md: sha256:86ab0ce0af70cbeeeef499d5c884873b393f87f86401dcc45553662ce2c1eff9
+    .claude/skills/ponytail-review/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .claude/skills/ponytail-review/SKILL.md: sha256:33fe4ebe22a460924e5d4a261e223df22e409cc94ab76182bee9fb91a3ef022e
+    .claude/skills/ponytail/LICENSE: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
     .claude/skills/ponytail/SKILL.md: sha256:9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509
-    .github/hooks/ponytail-copilot-hooks.json: sha256:692b5148c3605d2ece2f081834b650c3c43d75cb272a7884dc40e9ce4425ef79
-  content_hash: sha256:b995a71ddd28e617eb0e7968c7ec7a0cc8229b3af20065432ce5ecb1da2d92bc
+  content_hash: sha256:48aab70fa66d64cf4d036a23a73a0d69c6e2e3ad32115acbe50b60d48ca26780
   is_dev: true
+  carried_licenses:
+  - path: .apm/skills/ponytail-audit/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: .apm/skills/ponytail-debt/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: .apm/skills/ponytail-gain/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: .apm/skills/ponytail-help/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: .apm/skills/ponytail-review/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: .apm/skills/ponytail/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: ponytail-audit/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: ponytail-debt/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: ponytail-gain/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: ponytail-help/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: ponytail-review/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
+  - path: ponytail/LICENSE
+    source: LICENSE
+    hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - repo_url: hardikpandya/stop-slop
   name: stop-slop
   host: github.com
@@ -442,13 +339,13 @@ dependencies:
     .claude/skills/stop-slop/references/examples.md: sha256:49c592899eb4457f95d0767e15e3143569e2cef50f2927c3174e62432984cd3d
     .claude/skills/stop-slop/references/phrases.md: sha256:4ca1b7e97123b5c67eff3dc97e5e977332e0b24021265c1553888a93ec33fa93
     .claude/skills/stop-slop/references/structures.md: sha256:ffbf1316c7fb5aaf552de005609a64a9639b546ecd76bfb0e482864d5bbe6f58
-  content_hash: sha256:2e93df9fc59dbc268f98b75b51be8751f8db4e8c3943bb7f4beafa244a05785a
+  content_hash: sha256:2dbfc72fcbf4ae9d11e1ee3448df3e107a5dc2cc7d8022329db0c1cc1660c0be
   is_dev: true
 - repo_url: juliusbrussee/caveman
   materialization_repo_url: JuliusBrussee/caveman
   name: caveman-commit
   host: github.com
-  resolved_commit: a192894723a8f47e7f504c7b5041967ff1f18e55
+  resolved_commit: e74a11ccdb38b98d15c9f9545787c907dd15f0ab
   version: unknown
   virtual_path: skills/caveman-commit
   is_virtual: true
@@ -457,18 +354,26 @@ dependencies:
   package_type: claude_skill
   deployed_files:
   - .agents/skills/caveman-commit
+  - .agents/skills/caveman-commit/LICENSE
   - .agents/skills/caveman-commit/README.md
   - .agents/skills/caveman-commit/SKILL.md
   - .claude/skills/caveman-commit
+  - .claude/skills/caveman-commit/LICENSE
   - .claude/skills/caveman-commit/README.md
   - .claude/skills/caveman-commit/SKILL.md
   deployed_file_hashes:
+    .agents/skills/caveman-commit/LICENSE: sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
     .agents/skills/caveman-commit/README.md: sha256:a2e82924b487fc1845114c247b47c2d3c2d1bd60f90bbfa60e9831319eb964fa
     .agents/skills/caveman-commit/SKILL.md: sha256:c788a282fc75b981b421dfdad5d84ea7f83f946c126daa39cfc7d3f97845e193
+    .claude/skills/caveman-commit/LICENSE: sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
     .claude/skills/caveman-commit/README.md: sha256:a2e82924b487fc1845114c247b47c2d3c2d1bd60f90bbfa60e9831319eb964fa
     .claude/skills/caveman-commit/SKILL.md: sha256:c788a282fc75b981b421dfdad5d84ea7f83f946c126daa39cfc7d3f97845e193
-  content_hash: sha256:b416cf134b0f33ddadeca7977aebdbb2d3db79a166d0fce2e1aabeec98132766
+  content_hash: sha256:219aee9498d18a05866f986566c630292d8ea26c8a94e8cb9c014f544be3be2d
   is_dev: true
+  carried_licenses:
+  - path: LICENSE
+    source: LICENSE
+    hash: sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
 deployments:
 - kind: project-relative
   target: claude
@@ -476,136 +381,9 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
   - .
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
+  active_owner: .
   content_hash: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
-- kind: project-relative
-  target: claude
-  value: .claude/agents/bootstrap_orchestrator.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:5c2fa484754f8d582669500d16d5728fe95daff8bd964f8e7f09142c6a666bfc
-- kind: project-relative
-  target: claude
-  value: .claude/agents/codebase_details.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:d80db07e449b57b3b3776d1401cca72a54b6b65a0ab218b86f9064ee4b8167bc
-- kind: project-relative
-  target: claude
-  value: .claude/agents/comprehension.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:974f4972f717dc7b102a9b1407b3a625749149f2ae905727241e919f43cc3fa5
-- kind: project-relative
-  target: claude
-  value: .claude/agents/design_critic.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:cee6294735ce2bd4fea19245852b6eb07cbe8ede7e72a4bfc829f586e4a39d0f
-- kind: project-relative
-  target: claude
-  value: .claude/agents/erlang-specialist.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:4bb6bf9b41f0f62cd0d779e0020b276c05ec68ebb4b913135774d0a12acdf851
-- kind: project-relative
-  target: claude
-  value: .claude/agents/implementation_readiness.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:1f6aa61cfe7cb86dc94943ab3b3fd339e5baba533937198fd10edb06dfa64e8f
-- kind: project-relative
-  target: claude
-  value: .claude/agents/inventive_catalyst.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:e766638298dfa42859172df62d1c0a4faa9ade143bcfc92837b5843a684e1da4
-- kind: project-relative
-  target: claude
-  value: .claude/agents/structural.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:f0d4fe6faee4e388366b7d653fe353a9b09f45ca1bf5dae29280e351cda7da87
-- kind: project-relative
-  target: claude
-  value: .claude/agents/style.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:9330780622baaef8dc683ea78efb3ff8e4583e3dde7ab6092b84df50e8c9ea58
-- kind: project-relative
-  target: claude
-  value: .claude/agents/synthesizer.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:44d1288c03ec829acafd8af0226ce1d0603f4cf04e9f8438b5b36a451be8f8b6
-- kind: project-relative
-  target: claude
-  value: .claude/agents/zoom_out.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:adc9d7b7db4c304866e61d5e5e446502231abe188ce64656939305e07ae7995f
-- kind: project-relative
-  target: claude
-  value: .claude/commands/create-pr.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: sha256:f60319bef36ed8d7159543f774f196f2ab90df55d3538c1723da6b81295d02ff
-- kind: project-relative
-  target: claude
-  value: .claude/commands/merge-upstream.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: sha256:f8c97a3085cc2b603cd34428aa28d17c55b5411ba526871ae599cede372d3f89
-- kind: project-relative
-  target: claude
-  value: .claude/rules/use-ste.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: sha256:29c78e0076d736e43b8d9b414465de9c236128975b95118dcb2047f4e49018b2
 - kind: project-relative
   target: claude
   value: .claude/skills/caveman-commit
@@ -615,6 +393,15 @@ deployments:
   - juliusbrussee/caveman/skills/caveman-commit
   active_owner: juliusbrussee/caveman/skills/caveman-commit
   content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/caveman-commit/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - juliusbrussee/caveman/skills/caveman-commit
+  active_owner: juliusbrussee/caveman/skills/caveman-commit
+  content_hash: sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
 - kind: project-relative
   target: claude
   value: .claude/skills/caveman-commit/README.md
@@ -650,564 +437,15 @@ deployments:
   owners:
   - .
   active_owner: .
-  content_hash: sha256:1aeadbdb3b34b7165a3fe4c617b8f7fc6aed909af0d6f05bdb51928b9db7c8ba
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-bootstrap
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-bootstrap/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:712f1b58a21784a49671931a8dc9904d5b1e84ec5234b010eba6dca8b96d98fd
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-bootstrap/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:35b8e616d7b9fbd57da40f37ec80f24f36027450f02f6ca47f82130a48f3755c
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-bootstrap/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:e5f83ece63fce8c73329efedd990f912ab395e1e8339f89f83f9e6efef00fb27
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-bootstrap/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:e1f021c3074bc22d982301bff8374cf1c2ff7c032d1834b66fed91a9ab57d370
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-bootstrap/references/templates.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:f49793727cccbd72afdc4a0569a1d8e8138e943d2fc9b0df772b09deaca80437
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-bootstrap/references/worker-return.schema.json
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:f18a3822f60a0f117e1582cccac78a90cf14154afca811d4e81ea3fe562e52a5
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-bootstrap/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:9ea91ed9fc8763b1e95a2ecf9f529be2a2c1b9b7190816b97963ec932c1bdc17
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-brainstorm
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-brainstorm/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:0491fc9fd614e7ca73b5c7036f74e6f218bf6f93e4e8970955ec570bf84f21cc
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-brainstorm/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:d8b0d62ec82fea523cf62b2aa6a3762738b861ef68a1f47c7e0584c7747c4f53
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-brainstorm/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:2b858c20f9d3b54cc1e02410a4fd6f7989b36d6d5d152cc87cd0d1082ce3bfc9
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-brainstorm/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:89d894e7e9c10c2ad955ef1964049e508b718e96e8a177f547b240c774498b49
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-brainstorm/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:db99fcf40a4fbc505ac95e231b21805b583c9c1675aee43eb8ec23ab0dc76769
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-draft
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-draft/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:ed92aef19a14a0831450265bd84d1d6ac8b3200815c0e584d439a11cd97eeee3
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-draft/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:19872448e7e2f2af41feea9f9de3c78942462c52a76901510ffa52ecaa7a2f4c
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-draft/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:eafc643897b5a4ea7a849bd4211acaf8f3bc31a079f199ef5d04d08b410705b7
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-draft/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:0cca32ed85b4198fdf3566198f92a17c943ee3d9a72d38c2898132b67130aebd
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-draft/references/design_doc.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:309246562d1ffd801b3a2cd81f5cbc767d36f7530046f6ac681b6db40c6c7965
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-draft/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:6558ddf2c4567bb26ea233bcff8eb1ec704d511a9497410d4041383d28ed57b3
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-drift-report
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-drift-report/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:53a95f790f9276dff08c67373eb4b53bf0444217f5a0fbf796d5718cb5ada49e
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-drift-report/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:596632190ef932059f49871d12abdcce9b581565f74a32f0f37f488473c68bb2
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-drift-report/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:b54c32c1badc9a73e507f097377324dc31f2839cfef9c426d4dba1c622d5673c
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-drift-report/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:47bc4ecbe493f4454f9b7642f42de9fe41f8a93cbb86aa3ffbb5d58532ea0e2d
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-drift-report/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:e688d8129d32bc90ad23a86da017175036695fa0872a04dbce591a890ea70788
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-lite
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-lite/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:76e658d85f2ec4ce1785b6a5624fc4ebb66b27807a3c47221361b4862ef1948c
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-lite/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:26ec87def46d05ac8edecc0fd54cf72a142c4a5d6c0bcc10f3f491eda47e3893
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-lite/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:f01b6d29d142a293ba3c4966e6894f892e29b47ff96e694bd37f3bc26ef9ac09
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-lite/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:ca4569a1b5a8bd9eef3ab4f48acc26ce88c154eb2c420cd2ced70b5026d64d90
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-lite/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:556dda1450cff6db766d417949ec3f52f6ee41fef553cd10684a93bad9b9179c
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-resolve
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-resolve/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:2fe7d9573d39c9dc612049efff1c178332b75b97257602b93c46fd69558883ad
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-resolve/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:ee61f28caf337c2b25b0c589e32a980dfcb80e4d0ef80b9abf35e72c67ae1308
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-resolve/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:7ad63dc69777e6e8b2e3d33cf4105149043038ffb489e750b3f483be7836cf30
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-resolve/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:14ac0ad863fc6ab83ba5fd5f7bd46fd11b609d65f9e482b3fcddd7a139834733
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-resolve/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:6d667608097ff4c80fb861da2c7580cf7b7f5d01290895ea74422890254a0570
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review-loop
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review-loop/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:005eeb32c6557bf918fa0df15f3e4dce932aeffdf5bbb1e6dbeaa3a9610c3462
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review-loop/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:3259832b6b86c00fd2e8d03f04bac8817d8bb7b9b172b0b3a9489bc896836c7c
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review-loop/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:2073f27ed2c084c8db710f72dac367d26cb8cbc16aa2195546feb732b47a23ce
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review-loop/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:d6d5537843253fe634d248b6eadd5a5bcd2ef7742e016896eb11c583174eb530
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review-loop/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:6dfa8d74a74f1a65d195cca0787b801e78e061f6517d1400c80bf9ab989ec0b8
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:9a7a78a3f124b2c4c6280fdedeba639cd9c875294e49b50a61f0d6b1feda77fa
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:408c529ae5372ce95def1022fb35c9d1cac35dd061c9cd84f4beb1746d0d8341
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:780d8877443f704ee27d504c13d08f304f0bca4c4418f5703f61ae40416fca74
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:02154028864bd8547a45d7c9f55c59f95cb4ce3f57ecb3426f67034ab97d022f
-- kind: project-relative
-  target: claude
-  value: .claude/skills/egm-review/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:7cda387f656b560bbd906f7ce534e59fb3018b4a821a60fa9883ef423fcdbd76
-- kind: project-relative
-  target: claude
-  value: .claude/skills/gleam-reference-docs
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/gleam-reference-docs/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:7d3dd41722242d3cd627aae529ffd919391c8ff8a6be950c9ef61cd0b193c531
-- kind: project-relative
-  target: claude
-  value: .claude/skills/gleam-reference-docs/assets/generate-reference.mjs
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:a2581e009f9fe189a02681ad29d410a9e55a7c0a399de498bf5710ef539e6f43
-- kind: project-relative
-  target: claude
-  value: .claude/skills/gleam-reference-docs/evals/evals.json
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:9da907b7e7c07b3529d20d3ee2cf80b6d7f4bc8794ad151b550896268f1f29db
-- kind: project-relative
-  target: claude
-  value: .claude/skills/gleam-review
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/gleam-review/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:1d510df9a726b675f5a7de84508eb668828e5f14b36ca96139867b29db502d17
-- kind: project-relative
-  target: claude
-  value: .claude/skills/gleam-review/references/conventions.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:cd0b6dee401eff48c7afcb83db73ee5971e2563989f266dfd58bd93b997fe6ed
-- kind: project-relative
-  target: claude
-  value: .claude/skills/humanizer
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/humanizer/LICENSE
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: sha256:4ac4810254ab36d45419141aeb8e69bf50652cfafe5b2dab947d06d44e5cbf96
-- kind: project-relative
-  target: claude
-  value: .claude/skills/humanizer/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: sha256:14fc8a965b6e0a8dc100ba4dffeab55cb94bbac112abbde7e014d5c15a35c202
+  content_hash: sha256:41602d60f29c7d32b67f75f804debf5c774ee9d233bcf5134ff3863005e13d00
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
 - kind: project-relative
   target: claude
@@ -1215,17 +453,26 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/ponytail-audit/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail-audit/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:2b3223a02c386d1263e1b08343cb8eb3a53e444cdafb1d79e26c8ec2a8fcad28
 - kind: project-relative
   target: claude
@@ -1233,17 +480,26 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/ponytail-debt/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail-debt/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:b5ec2762f6ba8c4af9ea7173aa6c9f91b88655a25e43f9de0264f6ce8722b25f
 - kind: project-relative
   target: claude
@@ -1251,17 +507,26 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/ponytail-gain/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail-gain/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:231034a896d6762e4b5c8468287083422c56b499119976ec9f76821f7d083090
 - kind: project-relative
   target: claude
@@ -1269,17 +534,26 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/ponytail-help/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail-help/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:86ab0ce0af70cbeeeef499d5c884873b393f87f86401dcc45553662ce2c1eff9
 - kind: project-relative
   target: claude
@@ -1287,45 +561,243 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/ponytail-review/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail-review/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:33fe4ebe22a460924e5d4a261e223df22e409cc94ab76182bee9fb91a3ef022e
+- kind: project-relative
+  target: claude
+  value: .claude/skills/ponytail/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: claude
   value: .claude/skills/ponytail/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509
 - kind: project-relative
   target: claude
-  value: .claude/skills/prose-banlist
+  value: .claude/skills/security-audit
   runtime: null
   scope: project
   owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
   content_hash: null
 - kind: project-relative
   target: claude
-  value: .claude/skills/prose-banlist/SKILL.md
+  value: .claude/skills/security-audit/AI-AND-LLM.md
   runtime: null
   scope: project
   owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: sha256:77d434e3b207f74a0b5e1e9d62e210d484714ff331351de0b272df1fe242886e
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:7335a95c43554eadefcf03ece639291bb0e038c398a179299e3887ffe06bd2ef
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/ATTACK-CLASSES.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:3ee4f00c6e8c9dcf6dd02dd5ac2a4ceb322e2085f3e9fbe79cf0c6330bc7ef83
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/CLIENT-SIDE.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:613f6b98f86083e045525c5b60154ffdab122bac35f1e05eb17488e6e453370c
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/CLOUD-AND-DEPLOYMENT.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:3c80f3088be22345e07b057c056d6ed99fe2b0304f794398964f7ccd5a496ca3
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/DATA-ISOLATION-AND-LIFECYCLE.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:307dcb3e24d292715c4a041190e7bb135646a37eb6187619ae01d000a634a4ad
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/DESKTOP-MOBILE-AND-LOCAL-IPC.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:58eae8ee0ca6a46611c501ec5a3ab47fdff88dd7db0d8d74789bbf8bb19d8cb2
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/HUNTING.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:71c121decea1322c47c718f6e110f1a892980bb4266bd7ac55ef043a213ade09
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:e598e694aa506650c7192d5ea3be0e50aca0d356ea00551c53429f0b01eb6391
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/MEMORY-SAFETY-AND-BINARY.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:7c8b0dccfb35315cca2455509674d49632b2fe37e1f3aac16c1a496a7e9924a7
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/PROTOCOLS-RPC-AND-MESSAGING.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:8b73816fa5b3697c9c40977f0c836b40f01d6e81929ff2720fe83ce089e9a619
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/RECONNAISSANCE.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:02ca887aca84de8ae137f1891bd2f0a54f28d3fa6da92a27f54734382b3381a2
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/RESOURCE-EXHAUSTION-AND-AVAILABILITY.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:4326fab5c92a0b4c420a70196254040105cd794026562130b59bf1a6db3e4baa
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:5e3e96a1e438d8f35fef0a1e38f02d4f00e2bdf910401b7dfe00e6779c6dac85
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/SUPPLY-CHAIN-AND-RELEASE.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:f372e919940e335468ba1ae09f99026c3986a345f7fe26f8068f132e199f52a5
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/VALIDATION-AND-REPORTING.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:b892470cb89bb31f33403e050d4bdfbe2cdaef940ade1496fa65e32b2e129449
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/WEB-PROTOCOL-AND-AUTH.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:4f3066dffa23c5635859187be9b96c32f2aff29a688186b91ff0c63e47d62b5c
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/report-schema.json
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:6575c9de4a62255699ea052ebf9a49ebfb373a32891bcd89af6f55cc84b35519
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/validate-coverage-ledger.cjs
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:2eb280bd2e33c002916f86db9b29f9edfedb6454e5db973c766290465b868ac8
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/validate-coverage-ledger.test.cjs
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:cfb9df26b03469a4279a70e7664a2a5434dd6f8c2c204e91f9b0aeb9dd71e648
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/validate-findings.cjs
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:e85f232e36bfac0f866f244da50376692d6b45c690beadcb00608b0e6c8b5283
+- kind: project-relative
+  target: claude
+  value: .claude/skills/security-audit/validate-findings.test.cjs
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:b92001117a92c4161d43777a0ba2fa182a8a4d97f2304cc8c0cee5331497b73b
 - kind: project-relative
   target: claude
   value: .claude/skills/stop-slop
@@ -1400,24 +872,6 @@ deployments:
   content_hash: sha256:ffbf1316c7fb5aaf552de005609a64a9639b546ecd76bfb0e482864d5bbe6f58
 - kind: project-relative
   target: claude
-  value: .claude/skills/storytelling
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: null
-- kind: project-relative
-  target: claude
-  value: .claude/skills/storytelling/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/apm-base
-  active_owner: tylerbutler/apm-base
-  content_hash: sha256:68a7dfe08ba69c59af66b28d2d9f3344eb97dc7f4eb096cae41f98abcc4ea23e
-- kind: project-relative
-  target: claude
   value: .claude/skills/unslop
   runtime: null
   scope: project
@@ -1425,6 +879,15 @@ deployments:
   - cursor/plugins/pstack/skills/unslop
   active_owner: cursor/plugins/pstack/skills/unslop
   content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/unslop/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - cursor/plugins/pstack/skills/unslop
+  active_owner: cursor/plugins/pstack/skills/unslop
+  content_hash: sha256:bc957ca6bee02792566a1a028d105e02e247c6e77cf057061674273da77b200e
 - kind: project-relative
   target: claude
   value: .claude/skills/unslop/SKILL.md
@@ -1443,6 +906,15 @@ deployments:
   - juliusbrussee/caveman/skills/caveman-commit
   active_owner: juliusbrussee/caveman/skills/caveman-commit
   content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/caveman-commit/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - juliusbrussee/caveman/skills/caveman-commit
+  active_owner: juliusbrussee/caveman/skills/caveman-commit
+  content_hash: sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
 - kind: project-relative
   target: copilot
   value: .agents/skills/caveman-commit/README.md
@@ -1478,529 +950,7 @@ deployments:
   owners:
   - .
   active_owner: .
-  content_hash: sha256:1aeadbdb3b34b7165a3fe4c617b8f7fc6aed909af0d6f05bdb51928b9db7c8ba
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-bootstrap
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-bootstrap/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:712f1b58a21784a49671931a8dc9904d5b1e84ec5234b010eba6dca8b96d98fd
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-bootstrap/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:35b8e616d7b9fbd57da40f37ec80f24f36027450f02f6ca47f82130a48f3755c
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-bootstrap/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:e5f83ece63fce8c73329efedd990f912ab395e1e8339f89f83f9e6efef00fb27
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-bootstrap/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:e1f021c3074bc22d982301bff8374cf1c2ff7c032d1834b66fed91a9ab57d370
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-bootstrap/references/templates.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:f49793727cccbd72afdc4a0569a1d8e8138e943d2fc9b0df772b09deaca80437
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-bootstrap/references/worker-return.schema.json
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:f18a3822f60a0f117e1582cccac78a90cf14154afca811d4e81ea3fe562e52a5
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-bootstrap/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:9ea91ed9fc8763b1e95a2ecf9f529be2a2c1b9b7190816b97963ec932c1bdc17
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-brainstorm
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-brainstorm/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:0491fc9fd614e7ca73b5c7036f74e6f218bf6f93e4e8970955ec570bf84f21cc
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-brainstorm/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:d8b0d62ec82fea523cf62b2aa6a3762738b861ef68a1f47c7e0584c7747c4f53
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-brainstorm/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:2b858c20f9d3b54cc1e02410a4fd6f7989b36d6d5d152cc87cd0d1082ce3bfc9
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-brainstorm/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:89d894e7e9c10c2ad955ef1964049e508b718e96e8a177f547b240c774498b49
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-brainstorm/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:db99fcf40a4fbc505ac95e231b21805b583c9c1675aee43eb8ec23ab0dc76769
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-draft
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-draft/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:ed92aef19a14a0831450265bd84d1d6ac8b3200815c0e584d439a11cd97eeee3
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-draft/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:19872448e7e2f2af41feea9f9de3c78942462c52a76901510ffa52ecaa7a2f4c
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-draft/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:eafc643897b5a4ea7a849bd4211acaf8f3bc31a079f199ef5d04d08b410705b7
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-draft/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:0cca32ed85b4198fdf3566198f92a17c943ee3d9a72d38c2898132b67130aebd
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-draft/references/design_doc.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:309246562d1ffd801b3a2cd81f5cbc767d36f7530046f6ac681b6db40c6c7965
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-draft/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:6558ddf2c4567bb26ea233bcff8eb1ec704d511a9497410d4041383d28ed57b3
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-drift-report
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-drift-report/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:53a95f790f9276dff08c67373eb4b53bf0444217f5a0fbf796d5718cb5ada49e
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-drift-report/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:596632190ef932059f49871d12abdcce9b581565f74a32f0f37f488473c68bb2
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-drift-report/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:b54c32c1badc9a73e507f097377324dc31f2839cfef9c426d4dba1c622d5673c
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-drift-report/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:47bc4ecbe493f4454f9b7642f42de9fe41f8a93cbb86aa3ffbb5d58532ea0e2d
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-drift-report/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:e688d8129d32bc90ad23a86da017175036695fa0872a04dbce591a890ea70788
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-lite
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-lite/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:76e658d85f2ec4ce1785b6a5624fc4ebb66b27807a3c47221361b4862ef1948c
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-lite/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:26ec87def46d05ac8edecc0fd54cf72a142c4a5d6c0bcc10f3f491eda47e3893
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-lite/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:f01b6d29d142a293ba3c4966e6894f892e29b47ff96e694bd37f3bc26ef9ac09
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-lite/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:ca4569a1b5a8bd9eef3ab4f48acc26ce88c154eb2c420cd2ced70b5026d64d90
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-lite/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:556dda1450cff6db766d417949ec3f52f6ee41fef553cd10684a93bad9b9179c
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-resolve
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-resolve/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:2fe7d9573d39c9dc612049efff1c178332b75b97257602b93c46fd69558883ad
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-resolve/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:ee61f28caf337c2b25b0c589e32a980dfcb80e4d0ef80b9abf35e72c67ae1308
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-resolve/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:7ad63dc69777e6e8b2e3d33cf4105149043038ffb489e750b3f483be7836cf30
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-resolve/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:14ac0ad863fc6ab83ba5fd5f7bd46fd11b609d65f9e482b3fcddd7a139834733
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-resolve/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:6d667608097ff4c80fb861da2c7580cf7b7f5d01290895ea74422890254a0570
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review-loop
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: null
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review-loop/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:005eeb32c6557bf918fa0df15f3e4dce932aeffdf5bbb1e6dbeaa3a9610c3462
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review-loop/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:3259832b6b86c00fd2e8d03f04bac8817d8bb7b9b172b0b3a9489bc896836c7c
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review-loop/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:2073f27ed2c084c8db710f72dac367d26cb8cbc16aa2195546feb732b47a23ce
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review-loop/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:d6d5537843253fe634d248b6eadd5a5bcd2ef7742e016896eb11c583174eb530
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review-loop/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:6dfa8d74a74f1a65d195cca0787b801e78e061f6517d1400c80bf9ab989ec0b8
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:9a7a78a3f124b2c4c6280fdedeba639cd9c875294e49b50a61f0d6b1feda77fa
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review/TEST.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:408c529ae5372ce95def1022fb35c9d1cac35dd061c9cd84f4beb1746d0d8341
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review/agents/openai.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:780d8877443f704ee27d504c13d08f304f0bca4c4418f5703f61ae40416fca74
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review/assets/icon.svg
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:02154028864bd8547a45d7c9f55c59f95cb4ce3f57ecb3426f67034ab97d022f
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/egm-review/test_scenarios.yaml
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:7cda387f656b560bbd906f7ce534e59fb3018b4a821a60fa9883ef423fcdbd76
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/gleam-reference-docs
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: null
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/gleam-reference-docs/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:7d3dd41722242d3cd627aae529ffd919391c8ff8a6be950c9ef61cd0b193c531
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/gleam-reference-docs/assets/generate-reference.mjs
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:a2581e009f9fe189a02681ad29d410a9e55a7c0a399de498bf5710ef539e6f43
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/gleam-reference-docs/evals/evals.json
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:9da907b7e7c07b3529d20d3ee2cf80b6d7f4bc8794ad151b550896268f1f29db
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/gleam-review
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: null
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/gleam-review/SKILL.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:1d510df9a726b675f5a7de84508eb668828e5f14b36ca96139867b29db502d17
-- kind: project-relative
-  target: copilot
-  value: .agents/skills/gleam-review/references/conventions.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:cd0b6dee401eff48c7afcb83db73ee5971e2563989f266dfd58bd93b997fe6ed
+  content_hash: sha256:41602d60f29c7d32b67f75f804debf5c774ee9d233bcf5134ff3863005e13d00
 - kind: project-relative
   target: copilot
   value: .agents/skills/humanizer
@@ -2034,8 +984,8 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
 - kind: project-relative
   target: copilot
@@ -2043,17 +993,26 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/ponytail-audit/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: copilot
   value: .agents/skills/ponytail-audit/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:2b3223a02c386d1263e1b08343cb8eb3a53e444cdafb1d79e26c8ec2a8fcad28
 - kind: project-relative
   target: copilot
@@ -2061,17 +1020,26 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/ponytail-debt/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: copilot
   value: .agents/skills/ponytail-debt/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:b5ec2762f6ba8c4af9ea7173aa6c9f91b88655a25e43f9de0264f6ce8722b25f
 - kind: project-relative
   target: copilot
@@ -2079,17 +1047,26 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/ponytail-gain/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: copilot
   value: .agents/skills/ponytail-gain/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:231034a896d6762e4b5c8468287083422c56b499119976ec9f76821f7d083090
 - kind: project-relative
   target: copilot
@@ -2097,17 +1074,26 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/ponytail-help/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: copilot
   value: .agents/skills/ponytail-help/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:86ab0ce0af70cbeeeef499d5c884873b393f87f86401dcc45553662ce2c1eff9
 - kind: project-relative
   target: copilot
@@ -2115,26 +1101,44 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/ponytail-review/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: copilot
   value: .agents/skills/ponytail-review/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:33fe4ebe22a460924e5d4a261e223df22e409cc94ab76182bee9fb91a3ef022e
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/ponytail/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
+  content_hash: sha256:fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab
 - kind: project-relative
   target: copilot
   value: .agents/skills/ponytail/SKILL.md
   runtime: null
   scope: project
   owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
+  - dietrichgebert/ponytail/skills
+  active_owner: dietrichgebert/ponytail/skills
   content_hash: sha256:9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509
 - kind: project-relative
   target: copilot
@@ -2154,6 +1158,204 @@ deployments:
   - tylerbutler/apm-base
   active_owner: tylerbutler/apm-base
   content_hash: sha256:77d434e3b207f74a0b5e1e9d62e210d484714ff331351de0b272df1fe242886e
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: null
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/AI-AND-LLM.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:7335a95c43554eadefcf03ece639291bb0e038c398a179299e3887ffe06bd2ef
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/ATTACK-CLASSES.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:3ee4f00c6e8c9dcf6dd02dd5ac2a4ceb322e2085f3e9fbe79cf0c6330bc7ef83
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/CLIENT-SIDE.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:613f6b98f86083e045525c5b60154ffdab122bac35f1e05eb17488e6e453370c
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/CLOUD-AND-DEPLOYMENT.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:3c80f3088be22345e07b057c056d6ed99fe2b0304f794398964f7ccd5a496ca3
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/DATA-ISOLATION-AND-LIFECYCLE.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:307dcb3e24d292715c4a041190e7bb135646a37eb6187619ae01d000a634a4ad
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/DESKTOP-MOBILE-AND-LOCAL-IPC.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:58eae8ee0ca6a46611c501ec5a3ab47fdff88dd7db0d8d74789bbf8bb19d8cb2
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/HUNTING.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:71c121decea1322c47c718f6e110f1a892980bb4266bd7ac55ef043a213ade09
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:e598e694aa506650c7192d5ea3be0e50aca0d356ea00551c53429f0b01eb6391
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/MEMORY-SAFETY-AND-BINARY.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:7c8b0dccfb35315cca2455509674d49632b2fe37e1f3aac16c1a496a7e9924a7
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/PROTOCOLS-RPC-AND-MESSAGING.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:8b73816fa5b3697c9c40977f0c836b40f01d6e81929ff2720fe83ce089e9a619
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/RECONNAISSANCE.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:02ca887aca84de8ae137f1891bd2f0a54f28d3fa6da92a27f54734382b3381a2
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/RESOURCE-EXHAUSTION-AND-AVAILABILITY.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:4326fab5c92a0b4c420a70196254040105cd794026562130b59bf1a6db3e4baa
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:5e3e96a1e438d8f35fef0a1e38f02d4f00e2bdf910401b7dfe00e6779c6dac85
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/SUPPLY-CHAIN-AND-RELEASE.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:f372e919940e335468ba1ae09f99026c3986a345f7fe26f8068f132e199f52a5
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/VALIDATION-AND-REPORTING.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:b892470cb89bb31f33403e050d4bdfbe2cdaef940ade1496fa65e32b2e129449
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/WEB-PROTOCOL-AND-AUTH.md
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:4f3066dffa23c5635859187be9b96c32f2aff29a688186b91ff0c63e47d62b5c
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/report-schema.json
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:6575c9de4a62255699ea052ebf9a49ebfb373a32891bcd89af6f55cc84b35519
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/validate-coverage-ledger.cjs
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:2eb280bd2e33c002916f86db9b29f9edfedb6454e5db973c766290465b868ac8
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/validate-coverage-ledger.test.cjs
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:cfb9df26b03469a4279a70e7664a2a5434dd6f8c2c204e91f9b0aeb9dd71e648
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/validate-findings.cjs
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:e85f232e36bfac0f866f244da50376692d6b45c690beadcb00608b0e6c8b5283
+- kind: project-relative
+  target: copilot
+  value: .agents/skills/security-audit/validate-findings.test.cjs
+  runtime: null
+  scope: project
+  owners:
+  - cloudflare/security-audit-skill
+  active_owner: cloudflare/security-audit-skill
+  content_hash: sha256:b92001117a92c4161d43777a0ba2fa182a8a4d97f2304cc8c0cee5331497b73b
 - kind: project-relative
   target: copilot
   value: .agents/skills/stop-slop
@@ -2255,6 +1457,15 @@ deployments:
   content_hash: null
 - kind: project-relative
   target: copilot
+  value: .agents/skills/unslop/LICENSE
+  runtime: null
+  scope: project
+  owners:
+  - cursor/plugins/pstack/skills/unslop
+  active_owner: cursor/plugins/pstack/skills/unslop
+  content_hash: sha256:bc957ca6bee02792566a1a028d105e02e247c6e77cf057061674273da77b200e
+- kind: project-relative
+  target: copilot
   value: .agents/skills/unslop/SKILL.md
   runtime: null
   scope: project
@@ -2268,118 +1479,9 @@ deployments:
   runtime: null
   scope: project
   owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
   - .
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
+  active_owner: .
   content_hash: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
-- kind: project-relative
-  target: copilot
-  value: .github/agents/bootstrap_orchestrator.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:5c2fa484754f8d582669500d16d5728fe95daff8bd964f8e7f09142c6a666bfc
-- kind: project-relative
-  target: copilot
-  value: .github/agents/codebase_details.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:d80db07e449b57b3b3776d1401cca72a54b6b65a0ab218b86f9064ee4b8167bc
-- kind: project-relative
-  target: copilot
-  value: .github/agents/comprehension.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:974f4972f717dc7b102a9b1407b3a625749149f2ae905727241e919f43cc3fa5
-- kind: project-relative
-  target: copilot
-  value: .github/agents/design_critic.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:cee6294735ce2bd4fea19245852b6eb07cbe8ede7e72a4bfc829f586e4a39d0f
-- kind: project-relative
-  target: copilot
-  value: .github/agents/erlang-specialist.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - tylerbutler/agent-marketplace/plugins/gleam
-  active_owner: tylerbutler/agent-marketplace/plugins/gleam
-  content_hash: sha256:4bb6bf9b41f0f62cd0d779e0020b276c05ec68ebb4b913135774d0a12acdf851
-- kind: project-relative
-  target: copilot
-  value: .github/agents/implementation_readiness.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:1f6aa61cfe7cb86dc94943ab3b3fd339e5baba533937198fd10edb06dfa64e8f
-- kind: project-relative
-  target: copilot
-  value: .github/agents/inventive_catalyst.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:e766638298dfa42859172df62d1c0a4faa9ade143bcfc92837b5843a684e1da4
-- kind: project-relative
-  target: copilot
-  value: .github/agents/structural.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:f0d4fe6faee4e388366b7d653fe353a9b09f45ca1bf5dae29280e351cda7da87
-- kind: project-relative
-  target: copilot
-  value: .github/agents/style.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:9330780622baaef8dc683ea78efb3ff8e4583e3dde7ab6092b84df50e8c9ea58
-- kind: project-relative
-  target: copilot
-  value: .github/agents/synthesizer.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:44d1288c03ec829acafd8af0226ce1d0603f4cf04e9f8438b5b36a451be8f8b6
-- kind: project-relative
-  target: copilot
-  value: .github/agents/zoom_out.agent.md
-  runtime: null
-  scope: project
-  owners:
-  - google/elephant-goldfish-model
-  active_owner: google/elephant-goldfish-model
-  content_hash: sha256:adc9d7b7db4c304866e61d5e5e446502231abe188ce64656939305e07ae7995f
-- kind: project-relative
-  target: copilot
-  value: .github/hooks/ponytail-copilot-hooks.json
-  runtime: null
-  scope: project
-  owners:
-  - dietrichgebert/ponytail
-  active_owner: dietrichgebert/ponytail
-  content_hash: sha256:692b5148c3605d2ece2f081834b650c3c43d75cb272a7884dc40e9ce4425ef79
 - kind: project-relative
   target: copilot
   value: .github/instructions/use-ste.instructions.md
@@ -2450,7 +1552,7 @@ local_deployed_files:
 - .claude/skills/changelog-authoring/SKILL.md
 - .github/agents/beam-vm-reviewer.agent.md
 local_deployed_file_hashes:
-  .agents/skills/changelog-authoring/SKILL.md: sha256:1aeadbdb3b34b7165a3fe4c617b8f7fc6aed909af0d6f05bdb51928b9db7c8ba
+  .agents/skills/changelog-authoring/SKILL.md: sha256:41602d60f29c7d32b67f75f804debf5c774ee9d233bcf5134ff3863005e13d00
   .claude/agents/beam-vm-reviewer.md: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
-  .claude/skills/changelog-authoring/SKILL.md: sha256:1aeadbdb3b34b7165a3fe4c617b8f7fc6aed909af0d6f05bdb51928b9db7c8ba
+  .claude/skills/changelog-authoring/SKILL.md: sha256:41602d60f29c7d32b67f75f804debf5c774ee9d233bcf5134ff3863005e13d00
   .github/agents/beam-vm-reviewer.agent.md: sha256:91a7eaa841ab9b9fe2aff57c538eaa72e021bb793bbd6a1e3e27f19bbe4d3e5a
