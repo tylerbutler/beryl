@@ -1,5 +1,13 @@
 # beryl_mist changelog
 
+## v0.4.4 - 2026-11-27
+
+### Dependencies
+
+#### The beryl dependency updates.
+
+Updated beryl to 0.6.3.
+
 ## v0.4.3 - 2026-11-23
 
 ### Dependencies
