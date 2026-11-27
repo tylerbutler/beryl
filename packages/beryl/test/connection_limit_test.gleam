@@ -12,40 +12,28 @@ import beryl/overload
 import beryl/socket
 import beryl/transport
 import beryl/wire
+import beryl_heirloom as heirloom
+import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/list
 import gleam/option
 import gleam/otp/actor
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
-import gleam/result
 import gleeunit/should
 import test_helper
 import unitest
 
-// An opaque external type: the native ETS identity, not a table label.
-type CheckpointTable
+type CheckpointValue
 
-type CheckpointFault {
-  DeletedCheckpoint
-  MissingCheckpointState
-  UnreadableCheckpoint
-}
+type CheckpointTable =
+  heirloom.Table(String, CheckpointValue)
 
 @external(erlang, "beryl_supervisor_test_ffi", "connection_limit_checkpoint_table")
 fn checkpoint_table(limiter: process.Pid) -> Result(CheckpointTable, Nil)
 
-// Replacement starts must stay gated until action releases them. Native setup
-// failures fail the test; cleanup restores the original checkpoint on return
-// or exception, and the action's value is returned unchanged.
-@external(erlang, "beryl_supervisor_test_ffi", "connection_limit_with_faulted_checkpoint")
-fn with_faulted_checkpoint(
-  supervisor: process.Pid,
-  name: process.Name(connection_limit.Message),
-  original: CheckpointTable,
-  fault: CheckpointFault,
-  action: fn() -> value,
-) -> value
+@external(erlang, "beryl_supervisor_test_ffi", "checkpoint_manager_sync")
+fn checkpoint_manager_sync(manager: process.Pid) -> Nil
 
 fn start_with_limit(max_connections: Int) -> beryl.Sockets {
   let assert Ok(channels) =
@@ -79,125 +67,214 @@ fn start_with_rate(
   channels
 }
 
-pub fn deleted_remembered_checkpoint_fails_closed_test() -> Nil {
-  use <- unitest.tag("serial")
-  use <- test_helper.with_isolated_caller(10_000)
-  remembered_checkpoint_fails_closed(
-    DeletedCheckpoint,
-    "Connection limiter checkpoint table does not exist",
-  )
+fn kill_fixture(pid: process.Pid) -> Nil {
+  let monitor = process.monitor(pid)
+  process.unlink(pid)
+  process.kill(pid)
+  process.new_selector()
+  |> process.select_specific_monitor(monitor, fn(_) { Nil })
+  |> process.selector_receive(2000)
+  |> should.equal(Ok(Nil))
 }
 
-pub fn missing_remembered_checkpoint_state_fails_closed_test() -> Nil {
-  use <- unitest.tag("serial")
-  use <- test_helper.with_isolated_caller(10_000)
-  remembered_checkpoint_fails_closed(
-    MissingCheckpointState,
-    "Connection limiter checkpoint state is missing",
-  )
-}
-
-pub fn unreadable_remembered_checkpoint_fails_closed_test() -> Nil {
-  use <- unitest.tag("serial")
-  use <- test_helper.with_isolated_caller(10_000)
-  remembered_checkpoint_fails_closed(
-    UnreadableCheckpoint,
-    "Connection limiter checkpoint access denied",
-  )
-}
-
-fn remembered_checkpoint_fails_closed(
-  fault: CheckpointFault,
-  reason: String,
+fn with_checkpoint_manager(
+  action: fn(process.Subject(connection_limit.CheckpointMessage), process.Pid) ->
+    Nil,
 ) -> Nil {
-  let name = process.new_name("faulted_connection_checkpoint")
-  let attempts = process.new_subject()
-  let outcomes = process.new_subject()
+  let name = process.new_name("checkpoint_manager_fixture")
+  let assert Ok(supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(
+      supervision.worker(fn() {
+        connection_limit.start_checkpoint_manager(name)
+      }),
+    )
+    |> static_supervisor.start()
+  let manager = process.named_subject(name)
+  let assert Ok(owner) = process.subject_owner(manager)
+  action(manager, owner)
+  kill_fixture(supervisor.pid)
+  test_helper.wait_until(fn() { !process.is_alive(owner) }, 2000, 1)
+}
+
+fn receive_checkpoint(manager: process.Pid) -> #(CheckpointTable, Bool) {
+  let assert Ok(Ok(heirloom.Transfer(table, previous_owner, established))) =
+    process.new_selector()
+    |> heirloom.select_transfers(decode.bool, fn(transfer) { transfer })
+    |> process.selector_receive(1000)
+  previous_owner |> should.equal(manager)
+  heirloom.owner(table) |> should.equal(Ok(process.self()))
+  #(table, established)
+}
+
+fn empty_checkpoint_holder(
+  manager: process.Subject(connection_limit.CheckpointMessage),
+  owner: process.Pid,
+  established: Bool,
+) -> #(process.Pid, CheckpointTable) {
   let ready = process.new_subject()
-  let fixture =
+  let holder =
     process.spawn(fn() {
-      let worker =
-        supervision.worker(fn() {
-          let continue = process.new_subject()
-          process.send(attempts, #(continue, process.self()))
-          let assert Ok(Nil) = process.receive(continue, 2000)
-          let outcome =
-            connection_limit.start_named(
-              1,
-              1,
-              1,
-              1,
-              overload.shared_limits(),
-              name,
-            )
-          process.send(
-            outcomes,
-            result.map(outcome, fn(started) { started.pid }),
-          )
-          outcome
-        })
-      let assert Ok(started) =
-        static_supervisor.new(static_supervisor.OneForOne)
-        |> static_supervisor.add(worker)
-        |> static_supervisor.start()
-      process.send(ready, started.pid)
+      connection_limit.claim_checkpoint(manager, process.self())
+      let #(table, fresh) = receive_checkpoint(owner)
+      fresh |> should.be_false
+      let assert Ok(Nil) = heirloom.set_heir(table, owner, established)
+      process.send(ready, table)
       process.sleep_forever()
     })
-  let assert Ok(#(first_start, supervisor)) = process.receive(attempts, 2000)
-  process.send(first_start, Nil)
-  let assert Ok(Ok(worker)) = process.receive(outcomes, 2000)
-  process.receive(ready, 2000) |> should.equal(Ok(supervisor))
+  let assert Ok(table) = process.receive(ready, 1000)
+  #(holder, table)
+}
+
+pub fn checkpoint_claim_before_transfer_receives_table_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  use manager, owner <- with_checkpoint_manager
+  let #(holder, original) = empty_checkpoint_holder(manager, owner, False)
+  connection_limit.claim_checkpoint(manager, process.self())
+  checkpoint_manager_sync(owner)
+  heirloom.owner(original) |> should.equal(Ok(holder))
+  kill_fixture(holder)
+  let #(table, established) = receive_checkpoint(owner)
+  table |> should.equal(original)
+  established |> should.be_false
+  let assert Ok(Nil) = heirloom.give_away(table, owner, False)
+  checkpoint_manager_sync(owner)
+}
+
+pub fn dead_pending_checkpoint_claim_does_not_strand_table_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  use manager, owner <- with_checkpoint_manager
+  let #(holder, original) = empty_checkpoint_holder(manager, owner, False)
+  let claimant = process.spawn(fn() { process.sleep_forever() })
+  connection_limit.claim_checkpoint(manager, claimant)
+  checkpoint_manager_sync(owner)
+  kill_fixture(claimant)
+  connection_limit.claim_checkpoint(manager, process.self())
+  checkpoint_manager_sync(owner)
+  kill_fixture(holder)
+  let #(table, _) = receive_checkpoint(owner)
+  table |> should.equal(original)
+  let assert Ok(Nil) = heirloom.give_away(table, owner, False)
+  checkpoint_manager_sync(owner)
+}
+
+pub fn dead_checkpoint_recipient_leaves_table_available_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  use manager, owner <- with_checkpoint_manager
+  let assert Ok(original) = checkpoint_table(owner)
+  let claimant = process.spawn(fn() { process.sleep_forever() })
+  kill_fixture(claimant)
+  connection_limit.claim_checkpoint(manager, claimant)
+  checkpoint_manager_sync(owner)
+  heirloom.owner(original) |> should.equal(Ok(owner))
+  connection_limit.claim_checkpoint(manager, process.self())
+  let #(table, _) = receive_checkpoint(owner)
+  table |> should.equal(original)
+  let assert Ok(Nil) = heirloom.give_away(table, owner, False)
+  checkpoint_manager_sync(owner)
+}
+
+pub fn fresh_checkpoint_survives_exit_before_initial_write_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  use manager, owner <- with_checkpoint_manager
+  let #(holder, original) = empty_checkpoint_holder(manager, owner, False)
+  kill_fixture(holder)
+  let name = process.new_name("fresh_checkpoint_limiter")
+  let assert Ok(started) =
+    connection_limit.start_named(
+      1,
+      1,
+      1,
+      1,
+      overload.shared_limits(),
+      name,
+      manager,
+    )
+  checkpoint_table(started.pid) |> should.equal(Ok(original))
   let limiter = connection_limit.from_name(name)
   let assert Ok(permit) =
     connection_limit.acquire_optional(option.Some(limiter), "192.0.2.1")
-  connection_limit.acquire_optional(option.Some(limiter), "192.0.2.1")
-  |> should.equal(Error(Nil))
-  connection_limit.acquire_optional(option.Some(limiter), "192.0.2.2")
-  |> should.equal(Error(Nil))
-  let assert Ok(table) = checkpoint_table(worker)
-  let worker_monitor = process.monitor(worker)
-  process.kill(worker)
-  let assert Ok(_) =
-    process.new_selector()
-    |> process.select_specific_monitor(worker_monitor, fn(down) { down })
-    |> process.selector_receive(2000)
-  let assert Ok(#(replacement_start, generation)) =
-    process.receive(attempts, 2000)
-  generation |> should.equal(supervisor)
-
-  with_faulted_checkpoint(supervisor, name, table, fault, fn() {
-    process.send(replacement_start, Nil)
-    process.receive(outcomes, 2000)
-    |> should.equal(Ok(Error(actor.InitFailed(reason))))
-    // Gate the next retry too: no new supervisor generation can hide a reset.
-    let assert Ok(#(_next_start, next_generation)) =
-      process.receive(attempts, 2000)
-    next_generation |> should.equal(supervisor)
-    test_helper.wait_until(
-      fn() { connection_limit.pid(limiter) == Error(Nil) },
-      2000,
-      1,
-    )
-    connection_limit.pid(limiter) |> should.equal(Error(Nil))
-    connection_limit.acquire_optional(option.Some(limiter), "192.0.2.1")
-    |> should.equal(Error(Nil))
-    connection_limit.acquire_optional(option.Some(limiter), "192.0.2.2")
-    |> should.equal(Error(Nil))
-  })
-
-  let stopped = process.monitor(supervisor)
-  let fixture_stopped = process.monitor(fixture)
-  process.unlink(fixture)
-  process.kill(supervisor)
-  let assert Ok(_) =
-    process.new_selector()
-    |> process.select_specific_monitor(stopped, fn(down) { down })
-    |> process.selector_receive(2000)
-  let assert Ok(_) =
-    process.new_selector()
-    |> process.select_specific_monitor(fixture_stopped, fn(down) { down })
-    |> process.selector_receive(2000)
   connection_limit.release_optional(permit)
+  kill_fixture(started.pid)
+  checkpoint_manager_sync(owner)
+}
+
+pub fn missing_established_checkpoint_state_rejects_initialization_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  use manager, owner <- with_checkpoint_manager
+  let #(holder, original) = empty_checkpoint_holder(manager, owner, True)
+  kill_fixture(holder)
+  let name = process.new_name("missing_checkpoint_limiter")
+  connection_limit.start_named(
+    1,
+    1,
+    1,
+    1,
+    overload.shared_limits(),
+    name,
+    manager,
+  )
+  |> should.equal(
+    Error(actor.InitFailed("Connection limiter checkpoint state is missing")),
+  )
+  test_helper.wait_until(
+    fn() { heirloom.owner(original) == Ok(owner) },
+    1000,
+    1,
+  )
+  heirloom.exists(original) |> should.be_true
+  connection_limit.acquire_optional(
+    option.Some(connection_limit.from_name(name)),
+    "192.0.2.1",
+  )
+  |> should.equal(Error(Nil))
+}
+
+pub fn checkpoint_transfer_timeout_does_not_create_fallback_table_test() -> Nil {
+  use <- unitest.tag("serial")
+  use <- test_helper.with_isolated_caller(5000)
+  use manager, owner <- with_checkpoint_manager
+  let #(holder, original) = empty_checkpoint_holder(manager, owner, False)
+  let name = process.new_name("checkpoint_timeout_limiter")
+  connection_limit.start_named(
+    1,
+    1,
+    1,
+    1,
+    overload.shared_limits(),
+    name,
+    manager,
+  )
+  |> should.equal(
+    Error(actor.InitFailed("Connection limiter checkpoint transfer timed out")),
+  )
+  heirloom.owner(original) |> should.equal(Ok(holder))
+  test_helper.wait_until(
+    fn() {
+      connection_limit.pid(connection_limit.from_name(name)) == Error(Nil)
+    },
+    1000,
+    1,
+  )
+  kill_fixture(holder)
+  let assert Ok(started) =
+    connection_limit.start_named(
+      1,
+      1,
+      1,
+      1,
+      overload.shared_limits(),
+      name,
+      manager,
+    )
+  checkpoint_table(started.pid) |> should.equal(Ok(original))
+  kill_fixture(started.pid)
+  checkpoint_manager_sync(owner)
 }
 
 // A limit of 0 means unlimited: every acquire from the same IP succeeds, and

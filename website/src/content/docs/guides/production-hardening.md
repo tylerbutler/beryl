@@ -116,11 +116,13 @@ starve others.
 
 `with_connection_rate_per_ip` caps how quickly each peer can open connections,
 which limits how often reconnects can refresh per-connection frame and message
-bursts. The connection limiter checkpoints these per-IP buckets in an ETS
-table with an heir. They survive disconnects, router restarts, and
-limiter-worker restarts. They do not survive shutdown or replacement of the
-enclosing beryl supervisor, or a node restart. Idle buckets expire after their
-allowance has fully refilled.
+bursts. The connection limiter checkpoints these per-IP buckets in a private
+ETS table with a supervised manager as heir. They survive disconnects,
+router restarts, and limiter-worker restarts. A manager failure restarts the
+limiter with empty rate and connection state; existing connections are no
+longer counted. State also ends with shutdown or replacement of the enclosing
+beryl supervisor, or a node restart. Idle buckets expire after their allowance
+has fully refilled.
 
 `with_max_connections_per_ip` separately throttles a single peer's concurrent
 connections, while `with_max_connections` caps concurrent connections across

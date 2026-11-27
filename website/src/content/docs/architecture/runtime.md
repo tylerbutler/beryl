@@ -188,7 +188,9 @@ flowchart TB
   SUP --> FACTORY["socket factory supervisor (Permanent)"]
   FACTORY --> SA1["socket actor (one per connection, Temporary)<br/>model, heartbeat, protocol effects"]
   SUP --> RT["router actor (significant Transient)<br/>init/update captured in child spec"]
-  SUP -. optional .-> LIMITER["connection limiter"]
+  SUP -. optional .-> LS["limiter supervisor<br/>rest-for-one, 3 restarts / 5s"]
+  LS --> CM["checkpoint manager (Permanent)"]
+  LS --> LIMITER["connection limiter (Permanent)<br/>private ETS checkpoint owner"]
   RT <-. "mutual monitors" .-> SA1
   SA1 --> WS["topic worker supervisor<br/>(channel layer, linked)"]
   WS --> W["topic workers (one per socket/topic join, Temporary)<br/>channel state and callbacks"]
@@ -216,6 +218,11 @@ flowchart TB
   completes in-flight presence work, then stops the socket actors. It kills an
   actor that remains blocked in an app callback. The router drains before the
   factory shuts down; the factory terminates any surviving children.
+- A limiter failure preserves its checkpoint through the supervised manager.
+  The replacement owns the same private table and recovers counts,
+  reservations, and rate buckets. A manager failure restarts the limiter with
+  empty admission state; the router and factory stay running. The limiter
+  supervisor uses `RestForOne` with the manager first.
 
 PubSub is **not** part of this tree. Erlang `pg` starts and stops it.
 Presence and groups provide child specifications for the application

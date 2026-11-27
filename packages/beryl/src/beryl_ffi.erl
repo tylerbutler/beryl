@@ -3,11 +3,6 @@
          stop_supervisor/1, rescue/1,
          actor_call/3, with_reply_subject/1,
          connection_limit_send/2,
-         connection_limit_checkpoint_supervisor/0,
-         connection_limit_checkpoint_registry_key/2,
-         connection_limit_checkpoint_registry_get/1,
-         connection_limit_checkpoint_registry_put/2,
-         connection_limit_checkpoint_registry_compare_erase/2,
          pin_subject/1, consume_work_available/1]).
 
 logging_debug_enabled() ->
@@ -184,32 +179,6 @@ connection_limit_subject_message({subject, _Owner, Tag}, Message) ->
     {Tag, Message};
 connection_limit_subject_message({named_subject, Name}, Message) ->
     {Name, Message}.
-
-connection_limit_checkpoint_supervisor() ->
-    case erlang:get('$ancestors') of
-        [Pid | _] when is_pid(Pid) -> Pid;
-        _ -> erlang:error(connection_limit_supervisor_missing)
-    end.
-
-connection_limit_checkpoint_registry_key(Supervisor, Key) ->
-    {?MODULE, connection_limit_state, Supervisor, Key}.
-
-connection_limit_checkpoint_registry_get(PersistentKey) ->
-    case persistent_term:get(PersistentKey, undefined) of
-        undefined -> none;
-        Table -> {some, Table}
-    end.
-
-connection_limit_checkpoint_registry_put(PersistentKey, Table) ->
-    persistent_term:put(PersistentKey, Table),
-    nil.
-
-connection_limit_checkpoint_registry_compare_erase(PersistentKey, Table) ->
-    case persistent_term:get(PersistentKey, undefined) of
-        Table -> persistent_term:erase(PersistentKey);
-        _ -> ok
-    end,
-    nil.
 
 %% Stop a supervisor process cleanly.
 %% Unlinks first so the calling process is not affected, then sends

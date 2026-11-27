@@ -76,7 +76,9 @@ flowchart TB
   S --> SF["socket factory supervisor (Permanent)"]
   SF --> SA["socket actors<br/>one per connection, Temporary"]
   S --> RT["router actor (significant Transient)"]
-  S -. optional .-> CL["connection limiter"]
+  S -. optional .-> LS["limiter supervisor<br/>rest-for-one, 3 restarts / 5s"]
+  LS --> CM["checkpoint manager (Permanent)"]
+  LS --> CL["connection limiter (Permanent)<br/>private ETS checkpoint owner"]
   RT <-. "mutual monitors" .-> SA
   SA --> TS["topic worker supervisor<br/>channel layer, linked"]
   TS --> TW["topic workers<br/>one per socket/topic join, Temporary"]
@@ -90,6 +92,10 @@ flowchart TB
 request temporary socket children from the factory. Socket actors preserve
 protocol/effect order; transport connection processes perform network writes.
 Channel workers own per-topic state and callbacks.
+
+The limiter manager inherits its checkpoint after a limiter failure and gives
+it to the replacement. A manager failure restarts the limiter with empty
+admission state. Router and factory restarts do not reset that checkpoint.
 
 A socket actor fault closes that socket. A worker fault closes its topic.
 A router or factory fault closes the affected runtime's connections.

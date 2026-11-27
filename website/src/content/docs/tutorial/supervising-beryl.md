@@ -57,7 +57,9 @@ The child specification adds a beryl subtree to your application:
 application supervisor
 └── beryl subtree (Transient)
     ├── router actor (Transient, significant)
-    └── connection limiter (optional)
+    └── limiter supervisor (optional, Permanent, RestForOne)
+        ├── checkpoint manager (Permanent)
+        └── connection limiter (Permanent)
 
 transport connection
 └── socket actor (one per connection, monitored by the router)
@@ -69,7 +71,7 @@ actors and the set of subscribers for each topic. Each socket actor keeps one
 model, its channel instances, its joined topics, and its pending reply
 capabilities. Socket actors are not children of the supervisor. The transport
 connection starts each one, and the router monitors it. If you enable
-connection limits, the limiter runs next to the router.
+connection limits, the limiter supervisor runs next to the router.
 
 The router is marked as *significant*. When
 the router stops normally, the beryl supervisor stops the rest of the subtree,
@@ -121,6 +123,13 @@ broadcast is not a durable message.
 
 If you enable connection limits, the limiter survives a normal router restart.
 `OneForOne` restarts only the router. The new router uses the same limiter.
+
+The limiter owns a private ETS checkpoint. Its supervised manager inherits the
+table when the limiter exits, then gives it to the replacement. Counts, held
+reservations, and per-IP rate buckets survive that restart. The limiter
+supervisor uses `RestForOne`, with the manager first. A manager failure restarts
+both with empty admission state, without restarting the router. The limiter
+subtree also allows 3 restarts in 5 seconds.
 
 ## Repeated router failures stop the beryl subtree
 
