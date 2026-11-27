@@ -145,7 +145,7 @@ fn handle_http(
 `handle_http` is the HTTP fallback. `beryl_ewe.handler` routes WebSocket
 upgrades on the configured path to beryl. It sends all other requests to
 `handle_http`. The
-[Quick start](/quick-start/#2-start-beryl-and-ewe)
+[WebSocket transport guide](/guides/websocket/#ewe)
 shows how to serve pages from this function.
 
 Both APIs use the same runtime, wire codec, presence, abuse controls, and

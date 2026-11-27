@@ -85,16 +85,20 @@ export default defineConfig({
 							slug: "introduction",
 						},
 						{
+							label: "Build a live poll",
+							slug: "tutorial",
+						},
+						{
+							label: "Run the live poll",
+							slug: "quick-start",
+						},
+						{
 							label: "Installation",
 							slug: "installation",
 						},
 						{
 							label: "Choose an API",
 							slug: "choosing-an-api",
-						},
-						{
-							label: "Quick start",
-							slug: "quick-start",
 						},
 						{
 							label: "Examples",
@@ -241,7 +245,7 @@ export default defineConfig({
 					label: "Architecture",
 					// Collapsed by default like Integration and Running in
 					// Production. Expanded it put 6 links on every page —
-					// the group least relevant to someone on Quick Start took
+					// the group least relevant to a new reader took
 					// the most open real estate, and the open/closed policy
 					// tracked nothing a reader could predict. Starlight still
 					// auto-expands whichever group holds the current page.

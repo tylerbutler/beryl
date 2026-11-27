@@ -175,8 +175,9 @@ modules, callbacks, and assigns with both beryl APIs.
 
 ## Next steps
 
-- [Choose an API](/choosing-an-api/) — channel layer or raw dispatch
-- [Quick Start](/quick-start/) — get a working server in minutes
+- [Build a live poll](/tutorial/): learn beryl through one runnable app
+- [Run the live poll](/quick-start/): download the app and try its first checkpoint
+- [Choose an API](/choosing-an-api/): channel layer or raw dispatch
 - [Channels guide](/guides/channels/) — handlers, typed state, actions, and close behavior
 - [Dispatch guide](/guides/dispatch/) — route topics, messages, and close events in one app
 - [Supervision guide](/guides/supervision/) — recommended startup order and OTP supervision

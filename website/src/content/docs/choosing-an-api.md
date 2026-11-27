@@ -75,5 +75,5 @@ format, join rules, presence payloads, and client code.
 
 - [Channels](/guides/channels/) — the full channel-layer guide
 - [Raw Dispatch](/guides/dispatch/) — route socket events in one update function
-- [Quick Start](/quick-start/) — a working server on either layer
+- [Build a live poll](/tutorial/): learn both APIs through one runnable app
 - [Coming from Phoenix](/guides/coming-from-phoenix/) — the concept map for both

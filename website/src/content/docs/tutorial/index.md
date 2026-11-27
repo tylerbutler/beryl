@@ -3,9 +3,17 @@ title: Build a live poll
 description: Build a live poll with raw dispatch, channel handlers, typed messages, and supervised processes.
 ---
 
-This tutorial teaches beryl by building one app: a live poll. If you want a
-shorter path, start with the [Quick Start](/quick-start/). All prose and code
-excerpts come from the runnable
+Learn beryl by building one app: a live poll. Start with
+[chapter 1](/tutorial/the-elm-architecture-without-a-dom/).
+To download the app and run its first checkpoint, follow
+[Run the live poll](/quick-start/).
+
+We begin with raw dispatch to show how state, inputs, and effects fit
+together. For most new apps, use channel handlers. In
+[chapter 4](/tutorial/composition-raw-dispatch-and-channels/), you will move
+the same poll to `beryl/channel` and learn which routing work it handles.
+
+The prose and code excerpts refer to the runnable
 [`examples/live_poll/`](https://github.com/tylerbutler/beryl/tree/main/examples/live_poll)
 project. beryl is pre-1.0. Expect the API to change.
 
@@ -84,8 +92,8 @@ The tutorial uses these terms, and keeps them separate:
 Do not use `Subject`, `Sender`, `socket`, `topic`, `channel`, or `handler` in
 place of one another. Each term names a different part of the system.
 
-Raw dispatch is beryl's core, and the clearest way to learn it. For apps with
-many channels, or apps shaped like Phoenix, use `beryl/channel`.
+Raw dispatch is beryl's core. We use it to teach the socket loop before
+introducing channel handlers.
 
 ## Related Gleam concepts
 

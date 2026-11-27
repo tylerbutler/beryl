@@ -108,8 +108,10 @@ pub fn main() {
 WebSocket requests on `/socket/websocket` to beryl. Other requests go to the
 HTTP fallback, which returns 404 here.
 
-For a full example with Phoenix JS client code, see the
-**[Quick Start guide](https://beryl.tylerbutler.com/quick-start/)**.
+To run a full example with a Phoenix JavaScript client, follow
+[Run the live poll](https://beryl.tylerbutler.com/quick-start/).
+Then use the [live-poll tutorial](https://beryl.tylerbutler.com/tutorial/)
+to learn how it works.
 
 ## Documentation
 
