@@ -12,8 +12,8 @@ hero:
   image:
     file: ../../assets/beryl.webp
   actions:
-    - text: Quick Start
-      link: /quick-start/
+    - text: Build a live poll
+      link: /tutorial/
       icon: right-arrow
       variant: primary
     - text: What is beryl?
@@ -91,20 +91,19 @@ import { Aside } from '@astrojs/starlight/components';
 <div class="beryl-path">
 	<ol>
 		<li>
-			<h3>Install beryl</h3>
-			<p>Install beryl packages from GitHub. Add beryl and one WebSocket transport as Git dependencies. The beryl package includes the channel layer.</p>
-			<p class="beryl-path__cmd"><code>gleam deps download</code></p>
+			<h3>Run the live poll</h3>
+			<p>Download the tutorial app and connect a browser to its first checkpoint. The example includes the server and browser client.</p>
+			<a class="beryl-path__go" href="/quick-start/">Run the first checkpoint →</a>
+		</li>
+		<li>
+			<h3>Learn how it works</h3>
+			<p>Follow one app through the live-poll tutorial. Learn the state-update loop, add voting and server messages, then move to channel handlers.</p>
+			<a class="beryl-path__go" href="/tutorial/">Build a live poll →</a>
+		</li>
+		<li>
+			<h3>Build your own app</h3>
+			<p>Add beryl and the Ewe transport to your project. Use the <a href="/guides/channels/">channel guide</a> for handlers and actions, or adapt a <a href="/examples/">complete example</a>. For control over socket routing, <a href="/choosing-an-api/">compare the two APIs</a>.</p>
 			<a class="beryl-path__go" href="/installation/">Installation guide →</a>
-		</li>
-		<li>
-			<h3>Build your first socket app</h3>
-			<p>Write a channel handler. Connect the WebSocket transport and a Phoenix JS client. If you want to control routing, <a href="/choosing-an-api/">compare the two APIs</a>.</p>
-			<a class="beryl-path__go" href="/quick-start/">Open the Quick Start →</a>
-		</li>
-		<li>
-			<h3>Run an example</h3>
-			<p>Use a complete example. Then read the <a href="/guides/channels/">channel guide</a> or the <a href="/reference/api/beryl-channel/">API reference</a>.</p>
-			<a class="beryl-path__go" href="/examples/">View examples →</a>
 		</li>
 	</ol>
 </div>
