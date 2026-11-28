@@ -1,6 +1,6 @@
 ---
 title: API reference
-description: API reference generated from Gleam docs metadata.
+description: Look up public types, functions, and constants in beryl packages.
 ---
 
 <!--
@@ -11,11 +11,7 @@ description: API reference generated from Gleam docs metadata.
 
 <div class="api-reference-marker" aria-hidden="true"></div>
 
-This reference uses Gleam docs metadata for `beryl`, `beryl_ewe`, `beryl_heirloom`, `beryl_mist`, and `beryl_protocol`.
-
-:::note[Generated content]
-The generator creates pages under `/reference/api/` from Gleam docs metadata. The pages include each public type, function, and constant. This is beryl's canonical API reference. Install beryl packages from GitHub. They are not on Hex.
-:::
+Find public types, functions, and constants by package and module.
 
 ## `beryl` `0.6.2`
 

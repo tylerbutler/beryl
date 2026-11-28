@@ -152,56 +152,10 @@ Use `with_broadcast_interval(0)` to disable periodic requests. The initial
 request and replies to peers still run, but quiet recovery is not guaranteed.
 Without PubSub, the configured interval is unused.
 
-Presence uses version 2 of its internal sync envelope. Version 1 unsolicited
-snapshots and version 2 requests do not interoperate; upgrade the replicas in
-a presence scope together. The frozen five-element PubSub tuple is unchanged.
-
-Run `just test-distributed` for the real-node recovery matrix. `just test beryl`
-includes it alongside the same-node tests, and CI runs it on Erlang 27 and 28.
-
-| Scenario | Required result |
-|---|---|
-| PubSub across nodes | Exact scope, topic, event, payload, and sender; scope isolation and local/remote sender exclusion |
-| Independent mutations | Both actors' CRDT and ETS views contain the same session, key, and metadata identities |
-| Update and untrack | Replacement metadata, refs, joins, and leaves reach the peer without an unrelated mutation |
-| Idle bootstrap | A newcomer receives an unchanged owner's snapshot |
-| Partition and `pg` recovery | A peer receives missed changes after reconnection without a new mutation |
-| Empty actor or node restart | The restarted replica recovers live peers' entries and does not restore its old entries |
-| Permanent departure | The observer hides the departed owner's entries, preserves live peers, and keeps ghosts hidden through later local mutations |
-| Delayed old-incarnation reply | An older reply cannot displace a confirmed replacement |
-| Retirement and lagging peers | The 60-second policy revokes old requests; forwarded history cannot restore retired entries |
-
-## Dependency compatibility
-
-beryl temporarily uses the private Erlang representation of
-`lattice_presence.State` for two operations: removing one exact tracking tag and
-producing a snapshot with only the local owner's entries and causal clocks.
-The public leave operations can remove other registrations with the same
-session, topic, and key. The replica lifecycle operations retain foreign
-high-water clocks, so they cannot replace owner-only projection.
-
-The dependency requirement accepts `>= 2.0.0 and < 2.1.0`. Version **2.0.0** is
-the verified baseline and currently the only published release in this patch
-line. Accepting future 2.0 patches is a temporary compatibility policy, not
-evidence that their private representation has been checked.
-
-The FFI expects `{state, Replica, Context, Clouds, Values, Replicas}`, with
-map-backed dictionaries, `{tag, Owner, Clock}` value keys, and `up`/`down`
-replica statuses. Exact-tag removal preserves all fields except the selected
-value. Owner snapshots retain only the owner's context, cloud, and values,
-and set only that owner's status to `up`. Unsupported state shapes fail
-explicitly with `unsupported_lattice_presence_state`.
-
-Before merging a dependency update, inspect these assumptions in the resolved
-release and run both-operation compatibility tests and the presence recovery
-suite through `just test beryl`. These checks include stale-state merges,
-third-replica clocks, and incarnation retirement and recovery. CI runs them on
-Erlang 27 and 28. A future patch can still change opaque internals and break a
-consumer that resolves it before these checks run.
-
-[tylerbutler/lattice#199](https://github.com/tylerbutler/lattice/issues/199)
-tracks supported replacements for **both** operations. This is follow-up work;
-the bounded exception does not require an upstream release before beryl v1.
+When upgrading from version 1 to version 2 of the presence sync protocol,
+upgrade all replicas in a presence scope together. Version 1 sends snapshots
+without a request. Version 2 accepts snapshots only in response to a request,
+so replicas using different versions cannot sync.
 
 ## Replica availability
 
@@ -282,9 +236,7 @@ unavailable history only for the retention window plus the next runnable
 check. A retired incarnation still leaves one high-water clock behind, so
 clock storage grows with the number of retired incarnations. It does not impose a global memory bound on peer count, entry count,
 metadata size, or work blocked in callbacks. Each reply copies the source's
-owned entries; the private owner-only projection also scans retained state.
-See [#400](https://github.com/tylerbutler/beryl/issues/400)
-for broader replication-cost measurements.
+owned entries and requires a scan of its retained state.
 
 ## Request and sync flow
 

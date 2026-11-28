@@ -55,6 +55,8 @@ indicators. beryl provides:
 - **WebSocket servers:** Connect through Ewe or Mist and choose how beryl
   encodes messages.
 
+You can use these features without running a separate message broker or database.
+
 ## Choose handlers or one update function
 
 beryl ships one runtime and two ways to program it.
@@ -156,14 +158,6 @@ PubSub uses Erlang `pg`.
 
 Presence uses a conflict-free replicated data type (CRDT). It resolves joins
 and leaves that happen at the same time on different Erlang nodes.
-
-### Installed packages
-
-The core library depends on `gleam_stdlib`, `gleam_erlang`, `gleam_otp`,
-`gleam_json`, `gleam_crypto`, `lattice_presence`, and `palabres`. A WebSocket
-transport such as `beryl_ewe` adds `ewe` and `gleam_http`. The core package
-includes `beryl/channel`. beryl does not require an external message broker or
-database.
 
 ### Phoenix client compatibility
 
