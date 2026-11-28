@@ -306,12 +306,9 @@ test("merges multiple packages into one grouped reference", async () => {
 		assert.match(index, /## `beryl` `9\.9\.9`/);
 		assert.match(index, /## `beryl_mist` `1\.2\.3`/);
 		assert.ok(index.indexOf("## `beryl`") < index.indexOf("## `beryl_mist`"));
-		// beryl is not on Hex, so the index must not link out to hexdocs
-		// (it may still mention hexdocs.pm to explain the absence).
+		// Link to the local module reference rather than HexDocs.
 		assert.doesNotMatch(index, /https:\/\/hexdocs\.pm/);
-		assert.match(index, /canonical API reference/);
-		// Package names read as prose: "`beryl` and `beryl_mist`".
-		assert.match(index, /for `beryl` and `beryl_mist`\./);
+		assert.match(index, /href="\/reference\/api\/beryl_mist\/"/);
 
 		const page = await readFile(path.join(outputDir, "beryl_mist.md"), "utf8");
 		assert.match(page, /Mist WebSocket transport\./);

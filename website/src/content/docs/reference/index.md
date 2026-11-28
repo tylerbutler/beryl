@@ -8,8 +8,7 @@ beryl is pre-1.0. Minor releases can change the API. Review the
 [stability policy](#versioning-before-10) before you adopt it.
 :::
 
-The site generates the function-level API reference from Gleam docs metadata.
-Start with the two core APIs:
+Browse the [API reference](/reference/api/) by module, or start with the two core APIs:
 
 **[beryl](/reference/api/beryl/)** ·
 **[beryl/channel](/reference/api/beryl-channel/)**

@@ -105,5 +105,4 @@ in the same transaction. The core cannot provide exactly-once application
 execution or replace authorization and sequence checks.
 
 The example uses one Durable Object per match, with a counter and a persistent
-roster. It demonstrates hibernation, retries, and rejoin recovery without
-changing or deploying Monk.
+roster. It demonstrates hibernation, retries, and rejoin recovery.

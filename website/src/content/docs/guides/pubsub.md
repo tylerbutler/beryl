@@ -232,11 +232,6 @@ Erlang distribution between the nodes, `pg` merges their process groups and
 sends messages to subscribers across the cluster. beryl PubSub needs no
 additional configuration, but it does not connect the nodes for you.
 
-Automated tests currently exercise distributed behavior with multiple actors
-on one BEAM node. [Issue #365](https://github.com/tylerbutler/beryl/issues/365)
-tracks integration coverage across separate distributed Erlang nodes for
-PubSub delivery and presence convergence.
-
 ## Use PubSub with beryl
 
 The channel system uses PubSub internally for distributed broadcasts when configured:

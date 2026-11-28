@@ -164,7 +164,7 @@ continue.
 ## Message order
 
 Each socket actor processes its mailbox in sequence. The router processes
-index updates and broadcasts in its own mailbox. Tests must select the exact message and clear any queued test messages.
+index updates and broadcasts in its own mailbox.
 
 ## Source files
 

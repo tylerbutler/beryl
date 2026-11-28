@@ -304,6 +304,29 @@ and scope-isolation checks deterministic. Each test stops its peers in cleanup
 blocks, including on failure. The retirement case waits for the production
 60-second retention period, so the suite takes at least one minute.
 
+### Updating `lattice_presence`
+
+The lockfile pins `lattice_presence` 2.0.0, but the dependency requirement
+allows any 2.0.x release. Before merging an update, check how the new version
+represents `State` and run `just test beryl`. Even a patch release can change
+this private type.
+
+The presence FFI expects `{state, Replica, Context, Clouds, Values, Replicas}`,
+with map-backed dictionaries, `{tag, Owner, Clock}` value keys, and `up`/`down`
+replica statuses. It relies on that layout for two operations:
+
+- Removing one tracking tag must leave all other fields and registrations
+  intact, including entries with the same session, topic, and key.
+- A snapshot must contain only the owner's context, cloud, and values, with
+  only that owner marked `up`. The public replica lifecycle operations retain
+  other replicas' clocks.
+
+An unsupported layout raises `unsupported_lattice_presence_state`.
+[tylerbutler/lattice#199](https://github.com/tylerbutler/lattice/issues/199)
+tracks public replacements for both operations. The
+[FFI reduction plan](docs/gleam-ffi-reduction-plan.md#lattice_presence-conversion)
+describes the migration; beryl v1 does not depend on that upstream release.
+
 ### Tutorial browser demos
 
 Run `just site-demos-test` to build the documentation site and test its three

@@ -117,27 +117,17 @@ gleam run
 
 ### Official Phoenix tutorial on beryl
 
-The same server serves `http://localhost:8001/phoenix`. Open it in two tabs
-to run the chat from the official
+Open `http://localhost:8001/phoenix` in two tabs to try the chat from the
 [Phoenix Channels guide](https://phoenix.hexdocs.pm/channels.html#tying-it-all-together)
-against beryl instead of Phoenix.
+against beryl. Your browser needs internet access to load the official
+`phoenix@1.8.17` client from `unpkg.com`. Send a message in either tab. It
+should appear in both, including the one you sent it from.
 
-The page uses the unmodified official `phoenix@1.8.17` client with ordinary
-`Socket`, `channel.join`, `channel.push`, and `channel.on` calls. It joins
-`room:lobby`, sends `new_msg` with `{body}`, and receives each broadcast in
-both tabs, including the sender. Other `room:*` joins are unauthorized.
-There is no adapter, serializer override, or protocol shim.
-
-The tutorial runs on a separate public `/phoenix/socket` endpoint, so the
-authenticated demo remains unchanged. The endpoint and CDN import replace
-the original endpoint and Phoenix bundler setup; this is ordinary application
-configuration, not literally zero configuration. Network access to
-`unpkg.com` is required.
-
-See the [example's run instructions and server comparison](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms#run-the-official-phoenix-channels-tutorial)
-for the pinned tutorial source, MIT attribution, and defensive malformed-body
-handling. This example demonstrates Channels over WebSockets, not LiveView
-or long-poll support.
+The client uses a separate public endpoint, `/phoenix/socket`, with no
+adapter or custom serializer. It joins `room:lobby` and sends `new_msg`
+with a `{body}` payload. The endpoint rejects joins to other rooms. See the
+[example README](https://github.com/tylerbutler/beryl/tree/main/examples/chatrooms#run-the-official-phoenix-channels-tutorial)
+to compare the beryl and Phoenix servers.
 
 ### Features used
 

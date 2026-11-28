@@ -245,13 +245,6 @@ function code(value) {
 	return `\`${String(value).replaceAll("`", "\\`")}\``;
 }
 
-/** Join items as prose: "a", "a and b", "a, b, and c". */
-function formatList(items) {
-	if (items.length <= 1) return items.join("");
-	if (items.length === 2) return `${items[0]} and ${items[1]}`;
-	return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
-}
-
 function variableSymbol(id) {
 	return String.fromCharCode("a".charCodeAt(0) + (Number.isInteger(id) ? id : 0));
 }
@@ -382,24 +375,16 @@ ${moduleRows}
 		})
 		.join("\n\n");
 
-	const packageList = formatList(
-		packages.map((packageInterface) => code(packageInterface.name)),
-	);
-
 	return `---
 title: API reference
-description: API reference generated from Gleam docs metadata.
+description: Look up public types, functions, and constants in beryl packages.
 ---
 
 ${GENERATED_MARKER}
 
 <div class="api-reference-marker" aria-hidden="true"></div>
 
-This reference uses Gleam docs metadata for ${packageList}.
-
-:::note[Generated content]
-The generator creates pages under \`${referenceBasePath}/\` from Gleam docs metadata. The pages include each public type, function, and constant. This is beryl's canonical API reference. Install beryl packages from GitHub. They are not on Hex.
-:::
+Find public types, functions, and constants by package and module.
 
 ${packageSections}
 `;

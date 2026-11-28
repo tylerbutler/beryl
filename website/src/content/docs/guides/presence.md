@@ -223,10 +223,7 @@ processing.
 Presence queue snapshots and `[beryl, queue, occupancy]` telemetry show an
 admitted local mutation while its callback runs. These controls do not set a
 callback deadline, apply to remote sync, or bound an application worker's
-mailbox. See [Handle overload](/guides/overload/#observe-capacity) and the
-[queue contract in #397](https://github.com/tylerbutler/beryl/issues/397).
-For the exact `on_diff` latency and failure contract, track
-[#398](https://github.com/tylerbutler/beryl/issues/398).
+mailbox. See [how to monitor queue capacity](/guides/overload/#observe-capacity).
 
 ```gleam
 let config =
